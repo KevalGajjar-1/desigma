@@ -187,3 +187,90 @@ fn numeric_fields_bind_and_unbind() {
     s.cmd_key(Key::Z);
     assert!(s.app().doc.get(hero).unwrap().variables.is_empty());
 }
+
+#[test]
+fn names_edit_inline_and_keep_the_folder() {
+    let mut s = Sim::new();
+    open_modal(&mut s);
+    let r = s.rect_of("vars-name:Text/Primary");
+    s.click(Pos2::new(r.left() + 20.0, r.center().y));
+    s.type_text("Ink");
+    s.key(Key::Enter);
+    assert!(s.app().doc.variables.values().any(|v| v.name == "Text/Ink"));
+    let m = s.rect_of("vars-mode:Dark");
+    s.click(Pos2::new(m.left() + 20.0, m.center().y));
+    s.type_text("Night");
+    s.key(Key::Enter);
+    let (c, _, dark) = theme_ids(s.app());
+    assert_eq!(s.app().doc.variable_collections[&c].modes.iter().find(|m| m.id == dark).unwrap().name, "Night");
+}
+
+#[test]
+fn row_menu_deletes_a_variable_and_its_bindings_in_one_step() {
+    let mut s = Sim::new();
+    open_modal(&mut s);
+    let ink = var(s.app(), "Text/Primary").id.clone();
+    let title = s.by_name("Quarterly report");
+    assert_eq!(s.app().doc.get(title).unwrap().variables.bindings["fills/0"], ink);
+    let r = s.rect_of("vars-name:Text/Primary");
+    let p = Pos2::new(r.left() + 20.0, r.center().y);
+    s.right_click(p);
+    assert!(s.app().vars.menu.is_some());
+    // Rename, Duplicate, Delete
+    s.click(Pos2::new(p.x + 20.0, p.y + theme::MENU_PADDING + 2.0 * theme::MENU_ITEM_HEIGHT + 12.0));
+    assert!(!s.app().doc.variables.contains_key(&ink));
+    assert!(s.app().doc.get(title).unwrap().variables.bindings.get("fills/0").is_none());
+    s.shell.app.undo();
+    assert!(s.app().doc.variables.contains_key(&ink));
+    assert_eq!(s.app().doc.get(title).unwrap().variables.bindings["fills/0"], ink);
+}
+
+#[test]
+fn alias_button_picks_another_variable() {
+    let mut s = Sim::new();
+    open_modal(&mut s);
+    let (_, light, _) = theme_ids(s.app());
+    let cell = s.rect_of(&format!("vars-hex:Text/Primary:{light}"));
+    s.mv(cell.center());
+    s.frame(vec![]);
+    s.click(s.rect_of(&format!("vars-bind:Text/Primary:{light}")).center());
+    assert!(s.app().vars.alias_picker.is_some());
+    s.frame(vec![]);
+    s.click(s.rect_of("pick:Gray/900").center());
+    let target = var(s.app(), "Gray/900").id.clone();
+    assert_eq!(var(s.app(), "Text/Primary").values[&light], VariableValue::Alias(target.clone()));
+    // the alias shows as a pill; its detach button bakes the resolved colour back
+    s.frame(vec![]);
+    let pill = s.rect_of(&format!("vars-cell:Text/Primary:{light}"));
+    s.mv(pill.center());
+    s.frame(vec![]);
+    s.click(Pos2::new(pill.right() - 13.0, pill.center().y));
+    assert!(matches!(var(s.app(), "Text/Primary").values[&light], VariableValue::Color(_)));
+    // cycles and type mismatches are not offered: Gray/900 cannot alias a Theme colour that aliases it
+    let store = desigma_doc::VariableStore::from_doc(&s.app().doc);
+    assert!(!store.can_alias(&target, &var(s.app(), "Radius/Card").id));
+}
+
+#[test]
+fn dragging_the_grip_reorders_rows() {
+    let mut s = Sim::new();
+    open_modal(&mut s);
+    let order = |s: &Sim| {
+        let c = s.app().vars.collection.clone().unwrap();
+        s.app().doc.variable_collections[&c].variables.iter().map(|id| s.app().doc.variables[id].name.clone()).collect::<Vec<_>>()
+    };
+    let before = order(&s);
+    let pos = |n: &str| before.iter().position(|x| x == n).unwrap();
+    assert!(pos("Text/Primary") < pos("Text/Secondary"));
+    let grip = s.rect_of("vars-grip:Text/Secondary");
+    let target = s.rect_of("vars-name:Text/Primary");
+    // hover the row first so the grip is drawn and interactive
+    s.mv(grip.center());
+    s.frame(vec![]);
+    s.drag(grip.center(), Pos2::new(target.center().x, target.top() - 6.0));
+    let after = order(&s);
+    let p = |n: &str| after.iter().position(|x| x == n).unwrap();
+    assert!(p("Text/Secondary") < p("Text/Primary"), "{after:?}");
+    s.shell.app.undo();
+    assert_eq!(order(&s), before);
+}

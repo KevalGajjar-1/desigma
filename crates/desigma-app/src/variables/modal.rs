@@ -297,7 +297,7 @@ fn draw_main(app: &mut App, ui: &mut Ui, body: Rect, fr: &mut Frame) {
             let mr = ui.interact(more, Id::new(("vars-mode-more", &coll.id, &mode.id)), Sense::click());
             widgets::button_bg(&p, more, &mr, false, theme::cr(theme::RADIUS_MEDIUM));
             icons::paint(&p, Icon::ChevronDown, more.center(), 12.0, theme::ICON_SECONDARY);
-            if mr.clicked() || ui.interact(name_r, eid.with("ctx"), Sense::click()).secondary_clicked() {
+            if mr.clicked() || secondary_click_in(ui, name_r).is_some() {
                 app.vars.menu = Some(VarMenu { kind: VarMenuKind::Mode(coll.id.clone(), mode.id.clone()), pos: more.left_bottom() + Vec2::new(0.0, 4.0), anchor: more });
             }
         }
@@ -396,6 +396,13 @@ fn drop_target(rows: &[(String, f32, f32)], py: f32, area: Rect) -> (Option<Stri
     (None, rows.last().map(|r| r.2).unwrap_or(area.top() + 4.0))
 }
 
+/// Position of a right click inside `rect` this frame. Read from the raw pointer
+/// state so it works on top of text fields, which would otherwise take the click.
+fn secondary_click_in(ui: &Ui, rect: Rect) -> Option<Pos2> {
+    let pos = ui.input(|i| if i.pointer.secondary_clicked() { i.pointer.interact_pos() } else { None })?;
+    (rect.contains(pos) && ui.clip_rect().contains(pos)).then_some(pos)
+}
+
 fn cell_chrome(ui: &Ui, rect: Rect, id: Id) {
     let focused = ui.memory(|m| m.has_focus(id));
     let hovered = ui.rect_contains_pointer(rect);
@@ -476,6 +483,7 @@ fn variable_row(app: &mut App, ui: &mut Ui, r: Rect, coll: &VariableCollection, 
         // drag grip
         let grip = Rect::from_min_size(Pos2::new(r.left() + 4.0, r.top()), Vec2::new(16.0, r.height()));
         let gr = ui.interact(grip, Id::new(("vars-grip", &v.id)), Sense::drag());
+        widgets::record(ui, &format!("vars-grip:{}", v.name), grip);
         if hovered {
             for dy in [-4.0, 0.0, 4.0] {
                 for dx in [-2.0, 2.0] {
@@ -506,8 +514,8 @@ fn variable_row(app: &mut App, ui: &mut Ui, r: Rect, coll: &VariableCollection, 
         }
         // row menu
         let more = Rect::from_center_size(Pos2::new(r.left() + NAME_W - 18.0, r.center().y), Vec2::splat(20.0));
-        let ctx_resp = ui.interact(r, Id::new(("vars-row-ctx", &v.id)), Sense::click());
-        let mut open_menu = ctx_resp.secondary_clicked();
+        let right_click = secondary_click_in(ui, r);
+        let mut open_menu = right_click.is_some();
         if hovered {
             let mr = ui.interact(more, Id::new(("vars-row-more", &v.id)), Sense::click());
             widgets::button_bg(&p, more, &mr, false, theme::cr(theme::RADIUS_MEDIUM));
@@ -517,7 +525,7 @@ fn variable_row(app: &mut App, ui: &mut Ui, r: Rect, coll: &VariableCollection, 
             open_menu |= mr.clicked();
         }
         if open_menu {
-            let pos = ui.input(|i| i.pointer.interact_pos()).filter(|_| ctx_resp.secondary_clicked()).unwrap_or(more.left_bottom());
+            let pos = right_click.unwrap_or(more.left_bottom());
             app.vars.menu = Some(VarMenu { kind: VarMenuKind::Row(v.id.clone()), pos, anchor: Rect::from_min_size(pos, Vec2::ZERO) });
         }
     });
