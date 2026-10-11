@@ -6,6 +6,7 @@ impl<T: std::hash::Hash + std::fmt::Debug> Key for T {}
 
 pub mod field;
 pub mod menu;
+pub mod picker;
 
 use crate::icons::{self, Icon};
 use crate::theme;
@@ -100,6 +101,58 @@ pub fn button_bg(p: &Painter, rect: Rect, r: &Response, selected: bool, radius: 
     }
 }
 
+/// Paints `icon` centered in `boxr` (a button or field slot). Under test the box is
+/// recorded so the layout lint can check the glyph really is centered in it.
+pub fn paint_icon_in(p: &Painter, boxr: Rect, icon: Icon, size: f32, col: Color32) {
+    #[cfg(test)]
+    crate::lint::with_box(boxr, || icons::paint(p, icon, boxr.center(), size, col));
+    #[cfg(not(test))]
+    icons::paint(p, icon, boxr.center(), size, col);
+}
+
+// Inter at 11px sits with its baseline 12px below the top of a 16px line box; a 24px
+// field centres that line box, so the baseline is 16px under the field's top edge.
+// Egui centres the galley by font metrics, which can land half a pixel off, so
+// text in fields is placed by baseline instead.
+
+/// Baseline (distance from the galley top) of the first row of `galley`.
+pub fn galley_baseline(g: &egui::Galley) -> f32 {
+    g.rows.first().map(|r| r.pos.y + r.row.glyphs.first().map(|gl| gl.pos.y).unwrap_or(r.row.size.y * 0.8)).unwrap_or(0.0)
+}
+
+/// Pixel-snapped y for text whose baseline must land on `baseline`.
+fn snap_y(p: &Painter, y: f32) -> f32 {
+    let ppp = p.ctx().pixels_per_point();
+    (y * ppp).round() / ppp
+}
+
+/// Paints single-line text starting at `x` with its baseline on `baseline`.
+/// Returns the text's rect.
+pub fn text_on_baseline(p: &Painter, x: f32, baseline: f32, s: &str, font: FontId, col: Color32) -> Rect {
+    let g = p.layout_no_wrap(s.to_string(), font, col);
+    let pos = Pos2::new(x, snap_y(p, baseline - galley_baseline(&g)));
+    let rect = Rect::from_min_size(pos, g.size());
+    p.galley(pos, g, col);
+    rect
+}
+
+/// Inter's (ascent - descent) / 2 in em: the baseline sits this far below the centre of its line box.
+const INTER_CENTER_TO_BASELINE: f32 = 0.3638;
+
+/// Baseline of text of `font` size vertically centred in a field/row of `rect`
+/// (11px body text in a 24px field: 16px under the top edge).
+pub fn centered_baseline(rect: Rect, font: &FontId) -> f32 {
+    rect.center().y + INTER_CENTER_TO_BASELINE * font.size
+}
+
+/// Text inside a field: left edge at `rect.left() + dx`, baseline per [`centered_baseline`],
+/// elided with an ellipsis so it never passes `rect.right() - pad_r`.
+pub fn field_text(p: &Painter, rect: Rect, dx: f32, pad_r: f32, s: &str, font: FontId, col: Color32) -> Rect {
+    let shown = elide(p, s, &font, (rect.width() - dx - pad_r).max(0.0));
+    let b = centered_baseline(rect, &font);
+    text_on_baseline(p, rect.left() + dx, b, &shown, font, col)
+}
+
 /// Square icon button used throughout the panels (24px by default).
 pub fn icon_button(ui: &mut Ui, rect: Rect, id: impl crate::widgets::Key, icon: Icon, selected: bool, tip: &str) -> Response {
     let r = ui.interact(rect, ui.id().with(id), Sense::click());
@@ -112,7 +165,7 @@ pub fn icon_button(ui: &mut Ui, rect: Rect, id: impl crate::widgets::Key, icon: 
     } else {
         theme::ICON_SECONDARY
     };
-    icons::paint(p, icon, rect.center(), 16.0, col);
+    paint_icon_in(p, rect, icon, 16.0, col);
     if !tip.is_empty() {
         return r.on_hover_text(tip);
     }

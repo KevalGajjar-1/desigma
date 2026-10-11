@@ -14,12 +14,30 @@ pub enum Prefix {
 /// Single-line editable text rendered in `rect` (no chrome; see `field_bg`).
 /// Returns the committed text when editing ends (Enter / focus loss).
 pub fn edit_text(ui: &mut Ui, rect: Rect, id: Id, display: &str, font: FontId, color: Color32, pad_x: f32) -> Option<String> {
+    edit_text_hint(ui, rect, id, display, font, color, pad_x, None)
+}
+
+/// Like [`edit_text`], with a hint (placeholder or "Mixed") shown while the text is empty.
+///
+/// Idle text is painted by us, on the exact baseline and elided with an ellipsis so it
+/// never overflows; the egui `TextEdit` only draws it while it has focus.
+#[allow(clippy::too_many_arguments)]
+pub fn edit_text_hint(
+    ui: &mut Ui,
+    rect: Rect,
+    id: Id,
+    display: &str,
+    font: FontId,
+    color: Color32,
+    pad_x: f32,
+    hint: Option<(&str, Color32)>,
+) -> Option<String> {
     let focused = ui.memory(|m| m.has_focus(id));
     let mut buf = if focused { ui.data(|d| d.get_temp::<String>(id)).unwrap_or_else(|| display.to_string()) } else { display.to_string() };
     let te = TextEdit::singleline(&mut buf)
         .id(id)
-        .font(font)
-        .text_color(color)
+        .font(font.clone())
+        .text_color(if focused { color } else { Color32::TRANSPARENT })
         .frame(egui::Frame::NONE)
         .margin(Margin::symmetric(pad_x as i8, 0))
         .vertical_align(Align::Center)
@@ -33,6 +51,14 @@ pub fn edit_text(ui: &mut Ui, rect: Rect, id: Id, display: &str, font: FontId, c
     }
     if out.has_focus() {
         ui.data_mut(|d| d.insert_temp(id, buf.clone()));
+    }
+    let p = ui.painter().with_clip_rect(rect.intersect(ui.clip_rect()));
+    if buf.is_empty() {
+        if let Some((h, hc)) = hint {
+            super::text_on_baseline(&p, rect.left() + pad_x, super::centered_baseline(rect, &font), h, font.clone(), hc);
+        }
+    } else if !focused {
+        super::field_text(&p, rect, pad_x, pad_x, &buf, font, color);
     }
     if out.lost_focus() {
         ui.data_mut(|d| d.remove_temp::<String>(id));
@@ -72,32 +98,62 @@ fn eval_simple(s: &str) -> Option<f32> {
 }
 
 /// Numeric field with a prefix label/icon. `value == None` shows "Mixed".
+///
+/// Figma UI3 (`ui-spec.json` `input_fields`): prefix letter or 16px icon at x+8 in
+/// `text_secondary`, value at x+24 (x+8 without a prefix), suffix right after the value
+/// in `text_secondary`. Integers print without decimals, other values with at most two.
 pub fn num_field(ui: &mut Ui, rect: Rect, key: impl crate::widgets::Key, prefix: Prefix, value: Option<f32>, suffix: &str) -> Option<f32> {
     #[cfg(test)]
     ui.ctx().data_mut(|d| d.insert_temp(Id::new(("field-rect", format!("{key:?}"))), rect));
     let id = ui.id().with(("num", key));
-    let display = match value {
-        Some(v) => format!("{}{}", fmt_num(v), suffix),
-        None => "Mixed".to_string(),
-    };
-    let pw = match prefix {
-        Prefix::None => 0.0,
-        _ => theme::FIELD_PREFIX_W,
-    };
+    let display = value.map(fmt_num).unwrap_or_default();
+    let has_prefix = !matches!(prefix, Prefix::None);
+    let pw = if has_prefix { theme::FIELD_PREFIX_W } else { 0.0 };
     field_bg(ui, rect, id);
-    let p = ui.painter();
-    let c = Pos2::new(rect.left() + pw / 2.0, rect.center().y);
+    let p = ui.painter().clone();
     match prefix {
         Prefix::None => {}
         Prefix::Text(s) => {
-            // Left-aligned label, 8px in; the value starts 24px in.
-            p.text(Pos2::new(rect.left() + theme::FIELD_PREFIX_X, rect.center().y), Align2::LEFT_CENTER, s, theme::font_body(), theme::TEXT_SECONDARY);
+            // 8px in; the value starts 24px in.
+            super::field_text(
+                &p,
+                rect,
+                theme::FIELD_PREFIX_X,
+                rect.width() - theme::FIELD_PREFIX_X - theme::FIELD_PREFIX_ICON,
+                s,
+                theme::font_body(),
+                theme::TEXT_SECONDARY,
+            );
         }
-        Prefix::Icon(i) => icons::paint(p, i, c, 12.0, theme::TEXT_SECONDARY),
+        Prefix::Icon(i) => {
+            let slot = Rect::from_min_size(
+                Pos2::new(rect.left() + theme::FIELD_PREFIX_X, rect.center().y - theme::FIELD_PREFIX_ICON / 2.0),
+                Vec2::splat(theme::FIELD_PREFIX_ICON),
+            );
+            super::paint_icon_in(&p, slot, i, theme::FIELD_PREFIX_ICON, theme::TEXT_SECONDARY);
+        }
     }
-    let scrubbed = if pw > 0.0 { scrub_prefix(ui, Rect::from_min_size(rect.min, egui::vec2(pw, rect.height())), id, value) } else { None };
-    let text_rect = Rect::from_min_max(Pos2::new(rect.left() + pw, rect.top()), rect.max);
-    edit_text(ui, text_rect, id, &display, theme::font_body(), theme::TEXT, if pw > 0.0 { 0.0 } else { 8.0 }).and_then(|s| parse_number(&s)).or(scrubbed)
+    let scrubbed = if has_prefix { scrub_prefix(ui, Rect::from_min_size(rect.min, egui::vec2(pw, rect.height())), id, value) } else { None };
+    // The suffix is drawn after the value, so the edit area stops short of it.
+    let font = theme::font_body();
+    let suffix_w = if suffix.is_empty() {
+        0.0
+    } else {
+        super::text_width(&p, suffix.trim_start(), &font) + if suffix.starts_with(' ') { theme::FIELD_SUFFIX_GAP } else { 0.0 }
+    };
+    let text_rect = Rect::from_min_max(Pos2::new(rect.left() + pw, rect.top()), Pos2::new((rect.right() - suffix_w).max(rect.left() + pw), rect.bottom()));
+    let hint = Some(("Mixed", theme::TEXT_SECONDARY));
+    let pad = if has_prefix { 0.0 } else { theme::FIELD_PLAIN_X };
+    let committed = edit_text_hint(ui, text_rect, id, &display, font.clone(), theme::TEXT, pad, hint);
+    if !suffix.is_empty() && !(value.is_none() && !ui.memory(|m| m.has_focus(id))) {
+        let shown = if ui.memory(|m| m.has_focus(id)) { ui.data(|d| d.get_temp::<String>(id)).unwrap_or_else(|| display.clone()) } else { display.clone() };
+        let x = text_rect.left() + pad + super::text_width(&p, &shown, &font) + if suffix.starts_with(' ') { theme::FIELD_SUFFIX_GAP } else { 0.0 };
+        let b = super::centered_baseline(rect, &font);
+        if x + suffix_w <= rect.right() + 0.5 {
+            super::text_on_baseline(&p.with_clip_rect(rect), x, b, suffix.trim_start(), font, theme::TEXT_SECONDARY);
+        }
+    }
+    committed.and_then(|s| parse_number(&s)).or(scrubbed)
 }
 
 /// Context-data key that is true while any numeric label is being scrubbed;
@@ -151,9 +207,15 @@ pub fn field_bg(ui: &Ui, rect: Rect, id: Id) {
 
 /// Plain text field with standard background; returns committed text.
 pub fn text_input(ui: &mut Ui, rect: Rect, key: impl crate::widgets::Key, display: &str) -> Option<String> {
+    text_input_ph(ui, rect, key, display, "")
+}
+
+/// [`text_input`] with a placeholder (in `text_tertiary`) shown while empty.
+pub fn text_input_ph(ui: &mut Ui, rect: Rect, key: impl crate::widgets::Key, display: &str, placeholder: &str) -> Option<String> {
     let id = ui.id().with(("txt", key));
     field_bg(ui, rect, id);
-    edit_text(ui, rect, id, display, theme::font_body(), theme::TEXT, 8.0)
+    let hint = (!placeholder.is_empty()).then_some((placeholder, theme::TEXT_TERTIARY));
+    edit_text_hint(ui, rect, id, display, theme::font_body(), theme::TEXT, theme::FIELD_PLAIN_X, hint)
 }
 
 #[cfg(test)]
