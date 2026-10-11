@@ -561,8 +561,8 @@ mod tests {
         d.get_mut(rect).unwrap().variables.modes.insert(c.clone(), mode.clone());
         let removed = s.delete_collection(&c);
         assert_eq!(removed.len(), 2);
-        assert!(s.variables.is_empty() && s.collections.contains_key(&c) == false);
-        let nodes = dangling_binding_cleanup(&d, &removed, &[c.clone()]);
+        assert!(s.variables.is_empty() && !s.collections.contains_key(&c));
+        let nodes = dangling_binding_cleanup(&d, &removed, std::slice::from_ref(&c));
         assert_eq!(nodes.len(), 1);
         assert!(nodes[0].variables.is_empty());
 
