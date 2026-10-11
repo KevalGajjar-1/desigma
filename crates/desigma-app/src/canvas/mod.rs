@@ -8,14 +8,14 @@ pub mod hit;
 pub mod interact;
 pub mod reorder;
 pub mod snap;
+pub mod tiles;
 pub mod tools;
 pub mod vector;
 
 use crate::app::App;
 use crate::edit::Tx;
 use desigma_doc::{Affine, NodeId, Rect, Vec2 as DV};
-use desigma_render::{tiny_skia, Viewport};
-use egui::{Context, Rect as ERect, Sense, TextureHandle, TextureOptions, Ui};
+use egui::{Context, Rect as ERect, Sense, Ui};
 use handles::Handle;
 
 pub struct Pending {
@@ -99,23 +99,12 @@ pub struct TextSession {
     pub created: bool,
 }
 
-#[derive(PartialEq, Clone, Copy)]
-struct RenderKey {
-    w: u32,
-    h: u32,
-    ox: u32,
-    oy: u32,
-    zoom: u32,
-    dpr: u32,
-    page: NodeId,
-}
-
 #[derive(Default)]
 pub struct CanvasState {
+    /// The document changed since the last paint (bumps the tile revision).
     pub dirty: bool,
-    tex: Option<TextureHandle>,
-    pixmap: Option<tiny_skia::Pixmap>,
-    last_key: Option<RenderKey>,
+    /// Tile cache and per-tile textures.
+    pub tiles: tiles::TileView,
     pub inter: Interaction,
     pub guides: Vec<snap::Guide>,
     pub measures: Vec<snap::Measure>,
@@ -138,6 +127,8 @@ impl CanvasState {
         self.pen = None;
         self.text = None;
         self.vedit = None;
+        // the page or the whole document may be different now
+        self.tiles.invalidate_all();
     }
 }
 
@@ -177,50 +168,13 @@ impl App {
     }
 }
 
-fn render(app: &mut App, ctx: &Context, rect: ERect) {
-    let ppp = ctx.pixels_per_point();
-    let w = (rect.width() * ppp).round().max(1.0) as u32;
-    let h = (rect.height() * ppp).round().max(1.0) as u32;
-    let key = RenderKey {
-        w,
-        h,
-        ox: app.view.offset.x.to_bits(),
-        oy: app.view.offset.y.to_bits(),
-        zoom: app.view.zoom.to_bits(),
-        dpr: ppp.to_bits(),
-        page: app.page,
-    };
-    let c = &mut app.canvas;
-    if !c.dirty && c.last_key == Some(key) && c.tex.is_some() {
-        return;
-    }
-    let start = std::time::Instant::now();
-    if c.pixmap.as_ref().map(|p| (p.width(), p.height())) != Some((w, h)) {
-        c.pixmap = tiny_skia::Pixmap::new(w, h);
-    }
-    let Some(pm) = c.pixmap.as_mut() else { return };
-    let vp = Viewport { offset: app.view.offset, zoom: app.view.zoom, dpr: ppp };
-    desigma_render::render_page(&app.doc, app.page, &vp, pm);
-    let img = egui::ColorImage::from_rgba_premultiplied([w as usize, h as usize], pm.data());
-    match c.tex.as_mut() {
-        Some(t) => t.set(img, TextureOptions::NEAREST),
-        None => c.tex = Some(ctx.load_texture("canvas", img, TextureOptions::NEAREST)),
-    }
-    c.last_key = Some(key);
-    c.dirty = false;
-    c.last_render_ms = start.elapsed().as_secs_f32() * 1000.0;
-}
-
 pub fn show(app: &mut App, ui: &mut Ui, rect: ERect) {
     app.canvas_rect = rect;
     if !app.first_fit_done {
         app.first_fit_done = true;
         app.fit_all();
     }
-    render(app, ui.ctx(), rect);
-    if let Some(tex) = &app.canvas.tex {
-        ui.painter().with_clip_rect(rect).image(tex.id(), rect, ERect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), egui::Color32::WHITE);
-    }
+    tiles::paint(app, ui, rect);
     let resp = ui.interact(rect, ui.id().with("canvas"), Sense::click_and_drag());
     interact::process(app, ui, rect, &resp);
     draw::overlays(app, ui, rect);

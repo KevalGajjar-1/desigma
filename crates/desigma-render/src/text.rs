@@ -8,10 +8,10 @@ use cosmic_text::{
 };
 use desigma_doc as d;
 use desigma_doc::{TextAutoResize, TextProps, Vec2};
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, OnceLock};
 use tiny_skia as sk;
 
 struct Fonts {
@@ -26,6 +26,23 @@ struct Fonts {
 thread_local! {
     static FONTS: RefCell<Option<Fonts>> = const { RefCell::new(None) };
     static LAYOUTS: RefCell<HashMap<u64, Rc<TextLayout>>> = RefCell::new(HashMap::new());
+    /// How many entries of [`EXTRA_FONTS`] this thread's font system has loaded.
+    static REPLAYED: Cell<usize> = const { Cell::new(0) };
+}
+
+/// Font blobs registered at runtime, in registration order. Every thread's
+/// font system replays this list, so tile workers see the same fonts as the
+/// thread that called [`register_font`].
+static EXTRA_FONTS: Mutex<Vec<Arc<Vec<u8>>>> = Mutex::new(Vec::new());
+
+/// The system + bundled font database, built once and cloned per thread (so
+/// scanning system fonts does not repeat for every worker).
+static BASE_DB: OnceLock<(fontdb::Database, HashSet<fontdb::ID>)> = OnceLock::new();
+
+/// Number of fonts registered through [`register_font`]; changes whenever the
+/// set of available fonts changes (tile caches use it to invalidate).
+pub fn font_generation() -> usize {
+    EXTRA_FONTS.lock().map(|v| v.len()).unwrap_or(0)
 }
 
 /// Outlines of laid out text, one path per style (index 0 = base style,
@@ -35,29 +52,36 @@ pub struct TextLayout {
     pub paths: Vec<Option<sk::Path>>,
 }
 
+fn base_db() -> &'static (fontdb::Database, HashSet<fontdb::ID>) {
+    BASE_DB.get_or_init(|| {
+        let mut db = fontdb::Database::new();
+        // Bundled fonts go in first and any system face claiming the same family
+        // is dropped, so "Inter" always resolves to the embedded copy.
+        let mut bundled = HashSet::new();
+        let mut owned = HashSet::new();
+        for asset in desigma_fonts::bundled() {
+            owned.insert(asset.family.to_lowercase());
+            bundled.extend(db.load_font_source(fontdb::Source::Binary(Arc::new(asset.data))));
+        }
+        db.load_system_fonts();
+        let shadowed: Vec<fontdb::ID> = db
+            .faces()
+            .filter(|f| !bundled.contains(&f.id) && f.families.iter().any(|(n, _)| owned.contains(&n.to_lowercase())))
+            .map(|f| f.id)
+            .collect();
+        for id in shadowed {
+            db.remove_face(id);
+        }
+        db.set_sans_serif_family("Inter");
+        (db, bundled)
+    })
+}
+
 fn init_fonts() -> Fonts {
-    let mut db = fontdb::Database::new();
-    // Bundled fonts go in first and any system face claiming the same family
-    // is dropped, so "Inter" always resolves to the embedded copy.
-    let mut bundled = HashSet::new();
-    let mut owned = HashSet::new();
-    for asset in desigma_fonts::bundled() {
-        owned.insert(asset.family.to_lowercase());
-        bundled.extend(db.load_font_source(fontdb::Source::Binary(Arc::new(asset.data))));
-    }
-    db.load_system_fonts();
-    let shadowed: Vec<fontdb::ID> = db
-        .faces()
-        .filter(|f| !bundled.contains(&f.id) && f.families.iter().any(|(n, _)| owned.contains(&n.to_lowercase())))
-        .map(|f| f.id)
-        .collect();
-    for id in shadowed {
-        db.remove_face(id);
-    }
-    db.set_sans_serif_family("Inter");
-    let fs = FontSystem::new_with_locale_and_db("en-US".to_string(), db);
+    let (db, bundled) = base_db();
+    let fs = FontSystem::new_with_locale_and_db("en-US".to_string(), db.clone());
     let families = family_names(&fs);
-    Fonts { fs, swash: SwashCache::new(), families, bundled }
+    Fonts { fs, swash: SwashCache::new(), families, bundled: bundled.clone() }
 }
 
 fn family_names(fs: &FontSystem) -> HashSet<String> {
@@ -75,19 +99,33 @@ fn with_fonts<R>(f: impl FnOnce(&mut Fonts) -> R) -> R {
         let mut slot = cell.borrow_mut();
         if slot.is_none() {
             *slot = Some(init_fonts());
+            REPLAYED.with(|r| r.set(0));
         }
-        f(slot.as_mut().unwrap())
+        let fonts = slot.as_mut().unwrap();
+        // Load fonts registered (possibly on another thread) since last use.
+        let pending: Vec<Arc<Vec<u8>>> = {
+            let all = EXTRA_FONTS.lock().unwrap_or_else(|e| e.into_inner());
+            let done = REPLAYED.with(|r| r.get());
+            all[done.min(all.len())..].to_vec()
+        };
+        if !pending.is_empty() {
+            for blob in &pending {
+                fonts.fs.db_mut().load_font_source(fontdb::Source::Binary(blob.clone()));
+            }
+            fonts.families = family_names(&fonts.fs);
+            REPLAYED.with(|r| r.set(r.get() + pending.len()));
+            LAYOUTS.with(|l| l.borrow_mut().clear());
+        }
+        f(fonts)
     })
 }
 
 /// Registers extra font data (e.g. a font fetched by `desigma-fonts`) with the
-/// shared font system. Cached layouts are discarded.
+/// shared font system. Every thread (including tile-render workers) loads it
+/// the next time it lays out text. Cached layouts are discarded.
 pub fn register_font(data: Vec<u8>) {
-    with_fonts(|f| {
-        f.fs.db_mut().load_font_data(data);
-        f.families = family_names(&f.fs);
-    });
-    LAYOUTS.with(|l| l.borrow_mut().clear());
+    EXTRA_FONTS.lock().unwrap_or_else(|e| e.into_inner()).push(Arc::new(data));
+    with_fonts(|_| ());
 }
 
 /// Compatible alias of [`register_font`].

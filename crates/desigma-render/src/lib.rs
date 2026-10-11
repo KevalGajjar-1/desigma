@@ -12,13 +12,17 @@ mod blur;
 mod boolean;
 mod effects;
 mod geom;
+mod index;
 mod paint;
 mod text;
+mod tiles;
 
 use desigma_doc::{Document, Effect, Node, NodeId, NodeKind, Vec2};
 use geom::{node_shape, to_sk_transform, transformed_bounds, Shape};
+pub use index::SceneIndex;
 use paint::{blend_mode, fill_paths, stroke_paths, PaintEnv};
-pub use text::{load_font_data, register_font, resolve_font, ResolvedFont};
+pub use text::{font_generation, load_font_data, register_font, resolve_font, ResolvedFont};
+pub use tiles::{Tile, TileBudget, TileCache, TileFrame, TileKey, TILE_SIZE};
 pub use tiny_skia;
 use tiny_skia as sk;
 
@@ -48,7 +52,44 @@ pub fn render_page(doc: &Document, page: NodeId, vp: &Viewport, target: &mut tin
     let Some(p) = doc.get(page) else { return };
     let s = vp.zoom * vp.dpr;
     let ts = sk::Transform::from_row(s, 0.0, 0.0, s, -vp.offset.x * s, -vp.offset.y * s);
-    let r = Renderer { doc, env: PaintEnv { doc } };
+    let r = Renderer { doc, env: PaintEnv { doc }, cull: None };
+    r.draw_children(&p.children, ts, target, None, None);
+}
+
+/// Like [`render_page`], but skips subtrees that do not intersect `target`
+/// using a cached spatial index. `rev` is a document revision counter: the
+/// index is rebuilt only when it (or `page`) changes since the last call, so
+/// callers must bump it on every document edit. Output is identical to
+/// [`render_page`].
+pub fn render_page_indexed(doc: &Document, page: NodeId, vp: &Viewport, target: &mut tiny_skia::Pixmap, idx: &mut SceneIndex, rev: u64) {
+    idx.ensure(doc, page, rev);
+    let s = vp.zoom * vp.dpr;
+    let ts = sk::Transform::from_row(s, 0.0, 0.0, s, -vp.offset.x * s, -vp.offset.y * s);
+    render_with_transform(doc, page, ts, target, Some(&*idx));
+}
+
+/// Paints `page` through `ts` (page space -> target pixels). `index`, if given,
+/// must have been built for this document revision and `ts` must be a pure
+/// scale + translate.
+pub(crate) fn render_with_transform(doc: &Document, page: NodeId, ts: sk::Transform, target: &mut sk::Pixmap, index: Option<&SceneIndex>) {
+    let bg = match doc.get(page).map(|n| &n.kind) {
+        Some(NodeKind::Page { background }) => paint::sk_color(background, 1.0),
+        _ => sk::Color::from_rgba8(0xF5, 0xF5, 0xF5, 0xFF),
+    };
+    target.fill(bg);
+    let Some(p) = doc.get(page) else { return };
+    let cull = index.map(|index| {
+        // page-space window covered by the target (1 device px of slack)
+        let (w, h) = (target.width() as f32, target.height() as f32);
+        let win = (
+            (-1.0 - ts.tx) / ts.sx,
+            (-1.0 - ts.ty) / ts.sy,
+            (w + 1.0 - ts.tx) / ts.sx,
+            (h + 1.0 - ts.ty) / ts.sy,
+        );
+        Cull { index, win }
+    });
+    let r = Renderer { doc, env: PaintEnv { doc }, cull };
     r.draw_children(&p.children, ts, target, None, None);
 }
 
@@ -59,7 +100,7 @@ pub fn render_node(doc: &Document, node: NodeId, scale: f32) -> Option<tiny_skia
     let w = (n.size.x * scale).ceil().max(1.0) as u32;
     let h = (n.size.y * scale).ceil().max(1.0) as u32;
     let mut pm = tiny_skia::Pixmap::new(w, h)?;
-    let r = Renderer { doc, env: PaintEnv { doc } };
+    let r = Renderer { doc, env: PaintEnv { doc }, cull: None };
     let ts = sk::Transform::from_scale(scale, scale);
     if let NodeKind::Page { background } = &n.kind {
         pm.fill(paint::sk_color(background, 1.0));
@@ -75,6 +116,14 @@ pub fn render_node(doc: &Document, node: NodeId, scale: f32) -> Option<tiny_skia
 struct Renderer<'a> {
     doc: &'a Document,
     env: PaintEnv<'a>,
+    /// Skips children whose cached page-space bounds miss the drawn window.
+    cull: Option<Cull<'a>>,
+}
+
+struct Cull<'a> {
+    index: &'a SceneIndex,
+    /// Visible window in page space (x0, y0, x1, y1).
+    win: index::B,
 }
 
 /// What is visible underneath the layer being drawn: `None` means the draw
@@ -129,6 +178,11 @@ impl Renderer<'_> {
     fn draw_children(&self, children: &[NodeId], parent_ts: sk::Transform, target: &mut sk::Pixmap, clip: Option<&sk::Mask>, back: Back) {
         for (i, cid) in children.iter().enumerate() {
             let Some(child) = self.doc.get(*cid) else { continue };
+            if let Some(c) = &self.cull {
+                if !child.is_mask && !c.index.may_touch(*cid, c.win) {
+                    continue;
+                }
+            }
             let ts = parent_ts.pre_concat(to_sk_transform(&child.transform));
             if child.is_mask {
                 if !child.visible {
@@ -191,24 +245,7 @@ impl Renderer<'_> {
 
     /// Extra extent (local units) around the node bounds touched by strokes/effects.
     fn margin(&self, n: &Node) -> f32 {
-        let mut m = 0.0f32;
-        if !self.visible_strokes(n).is_empty() {
-            let sw = n.stroke.side_weights.map(|s| s.iter().cloned().fold(0.0, f32::max)).unwrap_or(0.0);
-            m = m.max(n.stroke.weight.max(sw) * 2.0);
-        }
-        for e in &n.effects {
-            match e {
-                Effect::DropShadow { offset, radius, spread, visible: true, .. } => {
-                    m = m.max(offset.x.abs().max(offset.y.abs()) + spread.max(0.0) + radius * 1.6 + 2.0)
-                }
-                Effect::LayerBlur { radius, visible: true } => m = m.max(radius * 1.6 + 2.0),
-                _ => {}
-            }
-        }
-        if let NodeKind::Text(t) = &n.kind {
-            m = m.max(t.style.font_size * 2.0);
-        }
-        m
+        index::node_margin(n)
     }
 
     fn bbox(&self, n: &Node, ts: &sk::Transform) -> effects::BBox {
@@ -418,7 +455,8 @@ impl Renderer<'_> {
             }
         }
         if Self::draws_children(n) {
-            self.draw_children(&n.children, ts2, pm, None, None);
+            // silhouettes are drawn offset from the page grid, so no culling
+            Renderer { doc: self.doc, env: PaintEnv { doc: self.doc }, cull: None }.draw_children(&n.children, ts2, pm, None, None);
         }
     }
 
