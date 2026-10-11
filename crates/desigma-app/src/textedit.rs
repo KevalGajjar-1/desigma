@@ -83,7 +83,9 @@ pub fn clean_input(s: &str) -> String {
 pub enum EditKind {
     Typing,
     Deleting,
-    /// Anything that always stands alone: paste, cut, style changes, lists, Enter.
+    /// Inspector style edits (scrubbing a size, dragging a colour): coalesced per burst.
+    Style,
+    /// Anything that always stands alone: paste, cut, shortcuts, lists, Enter.
     Other,
 }
 
@@ -112,7 +114,7 @@ impl UndoLog {
     /// `new_word` forces a step (the typed char starts a new word).
     pub fn record(&mut self, before: Snap, kind: EditKind, now: f64, new_word: bool) {
         let continues = match (self.last, kind) {
-            (Some((k, t)), EditKind::Typing | EditKind::Deleting) => k == kind && now - t < BURST_SECONDS && !new_word,
+            (Some((k, t)), EditKind::Typing | EditKind::Deleting | EditKind::Style) => k == kind && now - t < BURST_SECONDS && !new_word,
             _ => false,
         };
         self.last = Some((kind, now));

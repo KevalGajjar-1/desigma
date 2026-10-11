@@ -699,6 +699,54 @@ fn text_tool_auto_resizes_with_real_measurement() {
     s.key(Key::Escape);
 }
 
+fn text_of(s: &Sim, id: NodeId) -> desigma_doc::TextProps {
+    match &s.app().doc.get(id).unwrap().kind {
+        NodeKind::Text(t) => t.clone(),
+        k => panic!("{k:?}"),
+    }
+}
+
+#[test]
+fn inspector_edits_only_the_selected_range() {
+    let mut s = Sim::new();
+    s.key(Key::T);
+    let p = s.screen(300.0, 820.0);
+    s.click(p);
+    s.type_text("hello world");
+    let id = s.app().selection[0];
+    // select "hello" with Home + Shift+Right x5
+    s.cmd_key(Key::Home);
+    s.mods = Modifiers::SHIFT;
+    for _ in 0..5 {
+        s.key(Key::ArrowRight);
+    }
+    s.mods = Modifiers::NONE;
+    s.frame(vec![]);
+    assert_eq!(s.app().canvas.text.as_ref().unwrap().range(), 0..5);
+    let r = s.field_rect("font-size");
+    s.click(Pos2::new(r.left() + 40.0, r.center().y));
+    s.type_text("30");
+    s.key(Key::Enter);
+    let t = text_of(&s, id);
+    assert_eq!(t.runs.len(), 1, "{:?}", t.runs);
+    assert_eq!((t.runs[0].start, t.runs[0].end, t.runs[0].style.font_size), (0, 5, 30.0));
+    assert_ne!(t.style.font_size, 30.0, "the rest keeps its size");
+    // the whole text now reports a mixed size
+    s.cmd_key(Key::A);
+    let sum = crate::canvas::textsession::session_summary(s.app()).unwrap();
+    assert_eq!(sum.size, None);
+    assert_eq!(sum.family, Some("Inter".to_string()));
+    // Ctrl+B bolds only the selection (here: everything), Ctrl+Z inside the session undoes it
+    s.cmd_key(Key::B);
+    let all = |s: &Sim| { let t = text_of(s, id); crate::richtext::summary(&t, 0..t.content.len()).weight };
+    assert_eq!(all(&s), Some(700));
+    s.cmd_key(Key::Z);
+    assert_eq!(all(&s), Some(400));
+    s.key(Key::Escape);
+    s.cmd_key(Key::Z);
+    assert!(s.app().doc.get(id).is_none(), "leaving the session commits one undoable step");
+}
+
 mod components;
 mod menus;
 mod proto;

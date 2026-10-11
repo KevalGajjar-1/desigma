@@ -339,6 +339,11 @@ fn undo_step(app: &mut App, redo: bool) {
 /// of a collapsed caret; or to the whole text when it is empty). Returns false
 /// when no session is open.
 pub fn style_selection(app: &mut App, f: impl Fn(&mut TextStyle)) -> bool {
+    style_selection_as(app, f, EditKind::Other)
+}
+
+/// [`style_selection`] with an explicit undo kind (inspector edits coalesce).
+pub fn style_selection_as(app: &mut App, f: impl Fn(&mut TextStyle), kind: EditKind) -> bool {
     let Some(sess) = app.canvas.text.as_ref() else { return false };
     let range = sess.range();
     let empty_text = props_of(app).is_none_or(|(t, _)| t.content.is_empty());
@@ -352,7 +357,7 @@ pub fn style_selection(app: &mut App, f: impl Fn(&mut TextStyle)) -> bool {
         }
         return true;
     }
-    edit_props(app, Some((EditKind::Other, true)), |t, _, _| {
+    edit_props(app, Some((kind, kind == EditKind::Other)), |t, _, _| {
         if empty_text {
             richtext::apply_all(t, &f);
         } else {
@@ -360,6 +365,11 @@ pub fn style_selection(app: &mut App, f: impl Fn(&mut TextStyle)) -> bool {
         }
     });
     true
+}
+
+/// Edits the base style of the edited text (paragraph level fields such as alignment).
+pub fn base_style(app: &mut App, f: impl Fn(&mut TextStyle)) {
+    edit_props(app, Some((EditKind::Other, true)), |t, _, _| f(&mut t.style));
 }
 
 /// Style summary of the open session's selection (for the inspector).

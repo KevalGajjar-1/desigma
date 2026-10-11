@@ -5,7 +5,6 @@ use super::{clipped, scrollbar, wheel_scroll};
 use crate::app::App;
 use crate::edit::Tx;
 use crate::icons::{self, Icon};
-use crate::layout;
 use crate::ops::{apply_resize, Align};
 use crate::theme;
 use crate::util::v2;
@@ -24,6 +23,8 @@ pub enum PickTarget {
     Shadow(usize),
     /// A colour from the Selection colors list (rgb of the colour being replaced).
     SelColor(u32),
+    /// The colour of text (the edited character range, or every run of the selected text layers).
+    TextFill,
 }
 
 pub struct Picker {
@@ -110,7 +111,7 @@ pub(super) fn row_end(pane: &mut Pane) {
     pane.y += theme::FIELD_HEIGHT + 4.0;
 }
 
-fn segmented(ui: &mut Ui, pane: &Pane, x: f32, key: &str, items: &[Icon], selected: Option<usize>) -> Option<usize> {
+pub(super) fn segmented(ui: &mut Ui, pane: &Pane, x: f32, key: &str, items: &[Icon], selected: Option<usize>) -> Option<usize> {
     let mut out = None;
     let n = items.len();
     for (i, icon) in items.iter().enumerate() {
@@ -520,7 +521,7 @@ fn selection_ui(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[NodeId]) {
     if let NodeKind::Text(t) = &n0.kind {
         section_sep(ui, pane, false);
         title(ui, pane, "Typography", None, false);
-        text_ui(app, ui, pane, sel, t);
+        super::typography::section(app, ui, pane, sel, t);
         pane.y += 4.0;
     }
 
@@ -780,74 +781,6 @@ fn update_al(app: &mut App, sel: &[NodeId], f: impl Fn(&mut AutoLayout)) {
     });
 }
 
-fn text_ui(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[NodeId], t: &TextProps) {
-    let s = &t.style;
-    let fam = pane.full(0.0);
-    if let Some(v) = field::text_input(ui, fam, "font-family", &s.font_family) {
-        app.edit_nodes(sel, |n| {
-            if let NodeKind::Text(t) = &mut n.kind {
-                t.style.font_family = v.clone();
-            }
-        });
-    }
-    row_end(pane);
-    let weights = [("Thin", 100u16), ("Extra Light", 200), ("Light", 300), ("Regular", 400), ("Medium", 500), ("Semi Bold", 600), ("Bold", 700), ("Extra Bold", 800), ("Black", 900)];
-    let names: Vec<String> = weights.iter().map(|w| w.0.to_string()).collect();
-    let cur = weights.iter().min_by_key(|w| (w.1 as i32 - s.font_weight as i32).abs()).map(|w| w.0).unwrap_or("Regular");
-    if let Some(i) = dropdown(ui, pane.col(0, 0.0), "font-weight", cur, &names) {
-        let w = weights[i].1;
-        app.edit_nodes(sel, |n| {
-            if let NodeKind::Text(t) = &mut n.kind {
-                t.style.font_weight = w;
-            }
-        });
-    }
-    if let Some(v) = field::num_field(ui, pane.col(1, 0.0), "font-size", Prefix::Text("S"), Some(s.font_size), "") {
-        let v = v.max(1.0);
-        app.edit_nodes(sel, |n| {
-            if let NodeKind::Text(t) = &mut n.kind {
-                t.style.font_size = v;
-                n.size = layout::fit_text(t, n.size);
-            }
-        });
-    }
-    row_end(pane);
-    let lh = match s.line_height {
-        LineHeight::Auto => None,
-        LineHeight::Pixels(p) => Some(p),
-        LineHeight::Percent(p) => Some(s.font_size * p / 100.0),
-    };
-    if let Some(v) = field::num_field(ui, pane.col(0, 0.0), "line-height", Prefix::Text("↕"), lh.or(Some((s.font_size * 1.21 * 10.0).round() / 10.0)), "") {
-        app.edit_nodes(sel, |n| {
-            if let NodeKind::Text(t) = &mut n.kind {
-                t.style.line_height = LineHeight::Pixels(v.max(1.0));
-            }
-        });
-    }
-    if let Some(v) = field::num_field(ui, pane.col(1, 0.0), "letter-spacing", Prefix::Text("↔"), Some(s.letter_spacing), "") {
-        app.edit_nodes(sel, |n| {
-            if let NodeKind::Text(t) = &mut n.kind {
-                t.style.letter_spacing = v;
-            }
-        });
-    }
-    row_end(pane);
-    let cur = match s.align_h {
-        TextAlignH::Left | TextAlignH::Justified => 0,
-        TextAlignH::Center => 1,
-        TextAlignH::Right => 2,
-    };
-    if let Some(i) = segmented(ui, pane, theme::SECTION_CONTENT_X, "text-align", &[Icon::TextLeft, Icon::TextCenter, Icon::TextRight], Some(cur)) {
-        let a = [TextAlignH::Left, TextAlignH::Center, TextAlignH::Right][i];
-        app.edit_nodes(sel, |n| {
-            if let NodeKind::Text(t) = &mut n.kind {
-                t.style.align_h = a;
-            }
-        });
-    }
-    row_end(pane);
-}
-
 // ---------------------------------------------------------------- paints
 fn paint_label(p: &Paint) -> String {
     match &p.kind {
@@ -1105,6 +1038,13 @@ fn apply_picker(doc: &mut Document, p: &mut Picker) {
                 }
             }
             PickTarget::SelColor(_) => {}
+            PickTarget::TextFill => {
+                if let NodeKind::Text(t) = &mut n.kind {
+                    let col = Color { a: 1.0, ..c };
+                    let op = c.a;
+                    crate::richtext::apply_all(t, |st| super::typography::set_solid(st, col, Some(op)));
+                }
+            }
             PickTarget::PageBg => n.kind = NodeKind::Page { background: c },
             PickTarget::Shadow(i) => {
                 if let Some(e) = n.effects.get_mut(i) {
@@ -1133,9 +1073,16 @@ pub(super) fn picker_popup(app: &mut App, ui: &mut Ui, region: Rect) {
         rect
     });
     if changed {
-        pk.tx.ed.revert(&mut app.doc);
-        apply_picker(&mut app.doc, &mut pk);
-        app.changed();
+        if pk.target == PickTarget::TextFill && app.canvas.text.is_some() {
+            // Colour of the characters being edited: goes through the text session.
+            let c = from_c32(pk.color);
+            let col = Color { a: 1.0, ..c };
+            crate::canvas::textsession::style_selection_as(app, |st| super::typography::set_solid(st, col, Some(c.a)), crate::textedit::EditKind::Style);
+        } else {
+            pk.tx.ed.revert(&mut app.doc);
+            apply_picker(&mut app.doc, &mut pk);
+            app.changed();
+        }
     }
     let (pressed, ptr, esc) = ctx.input(|i| (i.pointer.any_pressed(), i.pointer.interact_pos(), i.key_pressed(egui::Key::Escape)));
     let outside = pressed && ptr.map(|p| !area.inner.contains(p) && !pk.anchor.contains(p)).unwrap_or(false);

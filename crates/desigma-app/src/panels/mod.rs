@@ -11,6 +11,7 @@ pub mod prototype;
 pub mod rail;
 pub mod right;
 pub mod toolbar;
+pub mod typography;
 
 use crate::theme;
 use egui::{Rect, Ui};
