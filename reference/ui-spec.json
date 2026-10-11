@@ -700,5 +700,220 @@
     },
     "page_title_action": "icon button at x=209 (page settings)",
     "styles_groups": "group label 'Color styles' in text_secondary, rows 32px with 16px swatch circle + name"
+  },
+  "variables_view": {
+    "_note": "Figma UI3 local variables, measured at 800x600 dpr 1 (reference/screens/figma-800x600-variables.png). It is a full view, not a modal: it replaces the left panel, canvas and right panel; the rail stays with Variables active. URL state view=variables.",
+    "rail": {
+      "active_item": "Variables",
+      "active_tile": "bg_selected"
+    },
+    "sidebar": {
+      "x": 57,
+      "width": 240,
+      "border_right": 1,
+      "bg": "bg",
+      "header": {
+        "file_name": "same as editor left header (13px w550), sidebar-toggle icon at right"
+      },
+      "collections_title": {
+        "text": "Collections",
+        "x": 72,
+        "y": 61,
+        "font": "body_medium weight 600"
+      },
+      "collections_actions": {
+        "icons": [
+          "collection settings (sliders)",
+          "+ new collection"
+        ],
+        "size": 24,
+        "right_pad": 8,
+        "y": 57
+      },
+      "collection_row": {
+        "x": 57,
+        "w": 240,
+        "h": 32,
+        "pad_x": 15,
+        "font": "body_medium weight 600",
+        "selected_bg": "bg_secondary",
+        "selected_inset_x": 10,
+        "radius": 5,
+        "count": {
+          "align": "right",
+          "color": "text_secondary",
+          "font": "body_medium weight 400"
+        }
+      },
+      "section_separator": {
+        "y": 129,
+        "color": "border"
+      },
+      "groups_title": {
+        "text": "Groups",
+        "x": 73,
+        "y": 142,
+        "font": "body_medium weight 550"
+      },
+      "group_row": {
+        "x": 65,
+        "w": 224,
+        "h": 32,
+        "pad_x": 8,
+        "font": "body_medium weight 600",
+        "selected_bg": "bg_selected",
+        "radius": 5,
+        "count": {
+          "align": "right",
+          "color": "text_secondary"
+        },
+        "first_row": "All",
+        "nesting": "groups from '/' in names, indented 16px per level, disclosure chevrons"
+      }
+    },
+    "top_bar": {
+      "x": 298,
+      "h": 48,
+      "border_bottom": 1,
+      "title": {
+        "text": "<collection name>",
+        "x": 318,
+        "font": "body_large (13px w450)",
+        "rename_on_double_click": true
+      },
+      "search": {
+        "x_from_right": 289,
+        "y": 12,
+        "w": 151,
+        "h": 24,
+        "bg": "bg_secondary",
+        "radius": [
+          5,
+          0,
+          0,
+          5
+        ],
+        "placeholder": "Search",
+        "icon": "magnifier left"
+      },
+      "filter_button": {
+        "w": 24,
+        "h": 24,
+        "attached_right_of_search": true,
+        "radius": [
+          0,
+          5,
+          5,
+          0
+        ],
+        "bg": "bg_secondary",
+        "icon": "filter (lines in circle)"
+      },
+      "collapse_button": {
+        "x_from_right": 101,
+        "y": 12,
+        "size": 24,
+        "radius": 5,
+        "icon": "collapse arrows (exit full view)"
+      },
+      "_no_share": "Figma shows Share here; desigma has no sharing, omit it and keep spacing balanced"
+    },
+    "table": {
+      "x": 298,
+      "header_y": 49,
+      "header_h": 40,
+      "header_bg": "bg",
+      "header_font": "body_medium weight 600",
+      "header_text_x_pad": 16,
+      "columns": {
+        "name": {
+          "x": 298,
+          "w": 201
+        },
+        "mode": {
+          "w": 280,
+          "repeat_per_mode": true,
+          "header_text": "mode name ('Value' when one default mode)"
+        },
+        "add_mode": {
+          "w": 40,
+          "icon": "+",
+          "header_only": true
+        }
+      },
+      "grid_lines": {
+        "color": "border",
+        "width": 1,
+        "vertical_between_columns": true,
+        "horizontal_between_rows": true
+      },
+      "row": {
+        "first_y": 89,
+        "pitch": 41,
+        "h": 40,
+        "hover_bg": "bg_hover",
+        "selected_bg": "bg_selected"
+      },
+      "name_cell": {
+        "icon": {
+          "x_pad": 16,
+          "size": 16,
+          "kinds": {
+            "color": "palette",
+            "number": "#-ish number",
+            "string": "Aa text",
+            "boolean": "toggle"
+          },
+          "color": "icon_secondary"
+        },
+        "text_x": 44,
+        "font": "body_medium weight 400"
+      },
+      "value_cell": {
+        "pad_x": 16,
+        "swatch": {
+          "size": 16,
+          "radius": "20%",
+          "x": 17
+        },
+        "hex_field": {
+          "x": 36,
+          "w": 140,
+          "h": 24,
+          "radius": 5,
+          "hover_bg": "bg_secondary"
+        },
+        "opacity_field": {
+          "x_from_cell_right": 74,
+          "w": 62,
+          "h": 24,
+          "bg": "bg_secondary",
+          "radius": 5,
+          "shown": "on row hover / focus"
+        },
+        "alias": "pill with variable name, bg bg_secondary, radius 5"
+      },
+      "group_header_row": "when 'All' is selected, variables are grouped under bold group-name rows",
+      "scrollbar": "thin overlay, horizontal when mode columns overflow"
+    },
+    "bottom_bar": {
+      "h": 41,
+      "border_top": 1,
+      "create_button": {
+        "x_from_table": 8,
+        "y_from_bottom": 8,
+        "h": 24,
+        "radius": 5,
+        "pad": [
+          0,
+          8,
+          0,
+          4
+        ],
+        "icon": "+",
+        "label": "Create variable",
+        "font": "body_medium"
+      }
+    }
   }
 }
