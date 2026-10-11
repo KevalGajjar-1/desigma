@@ -1,0 +1,22 @@
+[package]
+name = "desigma-svg"
+description = "SVG import for desigma: maps a usvg tree onto desigma nodes"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+desigma-doc.workspace = true
+desigma-fonts = { path = "../desigma-fonts", default-features = false }
+desigma-render.workspace = true
+image = { workspace = true, features = ["jpeg", "gif", "webp"] }
+roxmltree = "0.20"
+thiserror.workspace = true
+usvg = { version = "0.45", default-features = false, features = ["text"] }
+
+[dev-dependencies]
+base64 = "0.22"
+desigma-fonts = { path = "../desigma-fonts", default-features = false }
+desigma-export.workspace = true
+resvg = { version = "0.45", default-features = false, features = ["text"] }
+tiny-skia.workspace = true
