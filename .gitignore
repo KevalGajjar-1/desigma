@@ -4,3 +4,6 @@
 *.fig.tmp
 /out
 /.claude/
+
+# Figma UI captures: local pixel references only, not redistributed
+/reference/screens/
