@@ -53,6 +53,7 @@ impl FontLoader {
         let loaded = report.loaded.len();
         for f in report.loaded {
             crate::textmeasure::register_font(f.data.clone());
+            desigma_export::register_font(f.data.clone());
             desigma_render::register_font(f.data);
         }
         let failed = report.failed.iter().map(|(req, err)| format!("{} {}: {err}", req.family, req.weight)).collect();

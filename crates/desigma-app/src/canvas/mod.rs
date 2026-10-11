@@ -224,6 +224,7 @@ pub fn show(app: &mut App, ui: &mut Ui, rect: ERect) {
     let resp = ui.interact(rect, ui.id().with("canvas"), Sense::click_and_drag());
     interact::process(app, ui, rect, &resp);
     draw::overlays(app, ui, rect);
+    crate::panels::inspect::measure_overlay(app, ui, rect);
     if resp.hovered() || !matches!(app.canvas.inter, Interaction::None) {
         if let Some(c) = app.canvas.cursor {
             ui.ctx().set_cursor_icon(c);
