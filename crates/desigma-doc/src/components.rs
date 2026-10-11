@@ -183,6 +183,12 @@ pub fn is_linked(n: &Node) -> bool {
     n.component.source.is_some()
 }
 
+/// True for an instance root (or any node mirroring a whole component), as
+/// opposed to nodes inside an instance's copy.
+pub fn is_top_instance(n: &Node) -> bool {
+    is_top(n)
+}
+
 fn is_top(n: &Node) -> bool {
     n.component.source.is_none() || n.component.source == instance_component(n)
 }
@@ -590,13 +596,21 @@ fn copy_field(f: OverrideField, from: &Node, to: &mut Node) {
 }
 
 /// Copies every field of `r` that `n` does not override onto `n`.
-fn apply_reference(r: &Node, n: &mut Node, top: bool) {
+fn apply_reference(r: &Node, n: &mut Node, top: bool, values: &BTreeMap<String, PropValue>) {
     let ov = n.component.overrides.clone();
+    // Text whose characters differ from the main (override or bound property)
+    // keeps its own, already fitted, size when it sizes itself to its content.
+    let bound_text = r.component.bindings.get(&OverrideField::Characters).is_some_and(|p| values.contains_key(p));
+    let own_text = (ov.contains(&OverrideField::Characters) || bound_text)
+        && matches!(&n.kind, NodeKind::Text(t) if matches!(t.auto_resize, TextAutoResize::WidthAndHeight | TextAutoResize::Height));
     for f in OverrideField::ALL {
         if ov.contains(&f) || f == OverrideField::MainComponent {
             continue;
         }
         if top && matches!(f, OverrideField::Transform | OverrideField::Visible | OverrideField::Locked) {
+            continue;
+        }
+        if own_text && f == OverrideField::Size {
             continue;
         }
         // Text runs belong to the characters; keep them when those are overridden.
@@ -765,7 +779,7 @@ fn sync_pair(c: &mut Ctx, r: NodeId, i: NodeId, top: bool, holder: NodeId) {
 
     // --- node properties ---
     let mut n = inode.clone();
-    apply_reference(&rn, &mut n, top);
+    apply_reference(&rn, &mut n, top, &values);
     apply_bindings(&mut n, &values);
     c.update(n);
 
@@ -814,6 +828,25 @@ fn sync_pair(c: &mut Ctx, r: NodeId, i: NodeId, top: bool, holder: NodeId) {
 // ---------------------------------------------------------------------------
 // Properties
 // ---------------------------------------------------------------------------
+
+/// Swaps an instance to another component (manual "Swap instance"). The
+/// instance keeps its position and records a `MainComponent` override.
+pub fn swap_instance(doc: &mut Document, instance: NodeId, new_comp: NodeId) -> Command {
+    let mut c = Ctx::new(doc);
+    let Some(n) = c.s.get(instance) else { return nothing() };
+    if instance_component(n) == Some(new_comp) || !matches!(c.s.get(new_comp).map(|x| &x.kind), Some(NodeKind::Component(_))) {
+        return nothing();
+    }
+    if new_comp == instance || c.s.is_ancestor(new_comp, instance) {
+        return nothing();
+    }
+    swap_main(&mut c, instance, new_comp);
+    if let Some(mut n) = c.s.get(instance).cloned() {
+        n.component.overrides.insert(OverrideField::MainComponent);
+        c.update(n);
+    }
+    c.finish(doc)
+}
 
 /// Sets (or with `None` clears) a component property value on an instance
 /// root and re-syncs it: toggles visibility, swaps text, instance or variant.
@@ -1546,5 +1579,55 @@ mod tests {
         assert_eq!(enclosing_component(&f.d, f.label), Some(f.comp));
         assert_eq!(enclosing_component(&f.d, i), None);
         assert_eq!(parse_variant_name("A=1, B = two"), vec![("A".into(), "1".into()), ("B".into(), "two".into())]);
+    }
+
+    #[test]
+    fn manual_swap_replaces_children_and_survives_sync() {
+        let mut f = fx();
+        let i = inst(&mut f, (200.0, 0.0));
+        let id = f.d.alloc_id();
+        let mut alt = Node::frame(id, Rect::new(0.0, 300.0, 50.0, 50.0));
+        alt.name = "Alt".into();
+        let alt = f.d.insert(f.page, alt).unwrap();
+        let id = f.d.alloc_id();
+        f.d.insert(alt, Node::ellipse(id, Rect::new(0.0, 0.0, 10.0, 10.0))).unwrap();
+        let c = create_component(&mut f.d, alt);
+        apply(&mut f.d, c);
+        let c = swap_instance(&mut f.d, i, alt);
+        let inv = apply(&mut f.d, c);
+        let n = f.d.get(i).unwrap();
+        assert_eq!(instance_component(n), Some(alt));
+        assert_eq!(n.children.len(), 1);
+        assert!(n.component.overrides.contains(&OverrideField::MainComponent));
+        assert_eq!(n.transform.translation(), Vec2::new(200.0, 0.0));
+        set_fill(&mut f.d, f.bg, Color::rgb(5, 5, 5));
+        let c = sync_instances(&mut f.d, f.comp);
+        apply(&mut f.d, c);
+        assert_eq!(f.d.get(i).unwrap().children.len(), 1);
+        apply(&mut f.d, inv);
+        assert_eq!(instance_component(f.d.get(i).unwrap()), Some(f.comp));
+        assert_eq!(f.d.get(i).unwrap().children.len(), 3);
+    }
+
+    #[test]
+    fn text_with_own_characters_keeps_its_fitted_size() {
+        let mut f = fx();
+        let i = inst(&mut f, (200.0, 0.0));
+        let l = child_named(&f.d, i, "label");
+        let mut n = f.d.get(l).unwrap().clone();
+        if let NodeKind::Text(t) = &mut n.kind {
+            t.content = "A much longer label".into();
+        }
+        n.size = Vec2::new(140.0, 20.0);
+        n.component.overrides.insert(OverrideField::Characters);
+        apply(&mut f.d, Command::Update { node: Box::new(n) });
+        let mut m = f.d.get(f.label).unwrap().clone();
+        m.opacity = 0.5;
+        apply(&mut f.d, Command::Update { node: Box::new(m) });
+        let c = sync_instances(&mut f.d, f.comp);
+        apply(&mut f.d, c);
+        let n = f.d.get(l).unwrap();
+        assert_eq!(n.opacity, 0.5);
+        assert_eq!(n.size, Vec2::new(140.0, 20.0));
     }
 }
