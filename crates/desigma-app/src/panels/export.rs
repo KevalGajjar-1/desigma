@@ -7,7 +7,7 @@ use crate::theme;
 use crate::widgets::field;
 use crate::widgets::menu::{dropdown, popup_menu, MenuItem, MenuResult};
 use crate::widgets::{self, elide};
-use desigma_doc::{Document, NodeId, Rect as DRect};
+use desigma_doc::{Document, ExportConstraint, ExportFileFormat, ExportPreset, NodeId, Rect as DRect};
 use desigma_export::{ExportFormat, ExportScale, ExportSetting};
 use egui::{Align2, Id, Pos2, Rect, Sense, TextureHandle, TextureOptions, Ui, Vec2};
 use std::collections::HashMap;
@@ -15,8 +15,11 @@ use std::hash::{Hash, Hasher};
 
 const ROW_GAP: f32 = 8.0;
 const PREVIEW_H: f32 = 120.0;
-const SCALE_W: f32 = 72.0;
-const FORMAT_W: f32 = 72.0;
+// scale | suffix | format | remove, filling the 184px content width.
+const COL_GAP: f32 = 4.0;
+const SCALE_W: f32 = 56.0;
+const SUFFIX_W: f32 = 36.0;
+const FORMAT_W: f32 = 56.0;
 const THUMB_CHECK_SECONDS: f64 = 0.3;
 
 /// What "Copy as" can put on the clipboard.
@@ -37,16 +40,95 @@ struct Thumb {
     checked: f64,
 }
 
-fn rows_id(node: NodeId) -> Id {
-    Id::new(("export-rows", node))
+/// The inspector's scale parsing ("2x", "512w", "512h") as the stored constraint.
+pub fn constraint_of(s: ExportScale) -> ExportConstraint {
+    match s {
+        ExportScale::Factor(f) => ExportConstraint::Scale(f),
+        ExportScale::Width(w) => ExportConstraint::Width(w as f32),
+        ExportScale::Height(h) => ExportConstraint::Height(h as f32),
+    }
 }
 
-fn load_rows(ui: &Ui, node: NodeId) -> Vec<ExportSetting> {
-    ui.ctx().data(|d| d.get_temp::<Vec<ExportSetting>>(rows_id(node))).unwrap_or_default()
+/// Inverse of [`constraint_of`].
+pub fn scale_of(c: ExportConstraint) -> ExportScale {
+    match c {
+        ExportConstraint::Scale(f) => ExportScale::Factor(f),
+        ExportConstraint::Width(w) => ExportScale::Width(w.round().max(1.0) as u32),
+        ExportConstraint::Height(h) => ExportScale::Height(h.round().max(1.0) as u32),
+    }
 }
 
-fn store_rows(ui: &Ui, node: NodeId, rows: Vec<ExportSetting>) {
-    ui.ctx().data_mut(|d| d.insert_temp(rows_id(node), rows));
+fn format_of(f: ExportFileFormat) -> Option<ExportFormat> {
+    match f {
+        ExportFileFormat::Png => Some(ExportFormat::Png),
+        ExportFileFormat::Jpg => Some(ExportFormat::Jpg),
+        ExportFileFormat::Svg => Some(ExportFormat::Svg),
+        ExportFileFormat::Pdf => None,
+    }
+}
+
+fn file_format_of(f: ExportFormat) -> ExportFileFormat {
+    match f {
+        ExportFormat::Png => ExportFileFormat::Png,
+        ExportFormat::Jpg => ExportFileFormat::Jpg,
+        ExportFormat::Svg => ExportFileFormat::Svg,
+    }
+}
+
+fn format_label(f: ExportFileFormat) -> &'static str {
+    match format_of(f) {
+        Some(x) => x.label(),
+        None => "PDF",
+    }
+}
+
+/// Renderable form of a stored preset; `None` for formats that cannot be written (PDF).
+pub fn setting_of(p: &ExportPreset) -> Option<ExportSetting> {
+    Some(ExportSetting { scale: scale_of(p.constraint), format: format_of(p.format)? })
+}
+
+/// Output file name: layer name + the preset's suffix (or the `@2x` style default).
+pub fn preset_file_name(p: &ExportPreset, layer: &str) -> String {
+    let s = setting_of(p).unwrap_or_default();
+    let name = s.file_name(layer);
+    if p.suffix.is_empty() {
+        return name;
+    }
+    let ext = s.format.extension();
+    format!("{}{}.{ext}", desigma_export::sanitize_file_name(layer), p.suffix)
+}
+
+/// Rows every selected node has (in the first node's order). With one node: all its rows.
+pub fn shared_rows(doc: &Document, sel: &[NodeId]) -> Vec<ExportPreset> {
+    let Some(first) = sel.first().and_then(|id| doc.get(*id)) else { return vec![] };
+    first.export_settings.iter().filter(|p| sel[1..].iter().all(|id| doc.get(*id).is_some_and(|n| n.export_settings.contains(p)))).cloned().collect()
+}
+
+/// One edit of the shared rows.
+#[derive(Clone, Debug, PartialEq)]
+pub enum RowEdit {
+    Add(ExportPreset),
+    Replace(ExportPreset, ExportPreset),
+    Remove(ExportPreset),
+}
+
+impl App {
+    /// Applies a row edit to every node in `sel` as one undo step.
+    pub fn edit_export_rows(&mut self, sel: &[NodeId], edit: &RowEdit) {
+        self.edit_nodes(sel, |n| match edit {
+            RowEdit::Add(p) => n.export_settings.push(p.clone()),
+            RowEdit::Replace(old, new) => {
+                if let Some(slot) = n.export_settings.iter_mut().find(|p| *p == old) {
+                    *slot = new.clone();
+                }
+            }
+            RowEdit::Remove(old) => {
+                if let Some(i) = n.export_settings.iter().position(|p| p == old) {
+                    n.export_settings.remove(i);
+                }
+            }
+        });
+    }
 }
 
 fn fingerprint(doc: &Document, root: NodeId) -> u64 {
@@ -95,7 +177,9 @@ fn thumbnail(app: &App, ui: &Ui, node: NodeId) -> Option<Thumb> {
 pub fn section(app: &mut App, ui: &mut Ui, x0: f32, top: f32, sel: &[NodeId]) -> f32 {
     let Some(&first) = sel.first() else { return 0.0 };
     let name = app.doc.get(first).map(|n| n.name.clone()).unwrap_or_default();
-    let mut rows = load_rows(ui, first);
+    let rows = shared_rows(&app.doc, sel);
+    let any_rows = sel.iter().any(|id| app.doc.get(*id).is_some_and(|n| !n.export_settings.is_empty()));
+    let mut edit: Option<RowEdit> = None;
     let at = |x: f32, dy: f32, w: f32, h: f32| Rect::from_min_size(Pos2::new(x0 + x, top + dy), Vec2::new(w, h));
     let mut y = 0.0;
 
@@ -112,17 +196,17 @@ pub fn section(app: &mut App, ui: &mut Ui, x0: f32, top: f32, sel: &[NodeId]) ->
     let title_resp = ui.interact(title, ui.id().with("export-title"), Sense::click());
     let plus = at(theme::SECTION_TRAILING_X, 8.0, theme::PANEL_ACTION_BUTTON, theme::PANEL_ACTION_BUTTON);
     if widgets::icon_button(ui, plus, "export-add", Icon::Plus, false, "Add export setting").clicked() {
-        rows.push(rows.last().cloned().unwrap_or_default());
-        store_rows(ui, first, rows.clone());
+        edit = Some(RowEdit::Add(rows.last().cloned().unwrap_or_default()));
     }
     y += theme::SECTION_TITLE_HEIGHT;
 
-    // Rows.
-    let mut remove = None;
-    let mut changed = false;
-    for (i, row) in rows.iter_mut().enumerate() {
+    // Rows (the ones every selected layer has).
+    for (i, old) in rows.iter().enumerate() {
+        let mut row = old.clone();
+        let mut changed = false;
         let scale_r = at(theme::SECTION_CONTENT_X, y, SCALE_W, theme::FIELD_HEIGHT);
-        let fmt_r = at(theme::SECTION_CONTENT_X + SCALE_W + ROW_GAP, y, FORMAT_W, theme::FIELD_HEIGHT);
+        let suffix_r = at(theme::SECTION_CONTENT_X + SCALE_W + COL_GAP, y, SUFFIX_W, theme::FIELD_HEIGHT);
+        let fmt_r = at(theme::SECTION_CONTENT_X + SCALE_W + SUFFIX_W + COL_GAP * 2.0, y, FORMAT_W, theme::FIELD_HEIGHT);
         let minus =
             at(theme::SECTION_CONTENT_X + theme::SECTION_CONTENT_W - theme::PANEL_ACTION_BUTTON, y, theme::PANEL_ACTION_BUTTON, theme::PANEL_ACTION_BUTTON);
 
@@ -131,9 +215,9 @@ pub fn section(app: &mut App, ui: &mut Ui, x0: f32, top: f32, sel: &[NodeId]) ->
         let chev_r = Rect::from_min_max(Pos2::new(scale_r.right() - 20.0, scale_r.top()), scale_r.max);
         let fid = ui.id().with(("export-scale", first, i));
         field::field_bg(ui, scale_r, fid);
-        if let Some(s) = field::edit_text(ui, text_r, fid, &row.scale.to_string(), theme::font_body(), theme::TEXT, 8.0) {
+        if let Some(s) = field::edit_text(ui, text_r, fid, &scale_of(row.constraint).to_string(), theme::font_body(), theme::TEXT, 4.0) {
             if let Some(sc) = ExportScale::parse(&s) {
-                row.scale = sc;
+                row.constraint = constraint_of(sc);
                 changed = true;
             }
         }
@@ -145,10 +229,11 @@ pub fn section(app: &mut App, ui: &mut Ui, x0: f32, top: f32, sel: &[NodeId]) ->
             ui.data_mut(|d| d.insert_temp(menu_id, !open));
         }
         if open {
-            let items: Vec<MenuItem> = ExportScale::PRESETS.iter().map(|s| MenuItem::new(s.to_string()).checked(*s == row.scale)).collect();
-            match popup_menu(ui.ctx(), menu_id.with("popup"), scale_r.left_bottom() + Vec2::new(0.0, 2.0), scale_r.width(), &items, Some(scale_r)) {
+            let cur = scale_of(row.constraint);
+            let items: Vec<MenuItem> = ExportScale::PRESETS.iter().map(|s| MenuItem::new(s.to_string()).checked(*s == cur)).collect();
+            match popup_menu(ui.ctx(), menu_id.with("popup"), scale_r.left_bottom() + Vec2::new(0.0, 2.0), scale_r.width().max(64.0), &items, Some(scale_r)) {
                 MenuResult::Picked(p) => {
-                    row.scale = ExportScale::PRESETS[p];
+                    row.constraint = constraint_of(ExportScale::PRESETS[p]);
                     changed = true;
                     ui.data_mut(|d| d.insert_temp(menu_id, false));
                 }
@@ -159,24 +244,44 @@ pub fn section(app: &mut App, ui: &mut Ui, x0: f32, top: f32, sel: &[NodeId]) ->
             }
         }
 
+        // Suffix: empty means the automatic "@2x" style name.
+        let sid = ui.id().with(("export-suffix", first, i));
+        field::field_bg(ui, suffix_r, sid);
+        if let Some(s) = field::edit_text(ui, suffix_r, sid, &row.suffix, theme::font_body(), theme::TEXT, 6.0) {
+            row.suffix = s.trim().to_string();
+            changed = true;
+        }
+        if row.suffix.is_empty() && !ui.memory(|m| m.has_focus(sid)) {
+            ui.painter().text(Pos2::new(suffix_r.left() + 6.0, suffix_r.center().y), Align2::LEFT_CENTER, "Suffix", theme::font_body(), theme::TEXT_TERTIARY);
+        }
+
         let options: Vec<String> = ExportFormat::ALL.iter().map(|f| f.label().to_string()).collect();
-        if let Some(p) = dropdown(ui, fmt_r, ("export-format", first, i), row.format.label(), &options) {
-            row.format = ExportFormat::ALL[p];
+        if let Some(p) = dropdown(ui, fmt_r, ("export-format", first, i), format_label(row.format), &options) {
+            row.format = file_format_of(ExportFormat::ALL[p]);
             changed = true;
         }
         if widgets::icon_button(ui, minus, ("export-remove", i), Icon::Minus, false, "Remove export setting").clicked() {
-            remove = Some(i);
+            edit = Some(RowEdit::Remove(old.clone()));
+        } else if changed && row != *old {
+            edit = Some(RowEdit::Replace(old.clone(), row));
         }
         y += theme::FIELD_HEIGHT + ROW_GAP;
     }
-    if let Some(i) = remove {
-        rows.remove(i);
-        changed = true;
+    if let Some(e) = edit.take() {
+        app.edit_export_rows(sel, &e);
     }
-    if changed {
-        store_rows(ui, first, rows.clone());
+    if rows.is_empty() && any_rows {
+        // Layers disagree and share no row: say so, as Figma does.
+        ui.painter().text(
+            Pos2::new(x0 + theme::SECTION_CONTENT_X, top + y + theme::FIELD_HEIGHT / 2.0),
+            Align2::LEFT_CENTER,
+            "Mixed",
+            theme::font_body(),
+            theme::TEXT_TERTIARY,
+        );
+        y += theme::FIELD_HEIGHT + ROW_GAP;
     }
-    if rows.is_empty() {
+    if !any_rows {
         context_menu(app, ui, &title_resp, first);
         return y + 8.0;
     }
@@ -203,7 +308,7 @@ pub fn section(app: &mut App, ui: &mut Ui, x0: f32, top: f32, sel: &[NodeId]) ->
     let label = elide(ui.painter(), &label, &theme::font_body(), btn.width() - 44.0);
     ui.painter().text(Pos2::new(btn.left() + 32.0, btn.center().y), Align2::LEFT_CENTER, label, theme::font_body(), theme::TEXT);
     if resp.clicked() {
-        run_export(app, sel, &rows);
+        run_export(app, sel);
     }
     context_menu(app, ui, &resp, first);
     context_menu(app, ui, &prev_resp, first);
@@ -266,15 +371,20 @@ pub fn copy_as(app: &mut App, node: NodeId, kind: CopyKind) {
     }
 }
 
-/// Writes every selected layer with every export row. One file asks for a
+/// Writes every selected layer with its own export rows. One file asks for a
 /// path; several ask for a folder and use `name@2x.png` style names.
-pub fn run_export(app: &mut App, ids: &[NodeId], rows: &[ExportSetting]) {
+pub fn run_export(app: &mut App, ids: &[NodeId]) {
     let mut jobs: Vec<(String, NodeId, ExportSetting)> = Vec::new();
     let mut seen: HashMap<String, u32> = HashMap::new();
+    let mut skipped_pdf = false;
     for id in ids {
         let Some(n) = app.doc.get(*id) else { continue };
-        for s in rows {
-            let mut file = s.file_name(&n.name);
+        for p in &n.export_settings {
+            let Some(s) = setting_of(p) else {
+                skipped_pdf = true;
+                continue;
+            };
+            let mut file = preset_file_name(p, &n.name);
             let count = seen.entry(file.clone()).or_insert(0);
             *count += 1;
             if *count > 1 {
@@ -285,7 +395,7 @@ pub fn run_export(app: &mut App, ids: &[NodeId], rows: &[ExportSetting]) {
         }
     }
     if jobs.is_empty() {
-        app.show_toast("Nothing to export", true);
+        app.show_toast(if skipped_pdf { "PDF export is not supported" } else { "Nothing to export" }, true);
         return;
     }
     let mut written = Vec::new();
@@ -363,14 +473,100 @@ mod tests {
         frame(&ctx, 0.3, vec![ev(false)], |ui| {
             section(&mut app, ui, 0.0, 0.0, &sel);
         });
-        let rows = ctx.data(|d| d.get_temp::<Vec<ExportSetting>>(rows_id(id))).unwrap_or_default();
-        assert_eq!(rows, vec![ExportSetting::default()]);
+        assert_eq!(app.doc.get(id).unwrap().export_settings, vec![ExportPreset::default()]);
+        assert!(app.hist.can_undo(), "adding a row is an undo step");
         let mut h1 = 0.0;
         frame(&ctx, 0.4, vec![], |ui| h1 = section(&mut app, ui, 0.0, 0.0, &sel));
         // title + one row + preview + button
         assert!(h1 > h0 + PREVIEW_H, "{h1} vs {h0}");
         // the preview texture was created
         assert!(ctx.data(|d| d.get_temp::<Thumb>(Id::new("export-thumb"))).is_some());
+    }
+
+    fn two_rects() -> (App, NodeId, NodeId) {
+        let mut d = Document::new("t");
+        let page = d.add_page("p");
+        let a = d.alloc_id();
+        d.insert(page, Node::rectangle(a, R::new(0.0, 0.0, 40.0, 30.0))).unwrap();
+        let b = d.alloc_id();
+        d.insert(page, Node::rectangle(b, R::new(50.0, 0.0, 40.0, 30.0))).unwrap();
+        (App::new(d), a, b)
+    }
+
+    #[test]
+    fn format_labels_fit_their_dropdown() {
+        let ctx = egui::Context::default();
+        theme::install_fonts(&ctx);
+        frame(&ctx, 0.0, vec![], |ui| {
+            for l in ["PNG", "JPG", "SVG", "PDF"] {
+                let w = widgets::text_width(ui.painter(), l, &theme::font_menu());
+                assert!(w <= FORMAT_W - 28.0, "{l} is {w}px wide");
+            }
+            for l in ["512w", "1.5x", "2x"] {
+                let w = widgets::text_width(ui.painter(), l, &theme::font_body());
+                assert!(w <= SCALE_W - 20.0 - 8.0, "{l} is {w}px wide");
+            }
+        });
+    }
+
+    #[test]
+    fn scale_strings_round_trip_through_constraints() {
+        for s in ["2x", "0.75x", "512w", "64h"] {
+            let sc = ExportScale::parse(s).unwrap();
+            assert_eq!(scale_of(constraint_of(sc)), sc, "{s}");
+        }
+        assert_eq!(constraint_of(ExportScale::parse("512w").unwrap()), ExportConstraint::Width(512.0));
+        assert_eq!(constraint_of(ExportScale::parse("3x").unwrap()), ExportConstraint::Scale(3.0));
+        let p = ExportPreset { format: ExportFileFormat::Jpg, constraint: ExportConstraint::Height(64.0), suffix: String::new() };
+        assert_eq!(preset_file_name(&p, "Logo"), "Logo@64h.jpg");
+        let p = ExportPreset { suffix: "-dark".into(), ..p };
+        assert_eq!(preset_file_name(&p, "Logo"), "Logo-dark.jpg");
+        assert!(setting_of(&ExportPreset { format: ExportFileFormat::Pdf, ..Default::default() }).is_none());
+    }
+
+    #[test]
+    fn rows_add_edit_remove_are_undoable_and_survive_save_and_load() {
+        let (mut app, a, _) = two_rects();
+        let one = ExportPreset::default();
+        app.edit_export_rows(&[a], &RowEdit::Add(one.clone()));
+        let two = ExportPreset { format: ExportFileFormat::Svg, constraint: ExportConstraint::Width(512.0), suffix: "@512".into() };
+        app.edit_export_rows(&[a], &RowEdit::Add(two.clone()));
+        let edited = ExportPreset { constraint: ExportConstraint::Scale(2.0), ..one.clone() };
+        app.edit_export_rows(&[a], &RowEdit::Replace(one.clone(), edited.clone()));
+        assert_eq!(app.doc.get(a).unwrap().export_settings, vec![edited.clone(), two.clone()]);
+
+        let mut path = std::env::temp_dir();
+        path.push(format!("desigma_export_rows_{}", std::process::id()));
+        let p = crate::io::save_path(&app.doc, &path).unwrap();
+        let back = crate::io::load_path(&p).unwrap();
+        std::fs::remove_file(p).ok();
+        assert_eq!(back.get(a).unwrap().export_settings, vec![edited.clone(), two.clone()]);
+
+        app.edit_export_rows(&[a], &RowEdit::Remove(edited));
+        assert_eq!(app.doc.get(a).unwrap().export_settings, vec![two]);
+        app.undo();
+        assert_eq!(app.doc.get(a).unwrap().export_settings.len(), 2);
+        app.undo();
+        assert_eq!(app.doc.get(a).unwrap().export_settings[0], one, "the edit undoes in one step");
+    }
+
+    #[test]
+    fn multi_selection_shows_and_edits_shared_rows_only() {
+        let (mut app, a, b) = two_rects();
+        let shared = ExportPreset::default();
+        let only_a = ExportPreset { format: ExportFileFormat::Jpg, ..Default::default() };
+        app.edit_export_rows(&[a, b], &RowEdit::Add(shared.clone()));
+        app.edit_export_rows(&[a], &RowEdit::Add(only_a.clone()));
+        assert_eq!(shared_rows(&app.doc, &[a, b]), vec![shared.clone()]);
+        assert_eq!(shared_rows(&app.doc, &[a]), vec![shared.clone(), only_a.clone()]);
+
+        let new = ExportPreset { constraint: ExportConstraint::Scale(4.0), ..shared.clone() };
+        app.edit_export_rows(&[a, b], &RowEdit::Replace(shared.clone(), new.clone()));
+        assert_eq!(app.doc.get(a).unwrap().export_settings, vec![new.clone(), only_a]);
+        assert_eq!(app.doc.get(b).unwrap().export_settings, vec![new.clone()]);
+        app.edit_export_rows(&[a, b], &RowEdit::Remove(new));
+        assert_eq!(app.doc.get(b).unwrap().export_settings, vec![]);
+        assert_eq!(app.doc.get(a).unwrap().export_settings.len(), 1, "the non-shared row is kept");
     }
 
     #[test]
