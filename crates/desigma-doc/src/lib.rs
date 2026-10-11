@@ -4,11 +4,13 @@
 //! [`Document`], the renderer draws it, the app edits it through [`Command`]s.
 //! Coordinates are in Figma units (1 unit = 1 CSS px at 100% zoom), y down.
 
+mod components;
 mod geom;
 mod history;
 mod node;
 mod paint;
 
+pub use components::*;
 pub use geom::*;
 pub use history::*;
 pub use node::*;
