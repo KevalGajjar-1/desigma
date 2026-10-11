@@ -1,0 +1,10 @@
+[package]
+name = "desigma-render"
+description = "CPU renderer (tiny-skia) for desigma documents; deterministic for pixel diffs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+desigma-doc.workspace = true
+tiny-skia.workspace = true

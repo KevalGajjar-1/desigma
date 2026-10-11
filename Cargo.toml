@@ -1,0 +1,28 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/desigma-doc",
+    "crates/desigma-render",
+    "crates/desigma-fig",
+    "crates/desigma-app",
+    "crates/desigma-diff",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/deepfounder-ai/desigma"
+
+[workspace.dependencies]
+desigma-doc = { path = "crates/desigma-doc" }
+desigma-render = { path = "crates/desigma-render" }
+desigma-fig = { path = "crates/desigma-fig" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tiny-skia = "0.11"
+image = { version = "0.25", default-features = false, features = ["png"] }
+
+[profile.dev.package."*"]
+opt-level = 2

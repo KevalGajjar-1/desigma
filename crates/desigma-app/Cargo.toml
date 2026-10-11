@@ -1,0 +1,15 @@
+[package]
+name = "desigma-app"
+description = "desigma desktop editor"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "desigma"
+path = "src/main.rs"
+
+[dependencies]
+desigma-doc.workspace = true
+desigma-render.workspace = true
+desigma-fig.workspace = true

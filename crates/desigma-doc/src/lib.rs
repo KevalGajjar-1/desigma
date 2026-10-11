@@ -1,0 +1,220 @@
+//! desigma document model.
+//!
+//! This crate is the contract shared by every other crate: importers produce a
+//! [`Document`], the renderer draws it, the app edits it through [`Command`]s.
+//! Coordinates are in Figma units (1 unit = 1 CSS px at 100% zoom), y down.
+
+mod geom;
+mod history;
+mod node;
+mod paint;
+
+pub use geom::*;
+pub use history::*;
+pub use node::*;
+pub use paint::*;
+
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
+
+/// Stable node identifier. Imported Figma ids ("12:34") are kept in
+/// [`Node::source_id`]; `NodeId` is our own dense key.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct NodeId(pub u64);
+
+#[derive(Debug, thiserror::Error)]
+pub enum DocError {
+    #[error("node {0:?} not found")]
+    NotFound(NodeId),
+    #[error("cannot move node {0:?} into its own subtree")]
+    Cycle(NodeId),
+    #[error("node {0:?} cannot have children")]
+    NotAContainer(NodeId),
+}
+
+/// A whole file: pages at the root, each page a tree of nodes.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct Document {
+    pub name: String,
+    pub nodes: BTreeMap<NodeId, Node>,
+    /// Page node ids in display order. Each page is a node with [`NodeKind::Page`].
+    pub pages: Vec<NodeId>,
+    pub styles: BTreeMap<String, Style>,
+    /// Embedded images keyed by content hash (Figma `imageRef`).
+    pub images: BTreeMap<String, Vec<u8>>,
+    next_id: u64,
+}
+
+impl Document {
+    pub fn new(name: impl Into<String>) -> Self {
+        Self { name: name.into(), ..Default::default() }
+    }
+
+    pub fn alloc_id(&mut self) -> NodeId {
+        self.next_id += 1;
+        NodeId(self.next_id)
+    }
+
+    pub fn add_page(&mut self, name: impl Into<String>) -> NodeId {
+        let id = self.alloc_id();
+        let mut page = Node::new(id, NodeKind::Page { background: Color::rgb(0xF5, 0xF5, 0xF5) });
+        page.name = name.into();
+        self.nodes.insert(id, page);
+        self.pages.push(id);
+        id
+    }
+
+    /// Inserts `node` as the last (topmost) child of `parent`.
+    pub fn insert(&mut self, parent: NodeId, mut node: Node) -> Result<NodeId, DocError> {
+        let p = self.nodes.get_mut(&parent).ok_or(DocError::NotFound(parent))?;
+        if !p.kind.is_container() {
+            return Err(DocError::NotAContainer(parent));
+        }
+        let id = node.id;
+        p.children.push(id);
+        node.parent = Some(parent);
+        self.next_id = self.next_id.max(id.0);
+        self.nodes.insert(id, node);
+        Ok(id)
+    }
+
+    pub fn get(&self, id: NodeId) -> Option<&Node> {
+        self.nodes.get(&id)
+    }
+
+    pub fn get_mut(&mut self, id: NodeId) -> Option<&mut Node> {
+        self.nodes.get_mut(&id)
+    }
+
+    /// Removes `id` and its subtree, returning the removed nodes (root first).
+    pub fn remove(&mut self, id: NodeId) -> Result<Vec<Node>, DocError> {
+        let parent = self.nodes.get(&id).ok_or(DocError::NotFound(id))?.parent;
+        if let Some(p) = parent.and_then(|p| self.nodes.get_mut(&p)) {
+            p.children.retain(|c| *c != id);
+        }
+        self.pages.retain(|p| *p != id);
+        let mut out = Vec::new();
+        let mut stack = vec![id];
+        while let Some(n) = stack.pop() {
+            if let Some(node) = self.nodes.remove(&n) {
+                stack.extend(node.children.iter().rev().copied());
+                out.push(node);
+            }
+        }
+        Ok(out)
+    }
+
+    /// Moves `id` under `new_parent` at `index` (clamped).
+    pub fn reparent(&mut self, id: NodeId, new_parent: NodeId, index: usize) -> Result<(), DocError> {
+        if self.is_ancestor(id, new_parent) || id == new_parent {
+            return Err(DocError::Cycle(id));
+        }
+        if !self.nodes.get(&new_parent).ok_or(DocError::NotFound(new_parent))?.kind.is_container() {
+            return Err(DocError::NotAContainer(new_parent));
+        }
+        let old = self.nodes.get(&id).ok_or(DocError::NotFound(id))?.parent;
+        if let Some(p) = old.and_then(|p| self.nodes.get_mut(&p)) {
+            p.children.retain(|c| *c != id);
+        }
+        let p = self.nodes.get_mut(&new_parent).unwrap();
+        let index = index.min(p.children.len());
+        p.children.insert(index, id);
+        self.nodes.get_mut(&id).unwrap().parent = Some(new_parent);
+        Ok(())
+    }
+
+    pub fn is_ancestor(&self, ancestor: NodeId, mut of: NodeId) -> bool {
+        while let Some(p) = self.nodes.get(&of).and_then(|n| n.parent) {
+            if p == ancestor {
+                return true;
+            }
+            of = p;
+        }
+        false
+    }
+
+    /// Absolute transform (page space) of a node.
+    pub fn world_transform(&self, id: NodeId) -> Affine {
+        let mut chain = Vec::new();
+        let mut cur = Some(id);
+        while let Some(c) = cur {
+            let Some(n) = self.nodes.get(&c) else { break };
+            chain.push(n.transform);
+            cur = n.parent;
+        }
+        chain.iter().rev().fold(Affine::IDENTITY, |acc, t| acc * *t)
+    }
+
+    /// Page that contains `id`.
+    pub fn page_of(&self, mut id: NodeId) -> Option<NodeId> {
+        loop {
+            let n = self.nodes.get(&id)?;
+            match n.parent {
+                Some(p) => id = p,
+                None => return matches!(n.kind, NodeKind::Page { .. }).then_some(id),
+            }
+        }
+    }
+
+    /// Pre-order traversal of a subtree, back-to-front paint order.
+    pub fn walk(&self, root: NodeId, mut f: impl FnMut(&Node, usize)) {
+        fn rec(doc: &Document, id: NodeId, depth: usize, f: &mut dyn FnMut(&Node, usize)) {
+            if let Some(n) = doc.nodes.get(&id) {
+                f(n, depth);
+                for c in &n.children {
+                    rec(doc, *c, depth + 1, f);
+                }
+            }
+        }
+        rec(self, root, 0, &mut f);
+    }
+
+    pub fn to_json(&self) -> serde_json::Result<String> {
+        serde_json::to_string_pretty(self)
+    }
+
+    pub fn from_json(s: &str) -> serde_json::Result<Self> {
+        serde_json::from_str(s)
+    }
+}
+
+/// Shared (library) style referenced by nodes via `style_refs`.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum Style {
+    Fill(Vec<Paint>),
+    Text(TextStyle),
+    Effect(Vec<Effect>),
+    Grid(Vec<LayoutGrid>),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn insert_reparent_remove() {
+        let mut d = Document::new("t");
+        let page = d.add_page("Page 1");
+        let fid = d.alloc_id();
+        let frame = d.insert(page, Node::frame(fid, Rect::new(0.0, 0.0, 100.0, 100.0))).unwrap();
+        let rid = d.alloc_id();
+        let rect = d.insert(page, Node::rectangle(rid, Rect::new(10.0, 10.0, 20.0, 20.0))).unwrap();
+        d.reparent(rect, frame, 0).unwrap();
+        assert_eq!(d.get(frame).unwrap().children, vec![rect]);
+        assert!(d.reparent(frame, rect, 0).is_err());
+        assert_eq!(d.page_of(rect), Some(page));
+        let removed = d.remove(frame).unwrap();
+        assert_eq!(removed.len(), 2);
+        assert!(d.get(rect).is_none());
+    }
+
+    #[test]
+    fn json_roundtrip() {
+        let mut d = Document::new("t");
+        let page = d.add_page("P");
+        let id = d.alloc_id();
+        d.insert(page, Node::rectangle(id, Rect::new(0.0, 0.0, 5.0, 5.0))).unwrap();
+        let back = Document::from_json(&d.to_json().unwrap()).unwrap();
+        assert_eq!(back.nodes.len(), 2);
+    }
+}

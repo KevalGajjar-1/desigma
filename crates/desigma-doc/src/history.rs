@@ -1,0 +1,136 @@
+//! Undo/redo. Every edit goes through [`Command`]; applying returns its inverse.
+
+use crate::*;
+use serde::{Deserialize, Serialize};
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum Command {
+    /// Insert subtree nodes (root first) under `parent` at `index`.
+    Insert { parent: NodeId, index: usize, nodes: Vec<Node> },
+    Remove { id: NodeId },
+    Reparent { id: NodeId, parent: NodeId, index: usize },
+    /// Replace a node's own properties (children/parent are preserved).
+    Update { node: Box<Node> },
+    Batch(Vec<Command>),
+}
+
+impl Command {
+    /// Applies the command and returns the command that undoes it.
+    pub fn apply(self, doc: &mut Document) -> Result<Command, DocError> {
+        Ok(match self {
+            Command::Insert { parent, index, nodes } => {
+                let root = nodes.first().map(|n| n.id).ok_or(DocError::NotFound(parent))?;
+                let p = doc.get_mut(parent).ok_or(DocError::NotFound(parent))?;
+                if !p.kind.is_container() {
+                    return Err(DocError::NotAContainer(parent));
+                }
+                let index = index.min(p.children.len());
+                p.children.insert(index, root);
+                for mut n in nodes {
+                    if n.id == root {
+                        n.parent = Some(parent);
+                    }
+                    doc.nodes.insert(n.id, n);
+                }
+                doc.bump_ids();
+                Command::Remove { id: root }
+            }
+            Command::Remove { id } => {
+                let parent = doc.get(id).ok_or(DocError::NotFound(id))?.parent.ok_or(DocError::NotFound(id))?;
+                let index = doc.get(parent).map(|p| p.children.iter().position(|c| *c == id).unwrap_or(0)).unwrap_or(0);
+                let nodes = doc.remove(id)?;
+                Command::Insert { parent, index, nodes }
+            }
+            Command::Reparent { id, parent, index } => {
+                let n = doc.get(id).ok_or(DocError::NotFound(id))?;
+                let old_parent = n.parent.ok_or(DocError::NotFound(id))?;
+                let old_index = doc.get(old_parent).and_then(|p| p.children.iter().position(|c| *c == id)).unwrap_or(0);
+                doc.reparent(id, parent, index)?;
+                Command::Reparent { id, parent: old_parent, index: old_index }
+            }
+            Command::Update { mut node } => {
+                let cur = doc.get_mut(node.id).ok_or(DocError::NotFound(node.id))?;
+                node.parent = cur.parent;
+                node.children = std::mem::take(&mut cur.children);
+                let old = std::mem::replace(cur, *node);
+                Command::Update { node: Box::new(Node { children: Vec::new(), ..old }) }
+            }
+            Command::Batch(cmds) => {
+                let mut inv = Vec::with_capacity(cmds.len());
+                for c in cmds {
+                    inv.push(c.apply(doc)?);
+                }
+                inv.reverse();
+                Command::Batch(inv)
+            }
+        })
+    }
+}
+
+impl Document {
+    pub(crate) fn bump_ids(&mut self) {
+        if let Some((id, _)) = self.nodes.last_key_value() {
+            self.next_id = self.next_id.max(id.0);
+        }
+    }
+}
+
+/// Linear undo stack.
+#[derive(Default)]
+pub struct History {
+    undo: Vec<Command>,
+    redo: Vec<Command>,
+}
+
+impl History {
+    pub fn exec(&mut self, doc: &mut Document, cmd: Command) -> Result<(), DocError> {
+        let inv = cmd.apply(doc)?;
+        self.undo.push(inv);
+        self.redo.clear();
+        Ok(())
+    }
+    pub fn undo(&mut self, doc: &mut Document) -> Result<bool, DocError> {
+        let Some(c) = self.undo.pop() else { return Ok(false) };
+        self.redo.push(c.apply(doc)?);
+        Ok(true)
+    }
+    pub fn redo(&mut self, doc: &mut Document) -> Result<bool, DocError> {
+        let Some(c) = self.redo.pop() else { return Ok(false) };
+        self.undo.push(c.apply(doc)?);
+        Ok(true)
+    }
+    pub fn can_undo(&self) -> bool {
+        !self.undo.is_empty()
+    }
+    pub fn can_redo(&self) -> bool {
+        !self.redo.is_empty()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn undo_redo_update_and_remove() {
+        let mut d = Document::new("t");
+        let page = d.add_page("P");
+        let id = d.alloc_id();
+        d.insert(page, Node::rectangle(id, Rect::new(0.0, 0.0, 10.0, 10.0))).unwrap();
+        let mut h = History::default();
+
+        let mut n = d.get(id).unwrap().clone();
+        n.name = "Renamed".into();
+        h.exec(&mut d, Command::Update { node: Box::new(n) }).unwrap();
+        assert_eq!(d.get(id).unwrap().name, "Renamed");
+        h.undo(&mut d).unwrap();
+        assert_eq!(d.get(id).unwrap().name, "Rectangle");
+
+        h.exec(&mut d, Command::Remove { id }).unwrap();
+        assert!(d.get(id).is_none());
+        h.undo(&mut d).unwrap();
+        assert_eq!(d.get(page).unwrap().children, vec![id]);
+        h.redo(&mut d).unwrap();
+        assert!(d.get(id).is_none());
+    }
+}
