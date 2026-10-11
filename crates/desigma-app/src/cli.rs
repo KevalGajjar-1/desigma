@@ -74,8 +74,8 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Options, String> 
             "--present" => o.present = true,
             "--panel" => {
                 let t = it.next().ok_or("--panel needs a name (variables)")?;
-                if t != "variables" {
-                    return Err(format!("unknown panel '{t}' (expected variables)"));
+                if t != "variables" && t != "libraries" {
+                    return Err(format!("unknown panel '{t}' (expected variables or libraries)"));
                 }
                 o.panel = Some(t);
             }
@@ -110,7 +110,7 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Options, String> 
     Ok(o)
 }
 
-pub const USAGE: &str = "usage: desigma [FILE] [--screenshot OUT.png] [--size WxH] [--select LAYER|none] [--menu main|main/File|shape|palette] [--panel variables]\n               [--zoom PERCENT] [--rulers] [--grid] [--layout-grid grid|columns|rows] [--edit-text LAYER [--select-text START-END]]\n  FILE  .fig, .json (Figma REST or native) or .desigma";
+pub const USAGE: &str = "usage: desigma [FILE] [--screenshot OUT.png] [--size WxH] [--select LAYER|none] [--menu main|main/File|shape|palette] [--panel variables|libraries]\n               [--zoom PERCENT] [--rulers] [--grid] [--layout-grid grid|columns|rows] [--edit-text LAYER [--select-text START-END]]\n  FILE  .fig, .json (Figma REST or native) or .desigma";
 
 #[cfg(test)]
 mod tests {

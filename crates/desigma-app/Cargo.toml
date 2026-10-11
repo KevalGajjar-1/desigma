@@ -19,6 +19,7 @@ open = { version = "5", optional = true }
 desigma-doc.workspace = true
 desigma-render.workspace = true
 desigma-fig.workspace = true
+desigma-library.workspace = true
 desigma-fonts.workspace = true
 desigma-export.workspace = true
 desigma-svg.workspace = true

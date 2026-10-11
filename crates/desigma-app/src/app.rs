@@ -125,6 +125,8 @@ pub struct App {
     pub props: PropsState,
     pub vars: crate::variables::VarsState,
     pub assets: crate::panels::assets::AssetsState,
+    /// Shared libraries (publishing, enabled libraries, updates).
+    pub libs: crate::libraries::LibrariesState,
     pub proto: crate::proto::ProtoState,
     pub ui: UiState,
     pub clip: Option<Clip>,
@@ -160,6 +162,7 @@ impl App {
             props: PropsState::default(),
             vars: Default::default(),
             assets: Default::default(),
+            libs: Default::default(),
             proto: Default::default(),
             ui: UiState { pixel_grid: true, ..UiState::default() },
             clip: None,

@@ -14,6 +14,7 @@ use super::{clipped, scrollbar, wheel_scroll};
 use crate::app::App;
 use crate::comp_ops::AssetEntry;
 use crate::icons::{self, Icon};
+use crate::libraries::LibEntry;
 use crate::theme;
 use crate::widgets;
 use desigma_doc::{Document, NodeId, NodeKind};
@@ -30,7 +31,20 @@ pub struct AssetsState {
     pub drag: Option<NodeId>,
     /// Grid of previews instead of the list.
     pub grid: bool,
+    /// Library component being dragged out of the panel.
+    pub lib_drag: Option<LibDrag>,
     thumbs: Thumbs,
+    /// Thumbnails of library components, per library (their node ids are the library's own).
+    lib_thumbs: HashMap<String, Thumbs>,
+}
+
+/// A component of an enabled library being dragged onto the canvas.
+#[derive(Clone, Debug)]
+pub struct LibDrag {
+    pub library_id: String,
+    pub key: String,
+    pub name: String,
+    pub size: desigma_doc::Vec2,
 }
 
 impl AssetsState {
@@ -271,6 +285,8 @@ impl Thumbs {
 #[derive(Default)]
 struct Outcome {
     started: Option<NodeId>,
+    /// Index into the library entries of a row drag that started.
+    started_lib: Option<usize>,
     go_main: Option<NodeId>,
 }
 
@@ -295,14 +311,15 @@ fn list_item(
     doc: &Document,
     e: &AssetEntry,
     row: Rect,
-    dragging: Option<NodeId>,
+    dragging: bool,
+    src: Option<usize>,
     now: f64,
     out: &mut Outcome,
 ) {
-    let r = ui.interact(row, ui.id().with(("asset", e.id.0)), Sense::click_and_drag());
+    let r = ui.interact(row, ui.id().with(("asset", src, e.id.0)), Sense::click_and_drag());
     widgets::record(ui, &format!("asset:{}", e.name), row);
     let inset = row.shrink2(Vec2::new(8.0, 0.0));
-    if r.hovered() || dragging == Some(e.id) {
+    if r.hovered() || dragging {
         p.rect_filled(inset, theme::cr(theme::RADIUS_MEDIUM), theme::BG_HOVER);
     }
     let boxr = Rect::from_min_size(Pos2::new(inset.left() + 4.0, row.center().y - THUMB / 2.0), Vec2::splat(THUMB));
@@ -312,10 +329,18 @@ fn list_item(
     let label = if e.variants > 0 { format!("{} ({})", e.name, e.variants) } else { e.name.clone() };
     let s = widgets::elide(p, &label, &theme::font_body(), inset.right() - boxr.right() - 20.0);
     p.text(Pos2::new(boxr.right() + 12.0, row.center().y), Align2::LEFT_CENTER, s, theme::font_body(), theme::TEXT);
+    row_events(&r, e, src, out);
+}
+
+/// Records drag starts and double clicks of a row.
+fn row_events(r: &egui::Response, e: &AssetEntry, src: Option<usize>, out: &mut Outcome) {
     if r.drag_started() {
-        out.started = Some(e.id);
+        match src {
+            Some(k) => out.started_lib = Some(k),
+            None => out.started = Some(e.id),
+        }
     }
-    if r.double_clicked() {
+    if r.double_clicked() && src.is_none() {
         out.go_main = Some(e.id);
     }
 }
@@ -328,14 +353,15 @@ fn grid_cell(
     doc: &Document,
     e: &AssetEntry,
     cell: Rect,
-    dragging: Option<NodeId>,
+    dragging: bool,
+    src: Option<usize>,
     now: f64,
     out: &mut Outcome,
 ) {
-    let r = ui.interact(cell, ui.id().with(("asset", e.id.0)), Sense::click_and_drag());
+    let r = ui.interact(cell, ui.id().with(("asset", src, e.id.0)), Sense::click_and_drag());
     let preview = Rect::from_min_size(cell.min, Vec2::new(cell.width(), GRID_PREVIEW_H));
     widgets::record(ui, &format!("asset:{}", e.name), preview);
-    if r.hovered() || dragging == Some(e.id) {
+    if r.hovered() || dragging {
         p.rect_filled(cell.expand(2.0), theme::cr(theme::RADIUS_MEDIUM), theme::BG_HOVER);
     }
     if cell.intersects(ui.clip_rect()) {
@@ -344,12 +370,7 @@ fn grid_cell(
     let label = if e.variants > 0 { format!("{} ({})", e.name, e.variants) } else { e.name.clone() };
     let s = widgets::elide(p, &label, &theme::font_small(), cell.width() - 4.0);
     p.text(Pos2::new(cell.left() + 2.0, preview.bottom() + GRID_LABEL_H / 2.0), Align2::LEFT_CENTER, s, theme::font_small(), theme::TEXT_SECONDARY);
-    if r.drag_started() {
-        out.started = Some(e.id);
-    }
-    if r.double_clicked() {
-        out.go_main = Some(e.id);
-    }
+    row_events(&r, e, src, out);
 }
 
 /// The list / grid switch next to the search box.
@@ -388,7 +409,8 @@ pub fn show(app: &mut App, ui: &mut Ui, region: Rect) {
     let p = ui.painter().clone();
     // ---- search + view toggle
     let toggle_w = VIEW_BTN * 2.0 + 2.0;
-    let sr = Rect::from_min_size(Pos2::new(region.left() + 8.0, region.top() + 8.0), Vec2::new(region.width() - 16.0 - toggle_w - 4.0, 24.0));
+    let lib_w = VIEW_BTN + 4.0;
+    let sr = Rect::from_min_size(Pos2::new(region.left() + 8.0, region.top() + 8.0), Vec2::new(region.width() - 16.0 - toggle_w - 4.0 - lib_w, 24.0));
     p.rect_filled(sr, theme::cr(theme::RADIUS_MEDIUM), theme::BG_SECONDARY);
     icons::paint(&p, Icon::Search, Pos2::new(sr.left() + 14.0, sr.center().y), 14.0, theme::ICON_SECONDARY);
     let mut q = std::mem::take(&mut app.assets.query);
@@ -407,6 +429,11 @@ pub fn show(app: &mut App, ui: &mut Ui, region: Rect) {
     app.assets.query = q;
     let mut grid = app.assets.grid;
     view_toggle(ui, Pos2::new(sr.right() + 4.0, sr.top()), &mut grid);
+    let libs_btn = Rect::from_min_size(Pos2::new(sr.right() + 4.0 + toggle_w + 4.0, sr.top()), Vec2::splat(VIEW_BTN));
+    widgets::record(ui, "assets-libraries", libs_btn);
+    if widgets::icon_button(ui, libs_btn, "assets-libraries", Icon::Book, app.libs.open, "Libraries").clicked() {
+        app.open_libraries();
+    }
     if grid != app.assets.grid {
         app.assets.grid = grid;
         app.assets.scroll = 0.0;
@@ -414,7 +441,24 @@ pub fn show(app: &mut App, ui: &mut Ui, region: Rect) {
 
     // ---- list
     let list = Rect::from_min_max(Pos2::new(region.left(), region.top() + SEARCH_H), region.max);
-    let entries = app.local_components();
+    // Local components, then imported ones whose library is unavailable, then one
+    // section per enabled library (entries with a `Some` source index).
+    let mut entries = app.local_components();
+    entries.extend(app.unavailable_library_components());
+    let lib_entries = app.library_entries();
+    let mut srcs: Vec<Option<usize>> = vec![None; entries.len()];
+    for (k, le) in lib_entries.iter().enumerate() {
+        entries.push(AssetEntry { page: le.library_name.clone(), container: String::new(), name: le.name.clone(), id: le.node, variants: le.variants });
+        srcs.push(Some(k));
+    }
+    let mut lib_docs: HashMap<String, std::sync::Arc<Document>> = HashMap::new();
+    for le in lib_entries.iter() {
+        if !lib_docs.contains_key(&le.library_id) {
+            if let Some(d) = app.library_render_doc(&le.library_id) {
+                lib_docs.insert(le.library_id.clone(), d);
+            }
+        }
+    }
     let shown = filtered(&entries, &app.assets.query);
     let cols = app.assets.grid.then(|| grid_cols(list.width() - 16.0));
     let ls = lines(&entries, &shown, cols);
@@ -437,7 +481,12 @@ pub fn show(app: &mut App, ui: &mut Ui, region: Rect) {
 
     let mut thumbs = std::mem::take(&mut app.assets.thumbs);
     thumbs.begin_frame();
+    let mut lib_thumbs = std::mem::take(&mut app.assets.lib_thumbs);
+    for t in lib_thumbs.values_mut() {
+        t.begin_frame();
+    }
     let dragging = app.assets.drag;
+    let lib_dragging = app.assets.lib_drag.as_ref().and_then(|d| lib_entries.iter().position(|e| e.library_id == d.library_id && e.key == d.key));
     let now = app.now;
     let mut out = Outcome::default();
     {
@@ -472,7 +521,15 @@ pub fn show(app: &mut App, ui: &mut Ui, region: Rect) {
                             theme::TEXT_SECONDARY,
                         );
                     }
-                    Line::Item(i) => list_item(ui, &p, &mut thumbs, doc, &entries[*i], row, dragging, now, &mut out),
+                    Line::Item(i) => {
+                        let src = srcs[*i];
+                        let is_drag = src.map(|k| lib_dragging == Some(k)).unwrap_or(dragging == Some(entries[*i].id));
+                        match src.and_then(|k| lib_source(&lib_entries, &lib_docs, &mut lib_thumbs, k)) {
+                            Some((d, t)) => list_item(ui, &p, t, d, &entries[*i], row, is_drag, src, now, &mut out),
+                            None if src.is_none() => list_item(ui, &p, &mut thumbs, doc, &entries[*i], row, is_drag, None, now, &mut out),
+                            None => {}
+                        }
+                    }
                     Line::Cells(ix) => {
                         let n = cols.unwrap_or(1) as f32;
                         let cw = (list.width() - 16.0 - GRID_GAP * (n - 1.0)) / n;
@@ -481,7 +538,13 @@ pub fn show(app: &mut App, ui: &mut Ui, region: Rect) {
                                 Pos2::new(list.left() + 8.0 + k as f32 * (cw + GRID_GAP), row.top()),
                                 Vec2::new(cw, GRID_PREVIEW_H + GRID_LABEL_H),
                             );
-                            grid_cell(ui, &p, &mut thumbs, doc, &entries[*i], cell, dragging, now, &mut out);
+                            let src = srcs[*i];
+                            let is_drag = src.map(|k| lib_dragging == Some(k)).unwrap_or(dragging == Some(entries[*i].id));
+                            match src.and_then(|k| lib_source(&lib_entries, &lib_docs, &mut lib_thumbs, k)) {
+                                Some((d, t)) => grid_cell(ui, &p, t, d, &entries[*i], cell, is_drag, src, now, &mut out),
+                                None if src.is_none() => grid_cell(ui, &p, &mut thumbs, doc, &entries[*i], cell, is_drag, None, now, &mut out),
+                                None => {}
+                            }
                         }
                     }
                 }
@@ -489,13 +552,22 @@ pub fn show(app: &mut App, ui: &mut Ui, region: Rect) {
         });
     }
     thumbs.end_frame();
-    if thumbs.pending {
+    let mut pending = thumbs.pending;
+    for t in lib_thumbs.values_mut() {
+        t.end_frame();
+        pending |= t.pending;
+    }
+    if pending {
         ui.ctx().request_repaint();
     }
     app.assets.thumbs = thumbs;
+    app.assets.lib_thumbs = lib_thumbs;
     scrollbar(ui, list, scroll, content_h);
     if out.started.is_some() {
         app.assets.drag = out.started;
+    }
+    if let Some(le) = out.started_lib.and_then(|k| lib_entries.get(k)) {
+        app.assets.lib_drag = Some(LibDrag { library_id: le.library_id.clone(), key: le.key.clone(), name: le.name.clone(), size: le.size });
     }
     if let Some(c) = out.go_main {
         app.go_to_main_component(c);
@@ -503,31 +575,55 @@ pub fn show(app: &mut App, ui: &mut Ui, region: Rect) {
     drag(app, ui);
 }
 
+/// Library entry `k` with its render document and thumbnail cache.
+fn lib_source<'a>(
+    entries: &[LibEntry],
+    docs: &'a HashMap<String, std::sync::Arc<Document>>,
+    thumbs: &'a mut HashMap<String, Thumbs>,
+    k: usize,
+) -> Option<(&'a Document, &'a mut Thumbs)> {
+    let le = entries.get(k)?;
+    let d = docs.get(&le.library_id)?;
+    Some((d.as_ref(), thumbs.entry(le.library_id.clone()).or_default()))
+}
+
 /// Ghost under the pointer while dragging; drops an instance on release.
 fn drag(app: &mut App, ui: &mut Ui) {
-    let Some(comp) = app.assets.drag else { return };
+    if app.assets.drag.is_none() && app.assets.lib_drag.is_none() {
+        return;
+    }
     let (ptr, released) = ui.input(|i| (i.pointer.interact_pos(), i.pointer.primary_released()));
     let over_canvas = ptr.is_some_and(|p| app.canvas_rect.contains(p));
-    if let (Some(pos), Some(c)) = (ptr, app.doc.get(comp).cloned()) {
+    let ghost = match (app.assets.drag.and_then(|c| app.doc.get(c)), &app.assets.lib_drag) {
+        (Some(c), _) => Some((c.name.clone(), c.size)),
+        (None, Some(d)) => Some((d.name.clone(), d.size)),
+        _ => None,
+    };
+    if let (Some(pos), Some((name, csize))) = (ptr, ghost) {
         let p = ui.ctx().layer_painter(LayerId::new(Order::Tooltip, Id::new("asset-drag")));
         if over_canvas {
-            let size = Vec2::new(c.size.x * app.view.zoom, c.size.y * app.view.zoom);
+            let size = Vec2::new(csize.x * app.view.zoom, csize.y * app.view.zoom);
             let r = Rect::from_center_size(pos, size);
             p.rect_filled(r, 0.0, theme::CANVAS_COMPONENT.gamma_multiply(0.18));
             p.rect_stroke(r, 0.0, Stroke::new(1.0, theme::CANVAS_COMPONENT), StrokeKind::Inside);
         } else {
             let font = theme::font_body();
-            let w = widgets::text_width(&p, &c.name, &font) + 24.0;
+            let w = widgets::text_width(&p, &name, &font) + 24.0;
             let r = Rect::from_min_size(pos + Vec2::new(12.0, 12.0), Vec2::new(w, 24.0));
             p.rect_filled(r, theme::cr(theme::RADIUS_MEDIUM), theme::BG_MENU);
-            p.text(r.center(), Align2::CENTER_CENTER, &c.name, font, Color32::WHITE);
+            p.text(r.center(), Align2::CENTER_CENTER, &name, font, Color32::WHITE);
         }
     }
     if released {
-        app.assets.drag = None;
+        let comp = app.assets.drag.take();
+        let lib = app.assets.lib_drag.take();
         if let Some(pos) = ptr.filter(|_| over_canvas) {
             let at = app.view.to_page(app.canvas_rect.min, pos);
-            app.insert_instance(comp, at);
+            if let Some(comp) = comp {
+                app.insert_instance(comp, at);
+            } else if let Some(d) = lib {
+                app.drop_library_asset(&d.library_id, &d.key, at);
+            }
         }
     }
 }

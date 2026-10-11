@@ -100,6 +100,9 @@ impl Shell {
         if opts.present {
             app.start_present();
         }
+        if opts.panel.as_deref() == Some("libraries") {
+            app.open_libraries();
+        }
         if opts.panel.as_deref() == Some("variables") {
             app.open_variables();
         }
@@ -461,6 +464,7 @@ impl Shell {
         menus::show(&mut self.app, &ctx);
         panels::context::show(&mut self.app, &ctx);
         crate::variables::modal::show(&mut self.app, &ctx);
+        crate::libraries::show(&mut self.app, &ctx);
         self.toast(ui, full);
 
         let title = self.app.title();

@@ -299,6 +299,11 @@ impl App {
 
     /// Selects a main component, switching page if needed, and zooms to it.
     pub fn go_to_main_component(&mut self, comp: NodeId) {
+        // Copies of library components live on the hidden library page.
+        if is_library_node(&self.doc, comp) {
+            self.go_to_library_main(comp);
+            return;
+        }
         if let Some(page) = self.doc.page_of(comp) {
             if page != self.page {
                 self.switch_page(page);

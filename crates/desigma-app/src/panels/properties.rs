@@ -372,6 +372,58 @@ fn styles_list(app: &mut App, ui: &mut Ui, pane: &mut Pane, target: &[NodeId]) {
             pane.y += theme::STYLE_ROW_H;
         }
     }
+    library_styles_list(app, ui, pane, target);
+}
+
+/// Styles of enabled libraries this file has not used yet, one group per
+/// library. Clicking one copies it into the file and applies it to `target`.
+fn library_styles_list(app: &mut App, ui: &mut Ui, pane: &mut Pane, target: &[NodeId]) {
+    let all: Vec<crate::libraries::LibraryStyle> =
+        app.library_styles().into_iter().filter(|s| s.local_key.is_none() && matches!(s.style, Style::Text(_) | Style::Fill(_))).collect();
+    let mut libs: Vec<(String, String)> = all.iter().map(|s| (s.library_id.clone(), s.library_name.clone())).collect();
+    libs.dedup();
+    for (lib_id, lib_name) in libs {
+        for (label, text) in [("Text styles", true), ("Color styles", false)] {
+            let rows: Vec<&crate::libraries::LibraryStyle> = all.iter().filter(|s| s.library_id == lib_id && s.text == text).collect();
+            if rows.is_empty() {
+                continue;
+            }
+            pane.y += theme::STYLES_GROUP_GAP;
+            let lr = pane.rect(theme::SECTION_CONTENT_X, 0.0, theme::SECTION_CONTENT_W, theme::SUBLABEL_HEIGHT);
+            let head = widgets::elide(ui.painter(), &format!("{lib_name} \u{b7} {label}"), &theme::font_body(), lr.width());
+            ui.painter().text(Pos2::new(lr.left(), lr.center().y), Align2::LEFT_CENTER, head, theme::font_body(), theme::TEXT_SECONDARY);
+            pane.y += theme::SUBLABEL_HEIGHT + theme::STYLES_ROW_GAP;
+            for s in rows {
+                let r = pane.rect(8.0, 0.0, theme::RIGHT_PANEL_WIDTH - 17.0, theme::STYLE_ROW_H);
+                widgets::record(ui, &format!("libstyle:{}", s.name), r);
+                let resp = ui.interact(r, ui.id().with(("libstyle", &s.library_id, &s.key)), Sense::click());
+                if resp.hovered() {
+                    ui.painter().rect_filled(r, theme::cr(theme::RADIUS_MEDIUM), theme::BG_HOVER);
+                }
+                let (_, leaf) = crate::styles::split_name(&s.name);
+                match &s.style {
+                    Style::Fill(paints) => {
+                        let c = Pos2::new(r.left() + theme::STYLE_SWATCH_CX, r.center().y);
+                        let cols = paints.first().map(paint_colors).filter(|c| !c.is_empty()).unwrap_or_else(|| vec![Color32::GRAY]);
+                        widgets::swatch_circle(ui.painter(), c, theme::STYLE_SWATCH / 2.0, &cols);
+                        let nm = widgets::elide(ui.painter(), &leaf, &theme::font_body(), 130.0);
+                        ui.painter().text(Pos2::new(r.left() + theme::STYLE_LABEL_X, r.center().y), Align2::LEFT_CENTER, nm, theme::font_body(), theme::TEXT);
+                    }
+                    _ => {
+                        ui.painter().text(Pos2::new(r.left() + 10.0, r.center().y), Align2::LEFT_CENTER, "Ag", theme::font_body_strong(), theme::TEXT);
+                        let nm = widgets::elide(ui.painter(), &leaf, &theme::font_body(), 110.0);
+                        ui.painter().text(Pos2::new(r.left() + 36.0, r.center().y), Align2::LEFT_CENTER, nm, theme::font_body(), theme::TEXT);
+                    }
+                }
+                if resp.clicked() && !target.is_empty() {
+                    if let Some(key) = app.use_library_style(&s.library_id, &s.key) {
+                        app.apply_style(target, &key);
+                    }
+                }
+                pane.y += theme::STYLE_ROW_H;
+            }
+        }
+    }
 }
 
 /// Unique colours of the selection subtree; editing one replaces it everywhere.

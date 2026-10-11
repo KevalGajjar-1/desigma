@@ -887,6 +887,7 @@ dependencies = [
  "desigma-export",
  "desigma-fig",
  "desigma-fonts",
+ "desigma-library",
  "desigma-render",
  "desigma-svg",
  "eframe",
