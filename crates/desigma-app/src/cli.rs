@@ -17,6 +17,8 @@ pub struct Options {
     pub tab: Option<String>,
     /// Open the Present view on start.
     pub present: bool,
+    /// Open a panel on start: `variables` (the Local variables modal).
+    pub panel: Option<String>,
     pub help: bool,
 }
 
@@ -47,6 +49,13 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Options, String> 
                 o.tab = Some(t);
             }
             "--present" => o.present = true,
+            "--panel" => {
+                let t = it.next().ok_or("--panel needs a name (variables)")?;
+                if t != "variables" {
+                    return Err(format!("unknown panel '{t}' (expected variables)"));
+                }
+                o.panel = Some(t);
+            }
             "-h" | "--help" => o.help = true,
             s if s.starts_with("--") => return Err(format!("unknown option {s}")),
             _ => {
@@ -60,7 +69,7 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Options, String> 
     Ok(o)
 }
 
-pub const USAGE: &str = "usage: desigma [FILE] [--screenshot OUT.png] [--size WxH] [--select LAYER|none] [--menu main|main/File|shape|palette]\n  FILE  .fig, .json (Figma REST or native) or .desigma";
+pub const USAGE: &str = "usage: desigma [FILE] [--screenshot OUT.png] [--size WxH] [--select LAYER|none] [--menu main|main/File|shape|palette] [--panel variables]\n  FILE  .fig, .json (Figma REST or native) or .desigma";
 
 #[cfg(test)]
 mod tests {
@@ -104,6 +113,13 @@ mod tests {
         let o = p(&["--tab", "prototype", "--present"]).unwrap();
         assert_eq!(o.tab.as_deref(), Some("prototype"));
         assert!(o.present);
+    }
+
+    #[test]
+    fn parses_panel() {
+        assert_eq!(p(&["--panel", "variables"]).unwrap().panel.as_deref(), Some("variables"));
+        assert!(p(&["--panel", "nope"]).is_err());
+        assert!(p(&["--panel"]).is_err());
     }
 
     #[test]

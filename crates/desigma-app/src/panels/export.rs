@@ -76,13 +76,13 @@ fn thumbnail(app: &App, ui: &Ui, node: NodeId) -> Option<Thumb> {
             return Some(t);
         }
     }
-    let b: DRect = desigma_export::render_bounds(&app.doc, node);
+    let b: DRect = desigma_export::render_bounds(&app.export_doc(), node);
     if b.w <= 0.0 || b.h <= 0.0 {
         return None;
     }
     // Render at 2x the preview box so it stays sharp on hi-dpi screens.
     let scale = (theme::SECTION_CONTENT_W * 2.0 / b.w).min(PREVIEW_H * 2.0 / b.h).clamp(0.01, 2.0);
-    let pm = desigma_export::render_export(&app.doc, node, scale)?;
+    let pm = desigma_export::render_export(&app.export_doc(), node, scale)?;
     let img = egui::ColorImage::from_rgba_premultiplied([pm.width() as usize, pm.height() as usize], pm.data());
     let tex = ctx.load_texture("export-preview", img, TextureOptions::LINEAR);
     let t = Thumb { tex, node, fingerprint: fp, checked: app.now };
@@ -236,19 +236,19 @@ pub fn copy_as(app: &mut App, node: NodeId, kind: CopyKind) {
         let mut cb = arboard::Clipboard::new().map_err(|e| e.to_string())?;
         match kind {
             CopyKind::Png => {
-                let pm = desigma_export::render_export(&app.doc, node, 2.0).ok_or("Nothing to copy")?;
+                let pm = desigma_export::render_export(&app.export_doc(), node, 2.0).ok_or("Nothing to copy")?;
                 let (w, h) = (pm.width() as usize, pm.height() as usize);
                 let bytes = desigma_export::rgba_bytes(&pm);
                 cb.set_image(arboard::ImageData { width: w, height: h, bytes: bytes.into() }).map_err(|e| e.to_string())?;
                 Ok("Copied as PNG")
             }
             CopyKind::Svg => {
-                let svg = desigma_export::export_svg(&app.doc, node, &desigma_export::SvgOptions::default());
+                let svg = desigma_export::export_svg(&app.export_doc(), node, &desigma_export::SvgOptions::default());
                 cb.set_text(svg).map_err(|e| e.to_string())?;
                 Ok("Copied as SVG")
             }
             CopyKind::Css => {
-                cb.set_text(desigma_export::css_for(&app.doc, node)).map_err(|e| e.to_string())?;
+                cb.set_text(desigma_export::css_for(&app.export_doc(), node)).map_err(|e| e.to_string())?;
                 Ok("Copied as CSS")
             }
         }

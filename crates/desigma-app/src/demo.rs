@@ -106,14 +106,15 @@ pub fn demo_document() -> Document {
     });
     card.size = Vec2::new(280.0, 10.0);
     let card = d.insert(page, card).unwrap();
-    txt(&mut d, card, 0.0, 0.0, "Quarterly report", 20.0, 600, ink);
-    txt(&mut d, card, 0.0, 0.0, "Revenue grew 18% over the last quarter.", 12.0, 400, grey);
+    let card_title = txt(&mut d, card, 0.0, 0.0, "Quarterly report", 20.0, 600, ink);
+    let card_text = txt(&mut d, card, 0.0, 0.0, "Revenue grew 18% over the last quarter.", 12.0, 400, grey);
     let id = d.alloc_id();
     let bar = shape(&mut d, card, Node::rectangle(id, Rect::new(0.0, 0.0, 240.0, 8.0)), "Progress", 4.0);
     if let Some(n) = d.get_mut(bar) {
         n.fills = vec![Paint::solid(brand)];
         n.layout_child.horizontal = Sizing::Fill;
     }
+    let card_bar = bar;
 
     // Desktop board
     let id = d.alloc_id();
@@ -165,7 +166,66 @@ pub fn demo_document() -> Document {
 
     let mut ed = Edit::new();
     layout::layout_node(&mut d, &mut ed, card);
+    variables_demo(&mut d, card, card_title, card_text, card_bar);
     d
+}
+
+/// A "Theme" collection (Light / Dark) over a "Primitives" collection, bound to
+/// the Card's fill, texts, progress bar and corner radius.
+fn variables_demo(d: &mut Document, card: NodeId, title: NodeId, text: NodeId, bar: NodeId) {
+    let mut s = VariableStore::default();
+    // Theme first so it is the collection the panel opens on.
+    let theme = s.add_collection("Theme");
+    let prim = s.add_collection("Primitives");
+    let pm = s.collections[&prim].default_mode.clone();
+    s.rename_mode(&prim, &pm, "Value");
+    let color = |s: &mut VariableStore, coll: &str, name: &str, vals: &[(&str, VariableValue)]| {
+        let id = s.add_variable(coll, name, VariableKind::Color).expect("collection exists");
+        for (mode, v) in vals {
+            s.set_value(&id, mode, v.clone());
+        }
+        id
+    };
+    let c = |hex: &str| VariableValue::Color(Color::from_hex(hex).expect("demo colour"));
+    let white = color(&mut s, &prim, "Gray/50", &[(&pm, c("FFFFFF"))]);
+    let panel = color(&mut s, &prim, "Gray/900", &[(&pm, c("2C2C2C"))]);
+    let blue = color(&mut s, &prim, "Blue/500", &[(&pm, c("0C8CE9"))]);
+
+    let light = s.collections[&theme].default_mode.clone();
+    s.rename_mode(&theme, &light, "Light");
+    let dark = s.add_mode(&theme, "Dark").expect("mode");
+    let surface = color(&mut s, &theme, "Surface/Card", &[(&light, c("FFFFFF")), (&dark, c("2C2C2C"))]);
+    s.set_alias(&surface, &light, &white);
+    s.set_alias(&surface, &dark, &panel);
+    let ink = color(&mut s, &theme, "Text/Primary", &[(&light, c("1E1E1E")), (&dark, c("FFFFFF"))]);
+    let muted = color(&mut s, &theme, "Text/Secondary", &[(&light, c("8A8A8A")), (&dark, c("B8B8B8"))]);
+    let brand = color(&mut s, &theme, "Brand/Primary", &[(&light, c("0C8CE9")), (&dark, c("0C8CE9"))]);
+    s.set_alias(&brand, &light, &blue);
+    s.set_alias(&brand, &dark, &blue);
+    let radius = s.add_variable(&theme, "Radius/Card", VariableKind::Number).expect("collection exists");
+    for m in [&light, &dark] {
+        s.set_value(&radius, m, VariableValue::Number(12.0));
+    }
+    let heading = s.add_variable(&theme, "Copy/Heading", VariableKind::String).expect("collection exists");
+    s.set_value(&heading, &light, VariableValue::String("Quarterly report".into()));
+    s.set_value(&heading, &dark, VariableValue::String("Quarterly report".into()));
+    let compact = s.add_variable(&theme, "Flags/Compact", VariableKind::Boolean).expect("collection exists");
+    s.set_value(&compact, &dark, VariableValue::Boolean(true));
+    s.rename_collection(&theme, "Theme");
+    d.variables = s.variables;
+    d.variable_collections = s.collections;
+
+    let bind = |d: &mut Document, id: NodeId, pairs: &[(&str, &str)]| {
+        if let Some(n) = d.get_mut(id) {
+            for (k, v) in pairs {
+                n.variables.bindings.insert(k.to_string(), v.to_string());
+            }
+        }
+    };
+    bind(d, card, &[("fills/0", &surface), ("topLeftRadius", &radius), ("topRightRadius", &radius), ("bottomRightRadius", &radius), ("bottomLeftRadius", &radius)]);
+    bind(d, title, &[("fills/0", &ink), ("characters", &heading)]);
+    bind(d, text, &[("fills/0", &muted)]);
+    bind(d, bar, &[("fills/0", &brand)]);
 }
 
 /// A button component (with Show icon / Label properties) on the "Components"

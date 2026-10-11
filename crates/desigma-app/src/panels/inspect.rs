@@ -302,8 +302,8 @@ fn download(app: &mut App, id: NodeId, asset: &Asset) {
             let ext = ext_for(data);
             (format!("{name}.{ext}"), data.clone(), "Image", ext)
         }
-        Asset::Svg => (format!("{name}.svg"), desigma_export::export_svg(&app.doc, id, &desigma_export::SvgOptions::default()).into_bytes(), "SVG", "svg"),
-        Asset::Png2x => (format!("{name}@2x.png"), desigma_export::export_png(&app.doc, id, 2.0), "PNG", "png"),
+        Asset::Svg => (format!("{name}.svg"), desigma_export::export_svg(&app.export_doc(), id, &desigma_export::SvgOptions::default()).into_bytes(), "SVG", "svg"),
+        Asset::Png2x => (format!("{name}@2x.png"), desigma_export::export_png(&app.export_doc(), id, 2.0), "PNG", "png"),
     };
     if bytes.is_empty() {
         app.show_toast("Nothing to download", true);
@@ -368,7 +368,7 @@ fn body(app: &mut App, ui: &mut Ui, c: &mut Cur, id: NodeId, count: usize) {
 
     // Code.
     section_title(ui, c, "CSS");
-    let css = desigma_export::css_for(&app.doc, id);
+    let css = desigma_export::css_for(&app.export_doc(), id);
     let head = c.rect(c.w - PAD - 56.0, -24.0, 56.0, 24.0);
     if small_button(ui, head, "copy-css", "Copy") {
         copy(app, ui, css.clone(), "CSS");

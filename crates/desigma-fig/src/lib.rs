@@ -18,6 +18,7 @@ pub mod kiwi;
 #[cfg(feature = "net")]
 pub mod rest;
 mod rest_import;
+mod variables;
 pub mod svgpath;
 #[doc(hidden)]
 pub mod testkit;
@@ -27,6 +28,7 @@ pub use export::export_rest_json;
 pub use proto::{key_code, key_name};
 pub use fig::{commands_blob_to_path, decode_fig_to_json, import_fig};
 pub use rest_import::{image_refs, import_rest_json};
+pub use variables::{export_variables_json, export_variables_meta, import_variables_json, import_variables_value};
 
 #[derive(Debug, thiserror::Error)]
 pub enum FigError {

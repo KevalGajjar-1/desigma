@@ -64,6 +64,9 @@ impl Shell {
         if opts.present {
             app.start_present();
         }
+        if opts.panel.as_deref() == Some("variables") {
+            app.open_variables();
+        }
         let shot = opts.screenshot.map(|path| Shot {
             path,
             size: opts.size.unwrap_or((theme::DEFAULT_WINDOW.0 as u32, theme::DEFAULT_WINDOW.1 as u32)),
@@ -117,8 +120,23 @@ impl Shell {
 
     fn handle_keys(&mut self, ctx: &Context) {
         let typing = ctx.egui_wants_keyboard_input();
+        if self.app.vars.open {
+            // The Variables modal owns the keyboard; undo / redo still work.
+            if !typing && self.app.ui.menu.is_none() {
+                for ev in ctx.input(|i| i.events.clone()) {
+                    if let Event::Key { key, pressed: true, modifiers, .. } = ev {
+                        match (key, modifiers.command, modifiers.shift) {
+                            (Key::Z, true, false) => self.app.undo(),
+                            (Key::Z, true, true) | (Key::Y, true, false) => self.app.redo(),
+                            _ => {}
+                        }
+                    }
+                }
+            }
+            return;
+        }
         // Open menus own the keyboard (arrows, Enter, Escape, typing in the palette).
-        if self.app.ui.menu.is_some() || self.app.ui.ctx_menu.is_some() {
+        if self.app.ui.menu.is_some() || self.app.ui.ctx_menu.is_some() || self.app.vars.open {
             return;
         }
         let editing_text = self.app.canvas.text.is_some();
@@ -270,7 +288,7 @@ impl Shell {
     /// Right-click on the canvas selects the layer under the pointer and opens the selection menu.
     fn context_menu(&mut self, ui: &egui::Ui, canvas_rect: Rect) {
         let (clicked, pos) = ui.ctx().input(|i| (i.pointer.secondary_clicked(), i.pointer.interact_pos()));
-        let Some(pos) = pos.filter(|p| clicked && canvas_rect.contains(*p)) else { return };
+        let Some(pos) = pos.filter(|p| clicked && canvas_rect.contains(*p) && !self.app.vars.open) else { return };
         let app = &mut self.app;
         if !matches!(app.canvas.inter, canvas::Interaction::None) || app.canvas.text.is_some() {
             return;
@@ -359,6 +377,7 @@ impl Shell {
         self.context_menu(ui, canvas_rect);
         menus::show(&mut self.app, &ctx);
         panels::context::show(&mut self.app, &ctx);
+        crate::variables::modal::show(&mut self.app, &ctx);
         self.toast(ui, full);
 
         let title = self.app.title();

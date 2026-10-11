@@ -11,6 +11,8 @@ mod node;
 mod paint;
 mod prototype;
 mod variables;
+mod variables_apply;
+mod variables_edit;
 
 pub use components::*;
 pub use geom::*;
@@ -19,6 +21,8 @@ pub use node::*;
 pub use paint::*;
 pub use prototype::*;
 pub use variables::*;
+pub use variables_apply::*;
+pub use variables_edit::*;
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
