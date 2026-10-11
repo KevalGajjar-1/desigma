@@ -391,8 +391,13 @@ fn selection_ui(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[NodeId]) {
     row_end(pane);
     let rot = common(app, sel, |n| (-n.transform.rotation_rad().to_degrees() * 100.0).round() / 100.0);
     if let Some(deg) = field::num_field(ui, pane.col(0, 0.0), "rot", Prefix::Icon(Icon::Rotation), rot, "°") {
-        let rad = -deg.to_radians();
-        app.edit_nodes(sel, |n| n.transform = crate::canvas::handles::rotate_about_center(&n.transform, n.size, rad));
+        if multi {
+            // A group rotates as one body around its bounding-box centre.
+            app.rotate_selection(-(deg - rot.unwrap_or(0.0)).to_radians());
+        } else {
+            let rad = -deg.to_radians();
+            app.edit_nodes(sel, |n| n.transform = crate::canvas::handles::rotate_about_center(&n.transform, n.size, rad));
+        }
     }
     row_end(pane);
     sublabel(ui, pane, "Dimensions");

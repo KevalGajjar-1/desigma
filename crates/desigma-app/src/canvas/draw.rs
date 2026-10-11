@@ -174,6 +174,13 @@ pub fn overlays(app: &App, ui: &Ui, rect: ERect) {
         p.text(r.center(), Align2::CENTER_CENTER, text, font, theme::GUIDE_TEXT);
     }
 
+    // Auto-layout insertion indicator.
+    if let Interaction::Move(m) = &app.canvas.inter {
+        if let Some(r) = &m.reorder {
+            p.line_segment([to_s(r.line[0]), to_s(r.line[1])], Stroke::new(theme::AL_INDICATOR_WIDTH, theme::DROP_INDICATOR));
+        }
+    }
+
     // Marquee.
     if let Interaction::Marquee { start, cur, .. } = &app.canvas.inter {
         let (a, b) = (to_s(*start), to_s(*cur));

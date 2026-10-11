@@ -3,6 +3,7 @@
 use super::create::{self, PenPoint};
 use super::handles::{self, Handle, HandleHit};
 use super::hit;
+use super::reorder;
 use super::snap;
 use super::tools::{press_action, PressAction, PressTarget, Tool};
 use super::*;
@@ -177,7 +178,7 @@ fn handle_hit(app: &App, rect: ERect, pos: Pos2) -> Option<HandleHit> {
     let hit = handles::hit_handle(&s, dv(pos), theme::CANVAS_HANDLE_HIT, theme::CANVAS_ROTATE_ZONE, allow_mid || is_line)?;
     match hit {
         HandleHit::Resize(h) if is_line && !matches!(h, Handle::L | Handle::R) => None,
-        HandleHit::Rotate(_) if is_line || app.selection.len() != 1 => None,
+        HandleHit::Rotate(_) if is_line => None,
         other => Some(other),
     }
 }
@@ -271,6 +272,23 @@ fn start_resize(app: &mut App, handle: Handle, page: DV) {
 }
 
 fn start_rotate(app: &mut App, _corner: usize, page: DV) {
+    let tops = app.top_selection();
+    if tops.len() > 1 {
+        let Some(bb) = union_all(tops.iter().map(|i| world_aabb(&app.doc, *i))) else { return };
+        let center = rect_center(&bb);
+        let group = tops.iter().map(|i| (*i, app.doc.world_transform(*i))).collect();
+        app.canvas.inter = Interaction::Rotate(RotateState {
+            tx: Tx::new(),
+            id: tops[0],
+            center,
+            start_angle: handles::angle_of(center, page),
+            t0: Affine::IDENTITY,
+            size: DV::ZERO,
+            rot0: 0.0,
+            group,
+        });
+        return;
+    }
     let Some(id) = app.selection.first().copied() else { return };
     let Some(n) = app.doc.get(id) else { return };
     let w = app.doc.world_transform(id);
@@ -283,6 +301,7 @@ fn start_rotate(app: &mut App, _corner: usize, page: DV) {
         t0: n.transform,
         size: n.size,
         rot0: n.transform.rotation_rad(),
+        group: Vec::new(),
     });
 }
 
@@ -341,15 +360,23 @@ fn on_drag(app: &mut App, ui: &Ui, rect: ERect, inp: &Inp) {
         Interaction::Resize(r) => update_resize(app, r, cur, inp),
         Interaction::Rotate(r) => {
             r.tx.ed.revert(&mut app.doc);
-            let mut ang = r.rot0 + (handles::angle_of(r.center, cur) - r.start_angle);
-            if inp.mods.shift {
-                ang = handles::snap_angle(ang, 15.0);
+            if r.group.is_empty() {
+                let mut ang = r.rot0 + (handles::angle_of(r.center, cur) - r.start_angle);
+                if inp.mods.shift {
+                    ang = handles::snap_angle(ang, 15.0);
+                }
+                let t = handles::rotate_about_center(&r.t0, r.size, ang);
+                if let Some(n) = r.tx.ed.node(&mut app.doc, r.id) {
+                    n.transform = t;
+                }
+                layout::relayout_up(&mut app.doc, &mut r.tx.ed, r.id);
+            } else {
+                let mut delta = handles::angle_of(r.center, cur) - r.start_angle;
+                if inp.mods.shift {
+                    delta = handles::snap_angle(delta, 15.0);
+                }
+                crate::ops::rotate_nodes_about(&mut app.doc, &mut r.tx.ed, &r.group, r.center, delta);
             }
-            let t = handles::rotate_about_center(&r.t0, r.size, ang);
-            if let Some(n) = r.tx.ed.node(&mut app.doc, r.id) {
-                n.transform = t;
-            }
-            layout::relayout_up(&mut app.doc, &mut r.tx.ed, r.id);
             app.changed();
         }
         Interaction::Draw(d) => {
@@ -412,7 +439,7 @@ fn start_move(app: &mut App, clicked: NodeId, start: DV, alt: bool) -> Option<Mo
     }
     let orig_bbox = union_all(ids.iter().map(|i| world_aabb(&app.doc, *i)))?;
     let targets = snap_targets(app, &ids);
-    Some(MoveState { tx, ids, start, orig_bbox, targets, moved: false })
+    Some(MoveState { tx, ids, start, orig_bbox, targets, moved: false, reorder: None })
 }
 
 fn parent_has_auto_layout(doc: &Document, id: NodeId) -> bool {
@@ -451,10 +478,8 @@ fn update_move(app: &mut App, m: &mut MoveState, cur: DV, inp: &Inp) {
         app.canvas.guides = s.guides;
         app.canvas.measures = s.measures;
     }
+    // Auto-layout children follow the pointer too (their slot is decided on release).
     for id in &m.ids {
-        if parent_has_auto_layout(&app.doc, *id) {
-            continue;
-        }
         let dp = delta_to_parent(&app.doc, *id, d);
         if let Some(n) = m.tx.ed.node(&mut app.doc, *id) {
             n.transform.tx += dp.x;
@@ -462,8 +487,17 @@ fn update_move(app: &mut App, m: &mut MoveState, cur: DV, inp: &Inp) {
         }
     }
     for id in &m.ids {
-        layout::relayout_up(&mut app.doc, &mut m.tx.ed, *id);
+        if !parent_has_auto_layout(&app.doc, *id) {
+            layout::relayout_up(&mut app.doc, &mut m.tx.ed, *id);
+        }
     }
+    m.reorder = match m.ids.as_slice() {
+        [only] if parent_has_auto_layout(&app.doc, *only) => {
+            let parent = app.doc.get(*only).and_then(|n| n.parent);
+            parent.filter(|p| node_contains(app, *p, cur)).and_then(|p| reorder::insertion_at(&app.doc, p, *only, cur))
+        }
+        _ => None,
+    };
     m.moved = true;
     app.changed();
 }
@@ -587,10 +621,20 @@ fn on_release(app: &mut App, rect: ERect, inp: &Inp) {
 fn reparent_after_move(app: &mut App, m: &mut MoveState, cur: DV) {
     let target = create::container_at(&app.doc, app.page, cur, &m.ids);
     let mut touched_parents = Vec::new();
+    if let Some(r) = m.reorder.take() {
+        // Dropped inside its auto-layout frame: move to the indicated slot.
+        if let Some(&id) = m.ids.first() {
+            if m.tx.cmd(&mut app.doc, Command::Reparent { id, parent: r.parent, index: r.index }).is_ok() {
+                layout::relayout_around(&mut app.doc, &mut m.tx.ed, r.parent);
+            }
+        }
+        return;
+    }
     for id in m.ids.clone() {
         let Some(n) = app.doc.get(id) else { continue };
         let old_parent = n.parent;
-        if old_parent == Some(target) || parent_has_auto_layout(&app.doc, id) || app.doc.is_ancestor(id, target) {
+        // Children of an auto-layout frame that stay inside it only reorder; leaving it takes them out of the flow.
+        if old_parent == Some(target) || app.doc.is_ancestor(id, target) {
             continue;
         }
         let Some(inv) = app.doc.world_transform(target).invert() else { continue };

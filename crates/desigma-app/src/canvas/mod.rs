@@ -6,6 +6,7 @@ pub mod draw;
 pub mod handles;
 pub mod hit;
 pub mod interact;
+pub mod reorder;
 pub mod snap;
 pub mod tools;
 
@@ -31,6 +32,8 @@ pub struct MoveState {
     pub orig_bbox: Rect,
     pub targets: Vec<Rect>,
     pub moved: bool,
+    /// Auto-layout reorder target while dragging a child inside its frame.
+    pub reorder: Option<reorder::Insertion>,
 }
 
 pub enum ResizeKind {
@@ -53,6 +56,8 @@ pub struct RotateState {
     pub t0: Affine,
     pub size: DV,
     pub rot0: f32,
+    /// Multi-selection: every rotated node with its world transform at drag start.
+    pub group: Vec<(NodeId, Affine)>,
 }
 
 pub struct DrawState {

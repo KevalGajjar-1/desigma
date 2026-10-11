@@ -520,3 +520,85 @@ fn editing_a_selection_color_replaces_it_everywhere() {
     let undone = crate::styles::selection_colors(&s.app().doc, &[welcome]);
     assert_eq!(undone.iter().map(|c| c.to_hex()).collect::<Vec<_>>(), before.iter().map(|c| c.to_hex()).collect::<Vec<_>>());
 }
+
+#[test]
+fn rotating_a_multi_selection_with_the_handle() {
+    let mut s = Sim::new();
+    let (a, b) = (s.by_name("Tile A"), s.by_name("Tile B"));
+    s.shell.app.selection = vec![a, b];
+    s.frame(vec![]);
+    let (corners, _) = interact::selection_box(s.app()).unwrap();
+    let br = s.app().view.to_screen(s.app().canvas_rect.min, corners[2]);
+    let center = s.app().view.to_screen(s.app().canvas_rect.min, DV::new((corners[0].x + corners[2].x) / 2.0, (corners[0].y + corners[2].y) / 2.0));
+    // grab just outside the bottom-right corner and swing it a quarter turn clockwise
+    let start = br + Vec2::new(5.0, 5.0);
+    let r = (start - center).length();
+    let end = center + Vec2::new(-(start - center).y, (start - center).x) * (r / r);
+    s.mods = Modifiers::NONE;
+    s.drag(start, end);
+    let ra = s.app().doc.get(a).unwrap().transform.rotation_rad();
+    let rb = s.app().doc.get(b).unwrap().transform.rotation_rad();
+    assert!(ra.abs() > 0.5 && (ra - rb).abs() < 1e-3, "both rotate together: {ra} {rb}");
+    s.cmd_key(Key::Z);
+    assert_eq!(s.app().doc.get(a).unwrap().transform.rotation_rad(), 0.0);
+}
+
+fn aabb_center(s: &Sim, id: NodeId) -> DV {
+    let b = crate::util::world_aabb(&s.app().doc, id);
+    DV::new(b.x + b.w / 2.0, b.y + b.h / 2.0)
+}
+
+#[test]
+fn dragging_inside_an_auto_layout_frame_reorders_children() {
+    let mut s = Sim::new();
+    let card = s.by_name("Card");
+    let bar = s.by_name("Progress");
+    let before = s.app().doc.get(card).unwrap().children.clone();
+    assert_eq!(*before.last().unwrap(), bar);
+    let c = aabb_center(&s, bar);
+    let a = s.screen(c.x, c.y);
+    let top = s.app().doc.get(card).unwrap().children[0];
+    let t = aabb_center(&s, top);
+    // drop above the first child, still inside the frame
+    let b = s.screen(t.x, t.y - 10.0);
+    s.mv(a);
+    s.button(true);
+    s.mv(a + (b - a) * 0.5);
+    s.mv(b);
+    // while dragging, the 2px insertion line is shown
+    let ins = match &s.app().canvas.inter {
+        canvas::Interaction::Move(m) => m.reorder,
+        _ => None,
+    };
+    let ins = ins.expect("insertion indicator while dragging inside the frame");
+    assert_eq!(ins.index, 0);
+    assert_eq!(ins.line[0].y, ins.line[1].y, "horizontal line in a vertical stack");
+    s.button(false);
+    s.frame(vec![]);
+    let after = s.app().doc.get(card).unwrap().children.clone();
+    assert_eq!(after[0], bar);
+    assert_eq!(after.len(), before.len());
+    // laid out in the new order and a single undo step
+    let ys: Vec<f32> = after.iter().map(|c| s.app().doc.get(*c).unwrap().transform.ty).collect();
+    assert!(ys.windows(2).all(|w| w[1] > w[0]), "{ys:?}");
+    s.cmd_key(Key::Z);
+    assert_eq!(s.app().doc.get(card).unwrap().children, before);
+}
+
+#[test]
+fn dragging_out_of_an_auto_layout_frame_leaves_the_flow() {
+    let mut s = Sim::new();
+    let card = s.by_name("Card");
+    let bar = s.by_name("Progress");
+    let c = aabb_center(&s, bar);
+    let w0 = crate::util::world_aabb(&s.app().doc, bar);
+    let a = s.screen(c.x, c.y);
+    let b = s.screen(c.x + 400.0, c.y - 60.0);
+    s.drag(a, b);
+    let n = s.app().doc.get(bar).unwrap();
+    assert_ne!(n.parent, Some(card), "reparented out of the frame");
+    let w1 = crate::util::world_aabb(&s.app().doc, bar);
+    assert!((w1.x - w0.x - 400.0).abs() < 8.0, "keeps following the pointer: {} -> {}", w0.x, w1.x);
+    s.cmd_key(Key::Z);
+    assert_eq!(s.app().doc.get(bar).unwrap().parent, Some(card));
+}

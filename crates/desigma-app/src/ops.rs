@@ -43,7 +43,39 @@ pub fn apply_resize(doc: &mut Document, ed: &mut Edit, id: NodeId, size: Vec2, t
     }
 }
 
+/// Rotates every `(node, world transform at start)` by `delta` radians about
+/// the page-space point `center`, keeping each node's parent untouched.
+pub fn rotate_nodes_about(doc: &mut Document, ed: &mut Edit, nodes: &[(NodeId, Affine)], center: Vec2, delta: f32) {
+    let rot = Affine::translate(center.x, center.y) * Affine::rotate(delta) * Affine::translate(-center.x, -center.y);
+    // Compute everything first: relayout of a shared group parent moves its transform.
+    let new: Vec<(NodeId, Affine)> = nodes
+        .iter()
+        .filter_map(|(id, world0)| {
+            let pinv = parent_world(doc, *id).invert()?;
+            Some((*id, pinv * rot * *world0))
+        })
+        .collect();
+    for (id, t) in &new {
+        if let Some(n) = ed.node(doc, *id) {
+            n.transform = *t;
+        }
+    }
+    for (id, _) in &new {
+        layout::relayout_up(doc, ed, *id);
+    }
+}
+
 impl App {
+    /// Rotates the selection by `delta` radians around the centre of its bounding box.
+    pub fn rotate_selection(&mut self, delta: f32) {
+        let tops = self.top_selection();
+        let Some(bb) = union_all(tops.iter().map(|i| world_aabb(&self.doc, *i))) else { return };
+        let nodes: Vec<(NodeId, Affine)> = tops.iter().map(|i| (*i, self.doc.world_transform(*i))).collect();
+        let mut tx = Tx::new();
+        rotate_nodes_about(&mut self.doc, &mut tx.ed, &nodes, rect_center(&bb), delta);
+        self.run_tx(tx);
+    }
+
     // ------------------------------------------------------------ plumbing
     pub fn run_tx(&mut self, tx: Tx) -> bool {
         if self.scrub.is_some() {
@@ -886,5 +918,29 @@ mod tests {
         assert!(!app.delete_page(p2) || app.doc.pages.len() == 1);
         assert!(!app.doc.pages.is_empty());
         assert!(app.doc.nodes.contains_key(&app.page));
+    }
+
+    #[test]
+    fn multi_rotate_pivots_about_bbox_center() {
+        let (mut app, ids) = app_with_rects();
+        app.selection = vec![ids[0], ids[2]];
+        let bb = app.selection_bounds().unwrap();
+        let c0 = rect_center(&bb);
+        app.rotate_selection(std::f32::consts::FRAC_PI_2);
+        for id in [ids[0], ids[2]] {
+            let n = app.doc.get(id).unwrap();
+            assert!((n.transform.rotation_rad() - std::f32::consts::FRAC_PI_2).abs() < 1e-4);
+        }
+        // the union box (now rotated) is centred on the same point and swapped in shape
+        let bb1 = app.selection_bounds().unwrap();
+        let c1 = rect_center(&bb1);
+        assert!((c0.x - c1.x).abs() < 1e-2 && (c0.y - c1.y).abs() < 1e-2, "{c0:?} vs {c1:?}");
+        assert!(dist(c0, c1) < 1e-2);
+        assert!((bb1.w - bb.h).abs() < 1e-2 && (bb1.h - bb.w).abs() < 1e-2);
+        // untouched node did not move
+        assert_eq!(app.doc.get(ids[1]).unwrap().transform.tx, 100.0);
+        app.undo();
+        assert_eq!(app.doc.get(ids[0]).unwrap().transform.rotation_rad(), 0.0);
+        assert!(!app.hist.can_undo());
     }
 }
