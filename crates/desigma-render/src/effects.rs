@@ -111,8 +111,19 @@ pub fn inner_shadow(
     composite(target, rx, ry, &pm, sk::BlendMode::SourceOver, clip);
 }
 
-/// Replaces the backdrop inside the node shape with a blurred copy of it.
-pub fn background_blur(target: &mut sk::Pixmap, clip: Option<&sk::Mask>, bbox: BBox, scale: f32, radius: f32, sil: Sil) {
+/// Replaces the backdrop inside the node shape with a blurred copy of it. When
+/// drawing into an isolated layer, `backdrop` is what lies beneath the layer
+/// (it is sampled together with the layer's own content).
+#[allow(clippy::too_many_arguments)]
+pub fn background_blur(
+    target: &mut sk::Pixmap,
+    backdrop: Option<&sk::Pixmap>,
+    clip: Option<&sk::Mask>,
+    bbox: BBox,
+    scale: f32,
+    radius: f32,
+    sil: Sil,
+) {
     let sigma = radius.max(0.0) * scale / 2.0;
     let (tw, th) = (target.width() as i32, target.height() as i32);
     let x0 = (bbox.0.floor() as i32).max(0);
@@ -126,7 +137,12 @@ pub fn background_blur(target: &mut sk::Pixmap, clip: Option<&sk::Mask>, bbox: B
     let (px0, py0) = ((x0 - pad).max(0), (y0 - pad).max(0));
     let (px1, py1) = ((x1 + pad).min(tw), (y1 + pad).min(th));
     let Some(prect) = sk::IntRect::from_xywh(px0, py0, (px1 - px0) as u32, (py1 - py0) as u32) else { return };
-    let Some(mut sub) = target.clone_rect(prect) else { return };
+    let Some(mut sub) = backdrop.unwrap_or(target).clone_rect(prect) else { return };
+    if backdrop.is_some() {
+        if let Some(own) = target.clone_rect(prect) {
+            composite(&mut sub, 0, 0, &own, sk::BlendMode::SourceOver, None);
+        }
+    }
     gaussian_blur(&mut sub, sigma);
     let Some(crop) = sk::IntRect::from_xywh(x0 - px0, y0 - py0, (x1 - x0) as u32, (y1 - y0) as u32) else { return };
     let Some(mut blurred) = sub.clone_rect(crop) else { return };
