@@ -52,7 +52,6 @@ impl FontLoader {
         self.pending = None;
         let loaded = report.loaded.len();
         for f in report.loaded {
-            crate::textmeasure::register_font(f.data.clone());
             desigma_export::register_font(f.data.clone());
             desigma_render::register_font(f.data);
         }

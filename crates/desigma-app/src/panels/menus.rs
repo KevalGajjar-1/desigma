@@ -7,7 +7,9 @@ use crate::ops::Align;
 use crate::theme;
 use crate::widgets::menu::{popup_menu, popup_tree, preset_path, MenuItem, MenuResult, TreeResult};
 use crate::widgets::{self, menu_panel};
-use desigma_doc::{NodeKind, TextDecoration};
+use crate::canvas::textsession::{text_command, TextCmd};
+use crate::richtext::ListKind;
+use desigma_doc::NodeKind;
 use egui::{Align2, Context, Id, Key, Modifiers, Pos2, Rect, Sense, Vec2};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -46,9 +48,15 @@ pub enum Action {
     Paste,
     TogglePixelGrid,
     ToggleRulers,
+    ToggleLayoutGrids,
+    ToggleSnapPixel,
     TextBold,
     TextItalic,
     TextUnderline,
+    TextSizeUp,
+    TextSizeDown,
+    TextBulletList,
+    TextNumberedList,
     Align(Align),
     Distribute,
     Flatten,
@@ -105,9 +113,15 @@ pub fn run(app: &mut App, ctx: &Context, a: Action) {
         Action::Paste => app.paste(None),
         Action::TogglePixelGrid => app.ui.pixel_grid = !app.ui.pixel_grid,
         Action::ToggleRulers => app.ui.rulers = !app.ui.rulers,
-        Action::TextBold => text_edit(app, |t| t.font_weight = if t.font_weight >= 600 { 400 } else { 700 }),
-        Action::TextItalic => text_edit(app, |t| t.italic = !t.italic),
-        Action::TextUnderline => text_edit(app, |t| t.decoration = if t.decoration == TextDecoration::Underline { TextDecoration::None } else { TextDecoration::Underline }),
+        Action::ToggleLayoutGrids => app.ui.hide_layout_grids = !app.ui.hide_layout_grids,
+        Action::ToggleSnapPixel => app.ui.no_pixel_snap = !app.ui.no_pixel_snap,
+        Action::TextBold => text_command(app, TextCmd::Bold),
+        Action::TextItalic => text_command(app, TextCmd::Italic),
+        Action::TextUnderline => text_command(app, TextCmd::Underline),
+        Action::TextSizeUp => text_command(app, TextCmd::SizeUp),
+        Action::TextSizeDown => text_command(app, TextCmd::SizeDown),
+        Action::TextBulletList => text_command(app, TextCmd::List(ListKind::Bullet)),
+        Action::TextNumberedList => text_command(app, TextCmd::List(ListKind::Numbered)),
         Action::Align(a) => app.align(a),
         Action::Distribute => {
             app.distribute_selection();
@@ -123,15 +137,6 @@ pub fn run(app: &mut App, ctx: &Context, a: Action) {
         Action::Tool(t) => pick_tool(app, t),
     }
     ctx.request_repaint();
-}
-
-fn text_edit(app: &mut App, f: impl Fn(&mut desigma_doc::TextStyle)) {
-    let sel = app.selection.clone();
-    app.edit_nodes(&sel, |n| {
-        if let NodeKind::Text(t) = &mut n.kind {
-            f(&mut t.style);
-        }
-    });
 }
 
 /// Selects `t` and remembers it as its toolbar group's current pick.
@@ -251,7 +256,9 @@ fn main_nodes(app: &App) -> Vec<Node> {
         leaf("Zoom to fit", "Shift+1", Action::FitAll),
         leaf("Zoom to selection", "Shift+2", Action::FitSelection).off(!has_sel),
         leaf("Zoom to 100%", "Shift+0", Action::Zoom100).sep(),
-        leaf("Pixel grid", "Ctrl+'", Action::TogglePixelGrid).on(app.ui.pixel_grid),
+        leaf("Pixel grid", "Shift+'", Action::TogglePixelGrid).on(app.ui.pixel_grid),
+        leaf("Snap to pixel grid", "Ctrl+Shift+'", Action::ToggleSnapPixel).on(!app.ui.no_pixel_snap),
+        leaf("Layout guides", "Ctrl+Shift+4", Action::ToggleLayoutGrids).on(!app.ui.hide_layout_grids),
         leaf("Rulers", "Shift+R", Action::ToggleRulers).on(app.ui.rulers),
         leaf("Show/Hide UI", "Ctrl+\\", Action::ToggleSidebar).on(!app.ui.left_collapsed),
     ];
@@ -270,7 +277,11 @@ fn main_nodes(app: &App) -> Vec<Node> {
     let text = vec![
         leaf("Bold", "Ctrl+B", Action::TextBold).off(!has_text),
         leaf("Italic", "Ctrl+I", Action::TextItalic).off(!has_text),
-        leaf("Underline", "Ctrl+U", Action::TextUnderline).off(!has_text),
+        leaf("Underline", "Ctrl+U", Action::TextUnderline).off(!has_text).sep(),
+        leaf("Increase font size", "Ctrl+Shift+>", Action::TextSizeUp).off(!has_text),
+        leaf("Decrease font size", "Ctrl+Shift+<", Action::TextSizeDown).off(!has_text).sep(),
+        leaf("Bulleted list", "Ctrl+Shift+8", Action::TextBulletList).off(!has_text),
+        leaf("Numbered list", "Ctrl+Shift+7", Action::TextNumberedList).off(!has_text),
     ];
     let arrange = vec![submenu(
         "Align and distribute",

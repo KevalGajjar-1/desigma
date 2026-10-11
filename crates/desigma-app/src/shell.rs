@@ -58,6 +58,42 @@ impl Shell {
                 eprintln!("desigma: unknown menu '{spec}'");
             }
         }
+        app.ui.rulers = opts.rulers;
+        if opts.grid {
+            app.ui.pixel_grid = true;
+        }
+        app.startup_zoom = opts.zoom.map(|z| z / 100.0);
+        if let Some(kind) = &opts.layout_grid {
+            let target = app.selection.first().copied();
+            if let Some(id) = target {
+                let k = ["grid", "columns", "rows"].iter().position(|n| n == kind).unwrap_or(1);
+                // screenshot aid: a red 10% grid, columns with the usual 5 x 20px gutter
+                let grid = crate::panels::layoutguide::default_grid(k, desigma_doc::Color::rgba(255, 0, 0, 26));
+                app.edit_nodes(&[id], |n| {
+                    if let Some(f) = n.kind.frame_props_mut() {
+                        f.grids.push(grid.clone());
+                    }
+                });
+            }
+        }
+        if let Some(name) = &opts.edit_text {
+            let found = app.doc.nodes.values().find(|n| &n.name == name && matches!(n.kind, desigma_doc::NodeKind::Text(_))).map(|n| n.id);
+            if let Some(id) = found {
+                if let Some(pg) = app.doc.page_of(id) {
+                    app.page = pg;
+                }
+                canvas::interact::begin_text_edit(&mut app, id);
+                if let (Some((a, b)), Some(sess)) = (opts.select_text, app.canvas.text.as_mut()) {
+                    if let Some(desigma_doc::NodeKind::Text(t)) = app.doc.get(id).map(|n| &n.kind) {
+                        let byte = |c: usize| t.content.char_indices().nth(c).map(|(i, _)| i).unwrap_or(t.content.len());
+                        sess.anchor = byte(a);
+                        sess.caret = byte(b);
+                    }
+                }
+            } else {
+                eprintln!("desigma: no text layer named '{name}'");
+            }
+        }
         if opts.tab.as_deref() == Some("prototype") {
             app.ui.right_tab = Some(crate::app::RightTab::Prototype);
         }
@@ -186,6 +222,16 @@ impl Shell {
                 (Key::B, false, true) => Some(Action::Detach),
                 (Key::K, true, false) => Some(Action::CombineVariants),
                 (Key::A, false, _) => Some(Action::SelectAll),
+                (Key::Quote, false, _) => Some(Action::TogglePixelGrid),
+                (Key::Quote, true, _) => Some(Action::ToggleSnapPixel),
+                (Key::Num4, true, _) => Some(Action::ToggleLayoutGrids),
+                (Key::B, false, false) => Some(Action::TextBold),
+                (Key::I, false, false) => Some(Action::TextItalic),
+                (Key::U, false, false) => Some(Action::TextUnderline),
+                (Key::Period, true, false) => Some(Action::TextSizeUp),
+                (Key::Comma, true, false) => Some(Action::TextSizeDown),
+                (Key::Num8, true, false) => Some(Action::TextBulletList),
+                (Key::Num7, true, false) => Some(Action::TextNumberedList),
                 (Key::CloseBracket, false, _) => Some(Action::BringForward),
                 (Key::OpenBracket, false, _) => Some(Action::SendBackward),
                 (Key::CloseBracket, true, _) => Some(Action::BringToFront),
@@ -275,6 +321,8 @@ impl Shell {
             Key::Num2 if m.shift => menus::run(app, ctx, Action::FitSelection),
             Key::Num0 if m.shift => menus::run(app, ctx, Action::Zoom100),
             Key::A if m.shift => menus::run(app, ctx, Action::AutoLayout),
+            Key::R if m.shift => menus::run(app, ctx, Action::ToggleRulers),
+            Key::Quote if m.shift => menus::run(app, ctx, Action::TogglePixelGrid),
             k => {
                 if !m.alt {
                     if let Some(t) = Tool::from_key(k, m.shift) {

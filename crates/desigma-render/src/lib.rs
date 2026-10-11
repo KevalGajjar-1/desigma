@@ -24,7 +24,7 @@ use desigma_doc::{resolve_node, Document, Effect, Node, NodeId, NodeKind, Vec2};
 use geom::{node_shape, to_sk_transform, transformed_bounds, Shape};
 pub use index::SceneIndex;
 use paint::{blend_mode, fill_paths, stroke_paths, PaintEnv};
-pub use text::{font_generation, load_font_data, register_font, resolve_font, ResolvedFont};
+pub use text::{available_families, font_generation, load_font_data, register_font, resolve_font, text_geometry, GlyphSpan, LineGeom, ResolvedFont, TextGeometry};
 pub use tiles::{Tile, TileBudget, TileCache, TileFrame, TileKey, TILE_SIZE};
 pub use tiny_skia;
 use tiny_skia as sk;

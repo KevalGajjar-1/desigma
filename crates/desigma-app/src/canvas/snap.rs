@@ -36,6 +36,22 @@ pub struct SnapResult {
     pub measures: Vec<Measure>,
 }
 
+/// A user guide as a snap target: a degenerate rect that is huge on one axis, so
+/// only its position on the other axis can ever be within the snap threshold.
+pub fn guide_rect(axis: GuideAxis, pos: f32) -> Rect {
+    match axis {
+        GuideAxis::X => Rect::new(pos, -GUIDE_EXTENT, 0.0, GUIDE_EXTENT * 3.0),
+        GuideAxis::Y => Rect::new(-GUIDE_EXTENT, pos, GUIDE_EXTENT * 3.0, 0.0),
+    }
+}
+
+const GUIDE_EXTENT: f32 = 1.0e7;
+
+/// Whether `r` came from [`guide_rect`] (not a layer).
+pub fn is_guide_rect(r: &Rect) -> bool {
+    (r.w == 0.0 && r.h >= GUIDE_EXTENT) || (r.h == 0.0 && r.w >= GUIDE_EXTENT)
+}
+
 fn xs(r: &Rect) -> [f32; 3] {
     [r.x, r.x + r.w * 0.5, r.x + r.w]
 }
@@ -85,7 +101,7 @@ fn finish(moving: &Rect, others: &[Rect], sx: Option<(f32, f32)>, sy: Option<(f3
     let mut guides = Vec::new();
     if let Some((_, line)) = sx {
         let (mut from, mut to) = (snapped.y, snapped.y + snapped.h);
-        for o in others {
+        for o in others.iter().filter(|o| !is_guide_rect(o)) {
             if xs(o).iter().any(|v| (v - line).abs() < 1e-3) {
                 from = from.min(o.y);
                 to = to.max(o.y + o.h);
@@ -95,7 +111,7 @@ fn finish(moving: &Rect, others: &[Rect], sx: Option<(f32, f32)>, sy: Option<(f3
     }
     if let Some((_, line)) = sy {
         let (mut from, mut to) = (snapped.x, snapped.x + snapped.w);
-        for o in others {
+        for o in others.iter().filter(|o| !is_guide_rect(o)) {
             if ys(o).iter().any(|v| (v - line).abs() < 1e-3) {
                 from = from.min(o.x);
                 to = to.max(o.x + o.w);
@@ -117,7 +133,7 @@ pub fn measurements(r: &Rect, others: &[Rect]) -> Vec<Measure> {
     let mut right: Option<f32> = None;
     let mut up: Option<f32> = None;
     let mut down: Option<f32> = None;
-    for o in others {
+    for o in others.iter().filter(|o| !is_guide_rect(o)) {
         let y_overlap = o.y < r.y + r.h && o.y + o.h > r.y;
         let x_overlap = o.x < r.x + r.w && o.x + o.w > r.x;
         if y_overlap {
@@ -183,6 +199,21 @@ mod tests {
         let r = snap_rect(&moving, &[other], 4.0);
         assert_eq!((r.dx, r.dy), (0.0, 0.0));
         assert!(r.guides.is_empty() && r.measures.is_empty());
+    }
+
+    #[test]
+    fn guides_snap_without_measures_or_huge_lines() {
+        let g = guide_rect(GuideAxis::X, 100.0);
+        assert!(is_guide_rect(&g) && !is_guide_rect(&Rect::new(0.0, 0.0, 10.0, 10.0)));
+        let moving = Rect::new(103.0, 20.0, 50.0, 50.0);
+        let r = snap_rect(&moving, &[g], 4.0);
+        assert_eq!((r.dx, r.dy), (-3.0, 0.0));
+        assert_eq!(r.guides.len(), 1);
+        assert!(r.guides[0].to < 1000.0 && r.measures.is_empty());
+        // a horizontal guide only snaps y
+        let h = guide_rect(GuideAxis::Y, 200.0);
+        let r = snap_rect(&Rect::new(5.0, 197.0, 10.0, 10.0), &[h], 4.0);
+        assert_eq!((r.dx, r.dy), (0.0, -2.0), "the rect's centre is the closest edge");
     }
 
     #[test]

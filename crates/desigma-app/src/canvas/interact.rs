@@ -6,6 +6,8 @@ use super::hit;
 use super::reorder;
 use super::vector;
 use super::snap;
+pub use super::textsession::{begin_text_edit, finish_text};
+use super::textsession as ts;
 use super::tools::{press_action, PressAction, PressTarget, Tool};
 use super::*;
 use crate::edit::Tx;
@@ -13,7 +15,7 @@ use crate::layout;
 use crate::ops::apply_resize;
 use crate::theme;
 use crate::util::*;
-use desigma_doc::{Command, Document, NodeKind, TextAutoResize};
+use desigma_doc::{Command, Document, NodeKind};
 use egui::{Modifiers, Pos2, Response};
 
 pub fn dv(p: Pos2) -> DV {
@@ -103,7 +105,21 @@ pub fn snap_targets(app: &App, exclude: &[NodeId]) -> Vec<Rect> {
         }
     }
     rec(&app.doc, app.page, exclude, &view, &mut out);
+    out.extend(rulers::guide_rects(app));
     out
+}
+
+/// Rounds `v` to a whole pixel unless snapping to the pixel grid is off.
+fn px(app: &App, v: f32) -> f32 {
+    if app.ui.no_pixel_snap {
+        v
+    } else {
+        v.round()
+    }
+}
+
+fn snapped_on(guides: &[snap::Guide], axis: snap::GuideAxis) -> bool {
+    guides.iter().any(|g| g.axis == axis)
 }
 
 fn snap_point(p: DV, targets: &[Rect], zoom: f32) -> (DV, snap::SnapResult) {
@@ -139,7 +155,18 @@ pub fn process(app: &mut App, ui: &mut Ui, rect: ERect, resp: &Response) {
     }
 
     if app.canvas.text.is_some() {
-        text_keys(app, &ctx);
+        ts::text_keys(app, &ctx);
+        // drag-select with the primary button held
+        if app.canvas.text.as_ref().is_some_and(|t| t.dragging) {
+            match inp.pos {
+                Some(p) if inp.down => ts::drag_to(app, app.view.to_page(rect.min, p)),
+                _ => {
+                    if let Some(t) = app.canvas.text.as_mut() {
+                        t.dragging = false;
+                    }
+                }
+            }
+        }
     }
 
     if let Some(v) = &app.canvas.vedit {
@@ -168,7 +195,14 @@ pub fn process(app: &mut App, ui: &mut Ui, rect: ERect, resp: &Response) {
             on_release(app, rect, &inp);
         }
     }
-    if resp.double_clicked() && hovered {
+    if resp.triple_clicked() && hovered {
+        if let (Some(id), Some(pos)) = (app.canvas.text.as_ref().map(|t| t.id), inp.pos) {
+            let page = app.view.to_page(rect.min, pos);
+            if ts::node_contains(app, id, page) {
+                ts::select_paragraph(app, page);
+            }
+        }
+    } else if resp.double_clicked() && hovered {
         on_double_click(app, rect, &inp);
     }
     update_hover_and_cursor(app, rect, &inp, hovered);
@@ -194,12 +228,15 @@ fn handle_hit(app: &App, rect: ERect, pos: Pos2) -> Option<HandleHit> {
 
 fn on_press(app: &mut App, rect: ERect, inp: &Inp) {
     let Some(pos) = inp.pos else { return };
+    if inp.pressed && !inp.space && rulers::press(app, rect, pos) {
+        return;
+    }
     let page = app.view.to_page(rect.min, pos);
     // Text editing: click inside the edited node moves the caret, elsewhere ends editing.
     if let Some(sess) = &app.canvas.text {
         let id = sess.id;
-        if node_contains(app, id, page) {
-            set_caret_at(app, page);
+        if ts::node_contains(app, id, page) {
+            ts::press_at(app, page, inp.mods.shift);
             return;
         }
         finish_text(app, true);
@@ -320,7 +357,8 @@ fn start_rotate(app: &mut App, _corner: usize, page: DV) {
 fn start_draw(app: &mut App, tool: Tool, page: DV) {
     app.clear_selection();
     let targets = snap_targets(app, &[]);
-    let (start, _) = snap_point(page, &targets, app.view.zoom);
+    let (start, sr) = snap_point(page, &targets, app.view.zoom);
+    let start = v2(if snapped_on(&sr.guides, snap::GuideAxis::X) { start.x } else { px(app, start.x) }, if snapped_on(&sr.guides, snap::GuideAxis::Y) { start.y } else { px(app, start.y) });
     let parent = create::container_at(&app.doc, app.page, start, &[]);
     let node = create::new_shape(app, tool);
     let id = node.id;
@@ -358,6 +396,7 @@ fn on_drag(app: &mut App, ui: &Ui, rect: ERect, inp: &Inp) {
             }
         }
         Interaction::Move(m) => update_move(app, m, cur, inp),
+        Interaction::Guide(g) => rulers::drag(app, g, rect, pos),
         Interaction::Marquee { start, cur: c, base } => {
             *c = cur;
             let r = rect_from_points(*start, cur);
@@ -395,6 +434,14 @@ fn on_drag(app: &mut App, ui: &Ui, rect: ERect, inp: &Inp) {
             let (mut c, snapped) = if inp.mods.command { (cur, snap::SnapResult::default()) } else { snap_point(cur, &d.targets, zoom) };
             if inp.mods.shift {
                 c = cur;
+            }
+            if !inp.mods.command {
+                if !snapped_on(&snapped.guides, snap::GuideAxis::X) {
+                    c.x = px(app, c.x);
+                }
+                if !snapped_on(&snapped.guides, snap::GuideAxis::Y) {
+                    c.y = px(app, c.y);
+                }
             }
             app.canvas.guides = snapped.guides;
             app.canvas.measures.clear();
@@ -488,6 +535,13 @@ fn update_move(app: &mut App, m: &mut MoveState, cur: DV, inp: &Inp) {
         if !lock_y {
             d.y += s.dy;
         }
+        // whole pixels where no layer / guide edge was snapped
+        if !lock_x && !snapped_on(&s.guides, snap::GuideAxis::X) {
+            d.x = px(app, m.orig_bbox.x + d.x) - m.orig_bbox.x;
+        }
+        if !lock_y && !snapped_on(&s.guides, snap::GuideAxis::Y) {
+            d.y = px(app, m.orig_bbox.y + d.y) - m.orig_bbox.y;
+        }
         app.canvas.guides = s.guides;
         app.canvas.measures = s.measures;
     }
@@ -507,7 +561,7 @@ fn update_move(app: &mut App, m: &mut MoveState, cur: DV, inp: &Inp) {
     m.reorder = match m.ids.as_slice() {
         [only] if parent_has_auto_layout(&app.doc, *only) => {
             let parent = app.doc.get(*only).and_then(|n| n.parent);
-            parent.filter(|p| node_contains(app, *p, cur)).and_then(|p| reorder::insertion_at(&app.doc, p, *only, cur))
+            parent.filter(|p| ts::node_contains(app, *p, cur)).and_then(|p| reorder::insertion_at(&app.doc, p, *only, cur))
         }
         _ => None,
     };
@@ -529,6 +583,12 @@ fn update_resize(app: &mut App, r: &mut ResizeState, cur: DV, inp: &Inp) {
         let ye: Vec<f32> = if r.handle.affects_y() { vec![mouse.y] } else { vec![] };
         let s = snap::snap_edges(&Rect::new(mouse.x, mouse.y, 0.0, 0.0), &xe, &ye, &r.targets, theme::SNAP_THRESHOLD_PX / app.view.zoom);
         mouse = v2(mouse.x + s.dx, mouse.y + s.dy);
+        if r.handle.affects_x() && !snapped_on(&s.guides, snap::GuideAxis::X) {
+            mouse.x = px(app, mouse.x);
+        }
+        if r.handle.affects_y() && !snapped_on(&s.guides, snap::GuideAxis::Y) {
+            mouse.y = px(app, mouse.y);
+        }
         app.canvas.guides = s.guides;
     }
     match &r.kind {
@@ -590,6 +650,7 @@ fn on_release(app: &mut App, rect: ERect, inp: &Inp) {
                 }
             }
         }
+        Interaction::Guide(g) => rulers::release(app, g),
         Interaction::Move(mut m) => {
             if m.moved && !m.ids.is_empty() {
                 reparent_after_move(app, &mut m, cur);
@@ -679,6 +740,12 @@ fn on_double_click(app: &mut App, rect: ERect, inp: &Inp) {
         finish_pen(app);
         app.tool = Tool::Move;
         return;
+    }
+    if let Some(id) = app.canvas.text.as_ref().map(|t| t.id) {
+        if ts::node_contains(app, id, page) {
+            ts::select_word(app, page);
+            return;
+        }
     }
     if app.tool != Tool::Move {
         return;
@@ -821,6 +888,7 @@ fn text_press(app: &mut App, page: DV) {
     if let Some(id) = hit_under(app, page, true) {
         if matches!(app.doc.get(id).map(|n| &n.kind), Some(NodeKind::Text(_))) {
             begin_text_edit(app, id);
+            ts::press_at(app, page, false);
             return;
         }
     }
@@ -833,171 +901,10 @@ fn text_press(app: &mut App, page: DV) {
         return;
     }
     app.selection = vec![id];
-    app.canvas.text = Some(TextSession { id, caret: 0, tx, created: true });
+    app.canvas.text = Some(TextSession::new(id, 0, 0, tx, true));
     app.changed();
 }
 
-pub fn begin_text_edit(app: &mut App, id: NodeId) {
-    finish_text(app, true);
-    let len = match app.doc.get(id).map(|n| &n.kind) {
-        Some(NodeKind::Text(t)) => t.content.chars().count(),
-        _ => return,
-    };
-    app.selection = vec![id];
-    app.canvas.text = Some(TextSession { id, caret: len, tx: Tx::new(), created: false });
-}
-
-pub fn finish_text(app: &mut App, commit: bool) {
-    let Some(sess) = app.canvas.text.take() else { return };
-    let empty = matches!(app.doc.get(sess.id).map(|n| &n.kind), Some(NodeKind::Text(t)) if t.content.is_empty());
-    if (sess.created && empty) || !commit {
-        sess.tx.cancel(&mut app.doc);
-        app.sanitize();
-    } else {
-        let id = sess.id;
-        app.run_tx(sess.tx);
-        app.selection = vec![id];
-    }
-    app.changed();
-}
-
-/// Wrap width used when shaping a text node (None = hugging, no wrapping).
-pub fn text_wrap_width(t: &desigma_doc::TextProps, size: DV) -> Option<f32> {
-    (t.auto_resize != TextAutoResize::WidthAndHeight).then_some(size.x.max(1.0))
-}
-
-/// Splits a char-index caret into (line, column).
-pub fn caret_line_col(content: &str, caret: usize) -> (usize, usize) {
-    let mut line = 0;
-    let mut col = 0;
-    for (i, c) in content.chars().enumerate() {
-        if i == caret {
-            return (line, col);
-        }
-        if c == '\n' {
-            line += 1;
-            col = 0;
-        } else {
-            col += 1;
-        }
-    }
-    (line, col)
-}
-
-/// Inverse of [`caret_line_col`], clamping to line ends.
-pub fn caret_from_line_col(content: &str, line: usize, col: usize) -> usize {
-    let mut idx = 0;
-    for (li, l) in content.split('\n').enumerate() {
-        let len = l.chars().count();
-        if li == line {
-            return idx + col.min(len);
-        }
-        idx += len + 1;
-    }
-    content.chars().count()
-}
-
-fn node_contains(app: &App, id: NodeId, page: DV) -> bool {
-    let Some(n) = app.doc.get(id) else { return false };
-    let Some(inv) = app.doc.world_transform(id).invert() else { return false };
-    let l = inv.apply(page);
-    l.x >= -2.0 && l.y >= -2.0 && l.x <= n.size.x + 2.0 && l.y <= n.size.y + 2.0
-}
-
-fn set_caret_at(app: &mut App, page: DV) {
-    let Some(sess) = &app.canvas.text else { return };
-    let id = sess.id;
-    let Some(n) = app.doc.get(id) else { return };
-    let NodeKind::Text(t) = &n.kind else { return };
-    let Some(inv) = app.doc.world_transform(id).invert() else { return };
-    let l = inv.apply(page);
-    let caret = crate::textmeasure::hit_caret(t, text_wrap_width(t, n.size), l.x, l.y);
-    if let Some(s) = &mut app.canvas.text {
-        s.caret = caret;
-    }
-}
-
-fn byte_of(s: &str, char_idx: usize) -> usize {
-    s.char_indices().nth(char_idx).map(|(b, _)| b).unwrap_or(s.len())
-}
-
-fn text_edit_apply(app: &mut App, f: impl FnOnce(&mut String, &mut usize)) {
-    let App { doc, canvas, .. } = app;
-    let Some(sess) = canvas.text.as_mut() else { return };
-    let id = sess.id;
-    let mut caret = sess.caret;
-    if let Some(n) = sess.tx.ed.node(doc, id) {
-        if let NodeKind::Text(t) = &mut n.kind {
-            f(&mut t.content, &mut caret);
-            n.size = layout::fit_text(t, n.size);
-        }
-    }
-    sess.caret = caret;
-    layout::relayout_up(doc, &mut sess.tx.ed, id);
-    canvas.dirty = true;
-}
-
-fn text_keys(app: &mut App, ctx: &Context) {
-    let events = ctx.input(|i| i.events.clone());
-    for ev in events {
-        match ev {
-            egui::Event::Text(s) | egui::Event::Paste(s) => {
-                let s: String = s.chars().filter(|c| !c.is_control() || *c == '\n').collect();
-                if s.is_empty() {
-                    continue;
-                }
-                text_edit_apply(app, |content, caret| {
-                    let b = byte_of(content, *caret);
-                    content.insert_str(b, &s);
-                    *caret += s.chars().count();
-                });
-            }
-            egui::Event::Key { key, pressed: true, modifiers, .. } => match key {
-                egui::Key::Backspace => text_edit_apply(app, |content, caret| {
-                    if *caret > 0 {
-                        let b = byte_of(content, *caret - 1);
-                        content.remove(b);
-                        *caret -= 1;
-                    }
-                }),
-                egui::Key::Delete => text_edit_apply(app, |content, caret| {
-                    if *caret < content.chars().count() {
-                        let b = byte_of(content, *caret);
-                        content.remove(b);
-                    }
-                }),
-                egui::Key::Enter => text_edit_apply(app, |content, caret| {
-                    let b = byte_of(content, *caret);
-                    content.insert(b, '\n');
-                    *caret += 1;
-                }),
-                egui::Key::ArrowLeft => text_edit_apply(app, |_, caret| *caret = caret.saturating_sub(1)),
-                egui::Key::ArrowRight => text_edit_apply(app, |content, caret| *caret = (*caret + 1).min(content.chars().count())),
-                egui::Key::ArrowUp | egui::Key::ArrowDown => text_edit_apply(app, |content, caret| {
-                    let (l, c) = caret_line_col(content, *caret);
-                    let nl = if key == egui::Key::ArrowUp { l.saturating_sub(1) } else { l + 1 };
-                    *caret = caret_from_line_col(content, nl, c);
-                }),
-                egui::Key::Home => text_edit_apply(app, |content, caret| {
-                    let (l, _) = caret_line_col(content, *caret);
-                    *caret = caret_from_line_col(content, l, 0);
-                }),
-                egui::Key::End => text_edit_apply(app, |content, caret| {
-                    let (l, _) = caret_line_col(content, *caret);
-                    *caret = caret_from_line_col(content, l, usize::MAX / 2);
-                }),
-                egui::Key::Escape => {
-                    finish_text(app, true);
-                    app.tool = Tool::Move;
-                    return;
-                }
-                egui::Key::A if modifiers.command => {}
-                _ => {}
-            },
-            _ => {}
-        }
-    }
-}
 
 // ------------------------------------------------------------------ hover / cursor
 fn update_hover_and_cursor(app: &mut App, rect: ERect, inp: &Inp, hovered: bool) {
@@ -1025,6 +932,10 @@ fn update_hover_and_cursor(app: &mut App, rect: ERect, inp: &Inp, hovered: bool)
             Tool::Text => cursor = egui::CursorIcon::Text,
             _ => cursor = egui::CursorIcon::Crosshair,
         }
+        if let Some(c) = inp.pos.and_then(|p| rulers::cursor_at(app, rect, p)) {
+            cursor = c;
+            app.hover = None;
+        }
         app.canvas.cursor = Some(cursor);
     } else if !idle {
         cursor = match &app.canvas.inter {
@@ -1032,6 +943,13 @@ fn update_hover_and_cursor(app: &mut App, rect: ERect, inp: &Inp, hovered: bool)
             Interaction::Resize(r) => r.handle.cursor(),
             Interaction::Rotate(_) => egui::CursorIcon::Alias,
             Interaction::Draw(_) | Interaction::Pencil(_) | Interaction::PenDrag => egui::CursorIcon::Crosshair,
+            Interaction::Guide(g) => {
+                if g.axis == snap::GuideAxis::X {
+                    egui::CursorIcon::ResizeHorizontal
+                } else {
+                    egui::CursorIcon::ResizeVertical
+                }
+            }
             _ => egui::CursorIcon::Default,
         };
         app.canvas.cursor = Some(cursor);
@@ -1046,23 +964,6 @@ fn update_hover_and_cursor(app: &mut App, rect: ERect, inp: &Inp, hovered: bool)
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn caret_line_col_roundtrip() {
-        let s = "ab\ncde\n\nf";
-        for caret in 0..=s.chars().count() {
-            let (l, c) = caret_line_col(s, caret);
-            assert_eq!(caret_from_line_col(s, l, c), caret, "caret {caret}");
-        }
-        assert_eq!(caret_from_line_col(s, 1, 99), 6);
-        assert_eq!(caret_from_line_col(s, 99, 0), s.chars().count());
-    }
-
-    #[test]
-    fn byte_index_handles_multibyte() {
-        assert_eq!(byte_of("aé b", 2), 3);
-        assert_eq!(byte_of("ab", 5), 2);
-    }
 
     #[test]
     fn snap_point_aligns_to_edges() {

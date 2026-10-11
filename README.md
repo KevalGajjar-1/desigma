@@ -180,6 +180,8 @@ Useful flags for automation and testing:
 
 ```sh
 desigma --screenshot out.png --size 1600x1000 --select Card   # render one frame and exit
+desigma --select Welcome --rulers --layout-grid columns --zoom 120 --screenshot out.png   # rulers + column grid
+desigma --edit-text "Welcome back" --select-text 0-7 --screenshot out.png                 # mid-edit with a selection
 desigma --tab prototype --present                              # open straight into Present
 desigma-diff compare reference.png actual.png --out diff.png   # pixel-compare two images
 ```

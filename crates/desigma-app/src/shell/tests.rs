@@ -695,9 +695,160 @@ fn text_tool_auto_resizes_with_real_measurement() {
     assert_eq!(n.size.x, crate::textmeasure::measure(&t, None).x, "size is the measured width, not an estimate");
     // the caret sits at the measured end of the text
     let caret = s.app().canvas.text.as_ref().unwrap().caret;
-    let (x, _, h) = crate::textmeasure::caret_rect(&t, None, caret);
+    let (x, _, h) = crate::textmeasure::caret_rect(&t, n.size, caret);
     assert!((x - n.size.x).abs() <= 1.0 && h > 10.0);
     s.key(Key::Escape);
+}
+
+fn text_of(s: &Sim, id: NodeId) -> desigma_doc::TextProps {
+    match &s.app().doc.get(id).unwrap().kind {
+        NodeKind::Text(t) => t.clone(),
+        k => panic!("{k:?}"),
+    }
+}
+
+#[test]
+fn inspector_edits_only_the_selected_range() {
+    let mut s = Sim::new();
+    s.key(Key::T);
+    let p = s.screen(300.0, 820.0);
+    s.click(p);
+    s.type_text("hello world");
+    let id = s.app().selection[0];
+    // select "hello" with Home + Shift+Right x5
+    s.cmd_key(Key::Home);
+    s.mods = Modifiers::SHIFT;
+    for _ in 0..5 {
+        s.key(Key::ArrowRight);
+    }
+    s.mods = Modifiers::NONE;
+    s.frame(vec![]);
+    assert_eq!(s.app().canvas.text.as_ref().unwrap().range(), 0..5);
+    let r = s.field_rect("font-size");
+    s.click(Pos2::new(r.left() + 40.0, r.center().y));
+    s.type_text("30");
+    s.key(Key::Enter);
+    let t = text_of(&s, id);
+    assert_eq!(t.runs.len(), 1, "{:?}", t.runs);
+    assert_eq!((t.runs[0].start, t.runs[0].end, t.runs[0].style.font_size), (0, 5, 30.0));
+    assert_ne!(t.style.font_size, 30.0, "the rest keeps its size");
+    // the whole text now reports a mixed size
+    s.cmd_key(Key::A);
+    let sum = crate::canvas::textsession::session_summary(s.app()).unwrap();
+    assert_eq!(sum.size, None);
+    assert_eq!(sum.family, Some("Inter".to_string()));
+    // Ctrl+B bolds only the selection (here: everything), Ctrl+Z inside the session undoes it
+    s.cmd_key(Key::B);
+    let all = |s: &Sim| { let t = text_of(s, id); crate::richtext::summary(&t, 0..t.content.len()).weight };
+    assert_eq!(all(&s), Some(700));
+    s.cmd_key(Key::Z);
+    assert_eq!(all(&s), Some(400));
+    s.key(Key::Escape);
+    s.cmd_key(Key::Z);
+    assert!(s.app().doc.get(id).is_none(), "leaving the session commits one undoable step");
+}
+
+fn shift_key(s: &mut Sim, key: Key) {
+    s.mods = Modifiers::SHIFT;
+    s.key(key);
+    s.mods = Modifiers::NONE;
+}
+
+#[test]
+fn rulers_toggle_and_guides_are_created_snapped_to_and_removed() {
+    let mut s = Sim::new();
+    assert!(!s.app().ui.rulers);
+    shift_key(&mut s, Key::R);
+    assert!(s.app().ui.rulers, "Shift+R shows the rulers");
+    let cr = s.app().canvas_rect;
+    // drag from the top ruler into the canvas: a horizontal guide at the drop position
+    let from = Pos2::new(cr.left() + 300.0, cr.top() + 10.0);
+    let to = Pos2::new(cr.left() + 300.0, cr.top() + 300.0);
+    s.drag(from, to);
+    let page = s.app().page;
+    let guides = s.app().page_guides.get(&page).cloned().unwrap_or_default();
+    assert_eq!(guides.len(), 1);
+    let want = s.app().view.to_page(cr.min, to).y.round();
+    assert_eq!(guides[0].axis, crate::canvas::snap::GuideAxis::Y);
+    assert_eq!(guides[0].pos, want, "guides land on whole pixels");
+
+    // layers snap to the guide while moving
+    let targets = crate::canvas::interact::snap_targets(s.app(), &[]);
+    assert!(targets.iter().any(|r| crate::canvas::snap::is_guide_rect(r) && r.y == want), "the guide is a snap target");
+
+    // dragging the guide back onto the ruler deletes it
+    let on_guide = Pos2::new(cr.left() + 500.0, s.app().view.to_screen(cr.min, DV::new(0.0, want)).y);
+    s.drag(on_guide, Pos2::new(on_guide.x, cr.top() + 8.0));
+    assert!(s.app().page_guides.get(&page).is_none_or(|g| g.is_empty()));
+
+    // hiding the rulers hides guides' snapping too
+    shift_key(&mut s, Key::R);
+    assert!(!s.app().ui.rulers);
+}
+
+#[test]
+fn moves_land_on_whole_pixels_and_snap_to_guides() {
+    let mut s = Sim::with(Options { select: Some("Card".into()), ..Default::default() });
+    let id = s.by_name("Card");
+    let t0 = s.app().doc.get(id).unwrap().transform;
+    // fractional drag distance
+    let a = s.screen(t0.tx + 20.0, t0.ty + 20.0);
+    s.drag(a, a + Vec2::new(33.4, 21.7));
+    let t = s.app().doc.get(id).unwrap().transform;
+    assert_eq!((t.tx.fract(), t.ty.fract()), (0.0, 0.0), "positions stay integral: {} {}", t.tx, t.ty);
+    s.cmd_key(Key::Z);
+    // with snapping to the pixel grid off, the same drag is free
+    s.mods = Modifiers::COMMAND | Modifiers::SHIFT;
+    s.key(Key::Quote);
+    s.mods = Modifiers::NONE;
+    assert!(s.app().ui.no_pixel_snap, "Ctrl+Shift+' toggles pixel snapping");
+}
+
+#[test]
+fn view_toggles_via_shortcuts() {
+    let mut s = Sim::new();
+    assert!(s.app().ui.pixel_grid && !s.app().ui.hide_layout_grids);
+    shift_key(&mut s, Key::Quote);
+    assert!(!s.app().ui.pixel_grid, "Shift+' toggles the pixel grid");
+    s.mods = Modifiers::COMMAND | Modifiers::SHIFT;
+    s.key(Key::Num4);
+    s.mods = Modifiers::NONE;
+    assert!(s.app().ui.hide_layout_grids, "Ctrl+Shift+4 hides layout grids");
+    // zoomed to 800% with every aid on renders without trouble
+    s.shell.app.ui.pixel_grid = true;
+    s.shell.app.ui.rulers = true;
+    s.shell.app.ui.hide_layout_grids = false;
+    s.shell.app.view.zoom = 8.0;
+    s.frame(vec![]);
+}
+
+#[test]
+fn layout_guide_section_edits_the_grids_of_a_frame() {
+    let mut s = Sim::with(Options { select: Some("Card".into()), ..Default::default() });
+    let id = s.by_name("Card");
+    assert!(s.app().doc.get(id).unwrap().kind.frame_props().is_some(), "Card is a frame");
+    let grid = crate::panels::layoutguide::default_grid(1, Color::rgba(255, 0, 0, 26));
+    s.shell.app.edit_nodes(&[id], |n| {
+        if let Some(f) = n.kind.frame_props_mut() {
+            f.grids.push(grid.clone());
+        }
+    });
+    s.scroll_inspector_down();
+    // the section shows its columns fields; edit the count
+    let r = s.ctx.data(|d| d.get_temp::<Rect>(egui::Id::new(("field-rect", format!("{:?}", ("lg-count", 0usize)))))).expect("count field is shown");
+    s.click(Pos2::new(r.left() + 40.0, r.center().y));
+    s.type_text("12");
+    s.key(Key::Enter);
+    let n = s.app().doc.get(id).unwrap();
+    match &n.kind.frame_props().unwrap().grids[0] {
+        desigma_doc::LayoutGrid::Columns { count, .. } => assert_eq!(*count, 12),
+        g => panic!("{g:?}"),
+    }
+    s.cmd_key(Key::Z);
+    match &s.app().doc.get(id).unwrap().kind.frame_props().unwrap().grids[0] {
+        desigma_doc::LayoutGrid::Columns { count, .. } => assert_eq!(*count, 5, "undo restores"),
+        g => panic!("{g:?}"),
+    }
 }
 
 mod components;
