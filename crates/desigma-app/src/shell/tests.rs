@@ -674,3 +674,27 @@ fn clicking_a_segment_adds_a_point_and_delete_removes_it() {
     s.key(Key::Enter);
     assert!(s.app().canvas.vedit.is_none(), "Enter exits");
 }
+
+#[test]
+fn text_tool_auto_resizes_with_real_measurement() {
+    let mut s = Sim::new();
+    s.key(Key::T);
+    let p = s.screen(300.0, 820.0);
+    s.click(p);
+    s.type_text("Hi");
+    let id = s.app().selection[0];
+    let w2 = s.app().doc.get(id).unwrap().size.x;
+    s.type_text(" there, world");
+    let n = s.app().doc.get(id).unwrap();
+    let t = match &n.kind {
+        NodeKind::Text(t) => t.clone(),
+        k => panic!("{k:?}"),
+    };
+    assert!(n.size.x > w2 * 3.0, "grows with the text: {w2} -> {}", n.size.x);
+    assert_eq!(n.size.x, crate::textmeasure::measure(&t, None).x, "size is the measured width, not an estimate");
+    // the caret sits at the measured end of the text
+    let caret = s.app().canvas.text.as_ref().unwrap().caret;
+    let (x, _, h) = crate::textmeasure::caret_rect(&t, None, caret);
+    assert!((x - n.size.x).abs() <= 1.0 && h > 10.0);
+    s.key(Key::Escape);
+}
