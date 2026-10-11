@@ -747,6 +747,80 @@ fn inspector_edits_only_the_selected_range() {
     assert!(s.app().doc.get(id).is_none(), "leaving the session commits one undoable step");
 }
 
+fn shift_key(s: &mut Sim, key: Key) {
+    s.mods = Modifiers::SHIFT;
+    s.key(key);
+    s.mods = Modifiers::NONE;
+}
+
+#[test]
+fn rulers_toggle_and_guides_are_created_snapped_to_and_removed() {
+    let mut s = Sim::new();
+    assert!(!s.app().ui.rulers);
+    shift_key(&mut s, Key::R);
+    assert!(s.app().ui.rulers, "Shift+R shows the rulers");
+    let cr = s.app().canvas_rect;
+    // drag from the top ruler into the canvas: a horizontal guide at the drop position
+    let from = Pos2::new(cr.left() + 300.0, cr.top() + 10.0);
+    let to = Pos2::new(cr.left() + 300.0, cr.top() + 300.0);
+    s.drag(from, to);
+    let page = s.app().page;
+    let guides = s.app().page_guides.get(&page).cloned().unwrap_or_default();
+    assert_eq!(guides.len(), 1);
+    let want = s.app().view.to_page(cr.min, to).y.round();
+    assert_eq!(guides[0].axis, crate::canvas::snap::GuideAxis::Y);
+    assert_eq!(guides[0].pos, want, "guides land on whole pixels");
+
+    // layers snap to the guide while moving
+    let targets = crate::canvas::interact::snap_targets(s.app(), &[]);
+    assert!(targets.iter().any(|r| crate::canvas::snap::is_guide_rect(r) && r.y == want), "the guide is a snap target");
+
+    // dragging the guide back onto the ruler deletes it
+    let on_guide = Pos2::new(cr.left() + 500.0, s.app().view.to_screen(cr.min, DV::new(0.0, want)).y);
+    s.drag(on_guide, Pos2::new(on_guide.x, cr.top() + 8.0));
+    assert!(s.app().page_guides.get(&page).is_none_or(|g| g.is_empty()));
+
+    // hiding the rulers hides guides' snapping too
+    shift_key(&mut s, Key::R);
+    assert!(!s.app().ui.rulers);
+}
+
+#[test]
+fn moves_land_on_whole_pixels_and_snap_to_guides() {
+    let mut s = Sim::with(Options { select: Some("Card".into()), ..Default::default() });
+    let id = s.by_name("Card");
+    let t0 = s.app().doc.get(id).unwrap().transform;
+    // fractional drag distance
+    let a = s.screen(t0.tx + 20.0, t0.ty + 20.0);
+    s.drag(a, a + Vec2::new(33.4, 21.7));
+    let t = s.app().doc.get(id).unwrap().transform;
+    assert_eq!((t.tx.fract(), t.ty.fract()), (0.0, 0.0), "positions stay integral: {} {}", t.tx, t.ty);
+    s.cmd_key(Key::Z);
+    // with snapping to the pixel grid off, the same drag is free
+    s.mods = Modifiers::COMMAND | Modifiers::SHIFT;
+    s.key(Key::Quote);
+    s.mods = Modifiers::NONE;
+    assert!(s.app().ui.no_pixel_snap, "Ctrl+Shift+' toggles pixel snapping");
+}
+
+#[test]
+fn view_toggles_via_shortcuts() {
+    let mut s = Sim::new();
+    assert!(s.app().ui.pixel_grid && !s.app().ui.hide_layout_grids);
+    shift_key(&mut s, Key::Quote);
+    assert!(!s.app().ui.pixel_grid, "Shift+' toggles the pixel grid");
+    s.mods = Modifiers::COMMAND | Modifiers::SHIFT;
+    s.key(Key::Num4);
+    s.mods = Modifiers::NONE;
+    assert!(s.app().ui.hide_layout_grids, "Ctrl+Shift+4 hides layout grids");
+    // zoomed to 800% with every aid on renders without trouble
+    s.shell.app.ui.pixel_grid = true;
+    s.shell.app.ui.rulers = true;
+    s.shell.app.ui.hide_layout_grids = false;
+    s.shell.app.view.zoom = 8.0;
+    s.frame(vec![]);
+}
+
 mod components;
 mod menus;
 mod proto;

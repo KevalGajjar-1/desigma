@@ -94,6 +94,10 @@ pub struct UiState {
     /// View toggles from the main menu.
     pub pixel_grid: bool,
     pub rulers: bool,
+    /// Layout grids of frames are hidden (Ctrl+Shift+4).
+    pub hide_layout_grids: bool,
+    /// Snap to pixel grid is off (it is on by default, as in Figma).
+    pub no_pixel_snap: bool,
 }
 
 pub struct Toast {
@@ -130,6 +134,8 @@ pub struct App {
     pub fonts: FontLoader,
     /// Document snapshot while a numeric field is being scrubbed (see `widgets::field::SCRUB_FLAG`).
     pub scrub: Option<std::collections::BTreeMap<NodeId, desigma_doc::Node>>,
+    /// Ruler guides per page (not part of the document model, so not saved with the file).
+    pub page_guides: std::collections::BTreeMap<NodeId, Vec<crate::canvas::rulers::RulerGuide>>,
 }
 
 impl App {
@@ -151,7 +157,7 @@ impl App {
             props: PropsState::default(),
             assets: Default::default(),
             proto: Default::default(),
-            ui: UiState::default(),
+            ui: UiState { pixel_grid: true, ..UiState::default() },
             clip: None,
             paste_count: 0,
             toast: None,
@@ -161,6 +167,7 @@ impl App {
             first_fit_done: false,
             fonts: FontLoader::default(),
             scrub: None,
+            page_guides: Default::default(),
         }
     }
 

@@ -105,7 +105,21 @@ pub fn snap_targets(app: &App, exclude: &[NodeId]) -> Vec<Rect> {
         }
     }
     rec(&app.doc, app.page, exclude, &view, &mut out);
+    out.extend(rulers::guide_rects(app));
     out
+}
+
+/// Rounds `v` to a whole pixel unless snapping to the pixel grid is off.
+fn px(app: &App, v: f32) -> f32 {
+    if app.ui.no_pixel_snap {
+        v
+    } else {
+        v.round()
+    }
+}
+
+fn snapped_on(guides: &[snap::Guide], axis: snap::GuideAxis) -> bool {
+    guides.iter().any(|g| g.axis == axis)
 }
 
 fn snap_point(p: DV, targets: &[Rect], zoom: f32) -> (DV, snap::SnapResult) {
@@ -214,6 +228,9 @@ fn handle_hit(app: &App, rect: ERect, pos: Pos2) -> Option<HandleHit> {
 
 fn on_press(app: &mut App, rect: ERect, inp: &Inp) {
     let Some(pos) = inp.pos else { return };
+    if inp.pressed && !inp.space && rulers::press(app, rect, pos) {
+        return;
+    }
     let page = app.view.to_page(rect.min, pos);
     // Text editing: click inside the edited node moves the caret, elsewhere ends editing.
     if let Some(sess) = &app.canvas.text {
@@ -340,7 +357,8 @@ fn start_rotate(app: &mut App, _corner: usize, page: DV) {
 fn start_draw(app: &mut App, tool: Tool, page: DV) {
     app.clear_selection();
     let targets = snap_targets(app, &[]);
-    let (start, _) = snap_point(page, &targets, app.view.zoom);
+    let (start, sr) = snap_point(page, &targets, app.view.zoom);
+    let start = v2(if snapped_on(&sr.guides, snap::GuideAxis::X) { start.x } else { px(app, start.x) }, if snapped_on(&sr.guides, snap::GuideAxis::Y) { start.y } else { px(app, start.y) });
     let parent = create::container_at(&app.doc, app.page, start, &[]);
     let node = create::new_shape(app, tool);
     let id = node.id;
@@ -378,6 +396,7 @@ fn on_drag(app: &mut App, ui: &Ui, rect: ERect, inp: &Inp) {
             }
         }
         Interaction::Move(m) => update_move(app, m, cur, inp),
+        Interaction::Guide(g) => rulers::drag(app, g, rect, pos),
         Interaction::Marquee { start, cur: c, base } => {
             *c = cur;
             let r = rect_from_points(*start, cur);
@@ -415,6 +434,14 @@ fn on_drag(app: &mut App, ui: &Ui, rect: ERect, inp: &Inp) {
             let (mut c, snapped) = if inp.mods.command { (cur, snap::SnapResult::default()) } else { snap_point(cur, &d.targets, zoom) };
             if inp.mods.shift {
                 c = cur;
+            }
+            if !inp.mods.command {
+                if !snapped_on(&snapped.guides, snap::GuideAxis::X) {
+                    c.x = px(app, c.x);
+                }
+                if !snapped_on(&snapped.guides, snap::GuideAxis::Y) {
+                    c.y = px(app, c.y);
+                }
             }
             app.canvas.guides = snapped.guides;
             app.canvas.measures.clear();
@@ -508,6 +535,13 @@ fn update_move(app: &mut App, m: &mut MoveState, cur: DV, inp: &Inp) {
         if !lock_y {
             d.y += s.dy;
         }
+        // whole pixels where no layer / guide edge was snapped
+        if !lock_x && !snapped_on(&s.guides, snap::GuideAxis::X) {
+            d.x = px(app, m.orig_bbox.x + d.x) - m.orig_bbox.x;
+        }
+        if !lock_y && !snapped_on(&s.guides, snap::GuideAxis::Y) {
+            d.y = px(app, m.orig_bbox.y + d.y) - m.orig_bbox.y;
+        }
         app.canvas.guides = s.guides;
         app.canvas.measures = s.measures;
     }
@@ -549,6 +583,12 @@ fn update_resize(app: &mut App, r: &mut ResizeState, cur: DV, inp: &Inp) {
         let ye: Vec<f32> = if r.handle.affects_y() { vec![mouse.y] } else { vec![] };
         let s = snap::snap_edges(&Rect::new(mouse.x, mouse.y, 0.0, 0.0), &xe, &ye, &r.targets, theme::SNAP_THRESHOLD_PX / app.view.zoom);
         mouse = v2(mouse.x + s.dx, mouse.y + s.dy);
+        if r.handle.affects_x() && !snapped_on(&s.guides, snap::GuideAxis::X) {
+            mouse.x = px(app, mouse.x);
+        }
+        if r.handle.affects_y() && !snapped_on(&s.guides, snap::GuideAxis::Y) {
+            mouse.y = px(app, mouse.y);
+        }
         app.canvas.guides = s.guides;
     }
     match &r.kind {
@@ -610,6 +650,7 @@ fn on_release(app: &mut App, rect: ERect, inp: &Inp) {
                 }
             }
         }
+        Interaction::Guide(g) => rulers::release(app, g),
         Interaction::Move(mut m) => {
             if m.moved && !m.ids.is_empty() {
                 reparent_after_move(app, &mut m, cur);
@@ -891,6 +932,10 @@ fn update_hover_and_cursor(app: &mut App, rect: ERect, inp: &Inp, hovered: bool)
             Tool::Text => cursor = egui::CursorIcon::Text,
             _ => cursor = egui::CursorIcon::Crosshair,
         }
+        if let Some(c) = inp.pos.and_then(|p| rulers::cursor_at(app, rect, p)) {
+            cursor = c;
+            app.hover = None;
+        }
         app.canvas.cursor = Some(cursor);
     } else if !idle {
         cursor = match &app.canvas.inter {
@@ -898,6 +943,13 @@ fn update_hover_and_cursor(app: &mut App, rect: ERect, inp: &Inp, hovered: bool)
             Interaction::Resize(r) => r.handle.cursor(),
             Interaction::Rotate(_) => egui::CursorIcon::Alias,
             Interaction::Draw(_) | Interaction::Pencil(_) | Interaction::PenDrag => egui::CursorIcon::Crosshair,
+            Interaction::Guide(g) => {
+                if g.axis == snap::GuideAxis::X {
+                    egui::CursorIcon::ResizeHorizontal
+                } else {
+                    egui::CursorIcon::ResizeVertical
+                }
+            }
             _ => egui::CursorIcon::Default,
         };
         app.canvas.cursor = Some(cursor);

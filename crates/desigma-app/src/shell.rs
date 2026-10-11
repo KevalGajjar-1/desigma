@@ -168,6 +168,9 @@ impl Shell {
                 (Key::B, false, true) => Some(Action::Detach),
                 (Key::K, true, false) => Some(Action::CombineVariants),
                 (Key::A, false, _) => Some(Action::SelectAll),
+                (Key::Quote, false, _) => Some(Action::TogglePixelGrid),
+                (Key::Quote, true, _) => Some(Action::ToggleSnapPixel),
+                (Key::Num4, true, _) => Some(Action::ToggleLayoutGrids),
                 (Key::B, false, false) => Some(Action::TextBold),
                 (Key::I, false, false) => Some(Action::TextItalic),
                 (Key::U, false, false) => Some(Action::TextUnderline),
@@ -264,6 +267,8 @@ impl Shell {
             Key::Num2 if m.shift => menus::run(app, ctx, Action::FitSelection),
             Key::Num0 if m.shift => menus::run(app, ctx, Action::Zoom100),
             Key::A if m.shift => menus::run(app, ctx, Action::AutoLayout),
+            Key::R if m.shift => menus::run(app, ctx, Action::ToggleRulers),
+            Key::Quote if m.shift => menus::run(app, ctx, Action::TogglePixelGrid),
             k => {
                 if !m.alt {
                     if let Some(t) = Tool::from_key(k, m.shift) {

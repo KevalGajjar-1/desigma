@@ -3,11 +3,13 @@
 
 pub mod create;
 pub mod draw;
+pub mod grids;
 pub mod handles;
 pub mod hit;
 pub mod interact;
 pub mod proto;
 pub mod reorder;
+pub mod rulers;
 pub mod snap;
 pub mod textsession;
 pub mod tiles;
@@ -88,6 +90,8 @@ pub enum Interaction {
     PenDrag,
     /// Dragging a vertex/handle in vector edit mode (state lives in `CanvasState::vedit`).
     VectorDrag,
+    /// Creating or moving a ruler guide.
+    Guide(rulers::GuideDrag),
 }
 
 pub use textsession::TextSession;
@@ -177,7 +181,9 @@ pub fn show(app: &mut App, ui: &mut Ui, rect: ERect) {
     if !proto::process(app, ui, rect, &resp) {
         interact::process(app, ui, rect, &resp);
     }
+    grids::paint(app, ui, rect);
     draw::overlays(app, ui, rect);
+    rulers::overlay(app, ui, rect);
     proto::overlays(app, ui, rect);
     crate::panels::inspect::measure_overlay(app, ui, rect);
     if resp.hovered() || !matches!(app.canvas.inter, Interaction::None) {

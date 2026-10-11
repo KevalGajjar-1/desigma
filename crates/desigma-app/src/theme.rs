@@ -357,6 +357,24 @@ pub const ZOOM_MIN: f32 = 0.02;
 pub const ZOOM_MAX: f32 = 256.0;
 pub const FIT_PADDING: f32 = 64.0;
 pub const TEXT_CARET_WIDTH: f32 = 1.0;
+/// Rulers (Shift+R): 20px strips on the top and left of the canvas.
+pub const RULER_SIZE: f32 = 20.0;
+pub const RULER_FONT_SIZE: f32 = 9.0;
+/// Tick labels: white at 70% (#ffffffb2).
+pub const RULER_TEXT: Color32 = rgba(0xFFFFFF, 0xB2);
+pub const RULER_TICK: Color32 = rgba(0xFFFFFF, 0x66);
+/// Selection extent highlighted on the rulers.
+pub const RULER_SELECTION_FILL: Color32 = rgba(0x0D99FF, 0x4D);
+/// User guides dragged from the rulers (#f24822).
+pub const RULER_GUIDE: Color32 = rgb(0xF24822);
+/// Pixel grid lines: #ffffff1a over dark pages, black at the same alpha over light ones.
+pub const PIXEL_GRID_LIGHT_LINES: Color32 = rgba(0xFFFFFF, 0x1A);
+pub const PIXEL_GRID_DARK_LINES: Color32 = rgba(0x000000, 0x1A);
+/// The pixel grid appears from this zoom (800%).
+pub const PIXEL_GRID_MIN_ZOOM: f32 = 8.0;
+pub fn font_ruler() -> FontId {
+    FontId::new(RULER_FONT_SIZE, FontFamily::Proportional)
+}
 /// Selected text highlight: #0c8ce9 at 35% alpha.
 pub const TEXT_SELECTION: Color32 = Color32::from_rgba_premultiplied(4, 49, 81, 89);
 pub const NUDGE: f32 = 1.0;
