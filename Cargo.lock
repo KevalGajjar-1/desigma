@@ -888,6 +888,7 @@ dependencies = [
  "desigma-fig",
  "desigma-fonts",
  "desigma-render",
+ "desigma-svg",
  "eframe",
  "egui",
  "image",
