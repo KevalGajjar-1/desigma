@@ -20,7 +20,7 @@ mod shadow_tests;
 mod text;
 mod tiles;
 
-use desigma_doc::{Document, Effect, Node, NodeId, NodeKind, Vec2};
+use desigma_doc::{resolve_node, Document, Effect, Node, NodeId, NodeKind, Vec2};
 use geom::{node_shape, to_sk_transform, transformed_bounds, Shape};
 pub use index::SceneIndex;
 use paint::{blend_mode, fill_paths, stroke_paths, PaintEnv};
@@ -130,7 +130,7 @@ pub(crate) fn render_with_transform(doc: &Document, page: NodeId, ts: sk::Transf
 /// Draws a single node subtree with its own top-left at (0,0); used for
 /// exports and per-frame diffs.
 pub fn render_node(doc: &Document, node: NodeId, scale: f32) -> Option<tiny_skia::Pixmap> {
-    let n = doc.get(node)?;
+    let n = &*resolve_node(doc, doc.get(node)?);
     let w = (n.size.x * scale).ceil().max(1.0) as u32;
     let h = (n.size.y * scale).ceil().max(1.0) as u32;
     let mut pm = tiny_skia::Pixmap::new(w, h)?;
@@ -213,6 +213,8 @@ impl Renderer<'_> {
     fn draw_children(&self, children: &[NodeId], parent_ts: sk::Transform, target: &mut sk::Pixmap, clip: Option<&sk::Mask>, back: Back) {
         for (i, cid) in children.iter().enumerate() {
             let Some(child) = self.doc.get(*cid) else { continue };
+            // Variable bindings (and the mode in effect) are applied per node at draw time.
+            let child = &*resolve_node(self.doc, child);
             if let Some(c) = &self.cull {
                 if !child.is_mask && !c.index.may_touch(*cid, c.win) {
                     continue;

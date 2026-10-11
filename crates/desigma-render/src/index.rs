@@ -184,6 +184,7 @@ impl SceneIndex {
 
     fn build(&mut self, doc: &Document, id: NodeId, parent_ts: sk::Transform, parent: Option<NodeId>) -> B {
         let Some(n) = doc.get(id) else { return EMPTY };
+        let n = &*desigma_doc::resolve_node(doc, n);
         let ts = parent_ts.pre_concat(to_sk_transform(&n.transform));
         let drawn = n.visible && !matches!(n.kind, NodeKind::Unknown { .. } | NodeKind::Page { .. });
         let m = node_margin(n);
@@ -281,6 +282,9 @@ impl Differ {
 
         for (id, ne) in new.entries.iter() {
             let Some(live) = doc.get(*id) else { continue };
+            // Compare with variable bindings applied, so editing a variable or a
+            // mode dirties exactly the nodes whose drawn values changed.
+            let live = &*desigma_doc::resolve_node(doc, live);
             match self.snap.get(id) {
                 None => {
                     rects.push(ne.bounds);
