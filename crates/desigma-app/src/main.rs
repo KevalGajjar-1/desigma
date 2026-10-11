@@ -2,6 +2,7 @@ mod app;
 mod canvas;
 mod cli;
 mod clipboard;
+mod comp_ops;
 mod demo;
 mod edit;
 mod fonts;

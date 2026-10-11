@@ -81,6 +81,11 @@ pub struct UiState {
     pub rail: Option<RailItem>,
     pub right_tab: Option<RightTab>,
     pub dev_mode: bool,
+    /// Selection context menu position (canvas or layers right-click).
+    pub ctx_menu: Option<egui::Pos2>,
+    /// Anchor of the instance "more" menu and of the add-property menu in the inspector.
+    pub inst_menu: Option<egui::Rect>,
+    pub prop_menu: Option<egui::Rect>,
 }
 
 pub struct Toast {
@@ -104,6 +109,7 @@ pub struct App {
     pub canvas: CanvasState,
     pub layers: LayersState,
     pub props: PropsState,
+    pub assets: crate::panels::assets::AssetsState,
     pub ui: UiState,
     pub clip: Option<Clip>,
     pub paste_count: u32,
@@ -134,6 +140,7 @@ impl App {
             canvas: CanvasState::default(),
             layers: LayersState::default(),
             props: PropsState::default(),
+            assets: Default::default(),
             ui: UiState::default(),
             clip: None,
             paste_count: 0,

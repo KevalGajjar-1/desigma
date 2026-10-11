@@ -7,7 +7,7 @@ use crate::cli::Options;
 use crate::demo;
 use crate::icons::Icon;
 use crate::panels::menus::{self, Action};
-use crate::panels::{left, rail, right, toolbar};
+use crate::panels::{self, left, rail, right, toolbar};
 use crate::theme;
 use crate::widgets;
 use egui::{Align2, Context, Event, Key, Pos2, Rect, Vec2};
@@ -147,6 +147,9 @@ impl Shell {
                 (Key::G, false, false) => Some(Action::Group),
                 (Key::G, true, _) => Some(Action::Ungroup),
                 (Key::G, false, true) => Some(Action::FrameSelection),
+                (Key::K, false, true) => Some(Action::CreateComponent),
+                (Key::B, false, true) => Some(Action::Detach),
+                (Key::K, true, false) => Some(Action::CombineVariants),
                 (Key::A, false, _) => Some(Action::SelectAll),
                 (Key::CloseBracket, false, _) => Some(Action::BringForward),
                 (Key::OpenBracket, false, _) => Some(Action::SendBackward),
@@ -240,6 +243,23 @@ impl Shell {
         }
     }
 
+    /// Right-click on the canvas selects the layer under the pointer and opens the selection menu.
+    fn context_menu(&mut self, ui: &egui::Ui, canvas_rect: Rect) {
+        let (clicked, pos) = ui.ctx().input(|i| (i.pointer.secondary_clicked(), i.pointer.interact_pos()));
+        let Some(pos) = pos.filter(|p| clicked && canvas_rect.contains(*p)) else { return };
+        let app = &mut self.app;
+        if !matches!(app.canvas.inter, canvas::Interaction::None) || app.canvas.text.is_some() {
+            return;
+        }
+        let page = app.view.to_page(app.canvas_rect.min, pos);
+        match interact::hit_under(app, page, false) {
+            Some(hit) if !app.is_selected(hit) => app.select_only(hit),
+            Some(_) => {}
+            None => app.clear_selection(),
+        }
+        app.ui.ctx_menu = Some(pos);
+    }
+
     fn toast(&mut self, ui: &egui::Ui, screen: Rect) {
         let Some(t) = &self.app.toast else { return };
         if self.app.now > t.until {
@@ -308,7 +328,9 @@ impl Shell {
         }
         right::show(&mut self.app, ui, right_rect);
         toolbar::show(&mut self.app, ui, canvas_rect_for_toolbar(full));
+        self.context_menu(ui, canvas_rect);
         menus::show(&mut self.app, &ctx);
+        panels::context::show(&mut self.app, &ctx);
         self.toast(ui, full);
 
         let title = self.app.title();

@@ -148,8 +148,9 @@ fn kind_icon(k: &NodeKind) -> Icon {
     }
 }
 
-fn is_component_like(k: &NodeKind) -> bool {
-    matches!(k, NodeKind::Component(_) | NodeKind::ComponentSet(_) | NodeKind::Instance { .. })
+fn is_component_like(n: &desigma_doc::Node) -> bool {
+    // Components, instances and every layer inside an instance read as purple.
+    matches!(n.kind, NodeKind::Component(_) | NodeKind::ComponentSet(_) | NodeKind::Instance { .. }) || n.component.source.is_some()
 }
 
 pub fn show(app: &mut App, ui: &mut Ui, region: Rect) {
@@ -229,7 +230,7 @@ pub fn show(app: &mut App, ui: &mut Ui, region: Rect) {
                     }
                 }
             }
-            let comp = is_component_like(&node.kind);
+            let comp = is_component_like(&node);
             let icon_c = Pos2::new(chev.right() + theme::LAYER_ICON_GAP + theme::LAYER_ICON_SIZE / 2.0, rr.center().y);
             let icon_col = if comp { theme::TEXT_COMPONENT } else if is_sel { theme::ICON_SELECTED } else { theme::ICON_TERTIARY };
             icons::paint(&p, kind_icon(&node.kind), icon_c, theme::LAYER_ICON_SIZE, icon_col);
@@ -282,6 +283,13 @@ pub fn show(app: &mut App, ui: &mut Ui, region: Rect) {
                 if lr.clicked() {
                     app.toggle_lock(row.id);
                 }
+            }
+
+            if resp.secondary_clicked() {
+                if !app.is_selected(row.id) {
+                    app.select_only(row.id);
+                }
+                app.ui.ctx_menu = ui.input(|i| i.pointer.interact_pos());
             }
 
             // Selection clicks.

@@ -43,20 +43,20 @@ pub struct PropsState {
     pub folded: std::collections::HashSet<String>,
 }
 
-struct Pane {
-    x0: f32,
-    oy: f32,
-    y: f32,
+pub(super) struct Pane {
+    pub(super) x0: f32,
+    pub(super) oy: f32,
+    pub(super) y: f32,
 }
 
 impl Pane {
-    fn rect(&self, x: f32, dy: f32, w: f32, h: f32) -> Rect {
+    pub(super) fn rect(&self, x: f32, dy: f32, w: f32, h: f32) -> Rect {
         Rect::from_min_size(Pos2::new(self.x0 + x, self.oy + self.y + dy), Vec2::new(w, h))
     }
-    fn col(&self, i: usize, dy: f32) -> Rect {
+    pub(super) fn col(&self, i: usize, dy: f32) -> Rect {
         self.rect(theme::FIELD_COL_X[i], dy, theme::FIELD_WIDTH_HALF, theme::FIELD_HEIGHT)
     }
-    fn full(&self, dy: f32) -> Rect {
+    pub(super) fn full(&self, dy: f32) -> Rect {
         self.rect(theme::SECTION_CONTENT_X, dy, theme::SECTION_CONTENT_W, theme::FIELD_HEIGHT)
     }
 }
@@ -71,7 +71,7 @@ fn from_c32(c: Color32) -> Color {
     Color::rgba(r, g, b, a)
 }
 
-fn section_sep(ui: &Ui, pane: &mut Pane, first: bool) {
+pub(super) fn section_sep(ui: &Ui, pane: &mut Pane, first: bool) {
     if !first {
         widgets::hline(ui.painter(), pane.x0, pane.x0 + theme::RIGHT_PANEL_WIDTH, pane.oy + pane.y, theme::BORDER);
         pane.y += 1.0;
@@ -79,7 +79,7 @@ fn section_sep(ui: &Ui, pane: &mut Pane, first: bool) {
 }
 
 /// Section title row; returns true when its action button was clicked.
-fn title(ui: &mut Ui, pane: &mut Pane, text: &str, action: Option<Icon>, dim: bool) -> bool {
+pub(super) fn title(ui: &mut Ui, pane: &mut Pane, text: &str, action: Option<Icon>, dim: bool) -> bool {
     let row = pane.rect(0.0, 0.0, theme::RIGHT_PANEL_WIDTH - 1.0, theme::SECTION_TITLE_HEIGHT);
     ui.painter().text(
         Pos2::new(row.left() + theme::SECTION_CONTENT_X, row.center().y),
@@ -97,14 +97,14 @@ fn title(ui: &mut Ui, pane: &mut Pane, text: &str, action: Option<Icon>, dim: bo
     clicked
 }
 
-fn sublabel(ui: &Ui, pane: &mut Pane, text: &str) {
+pub(super) fn sublabel(ui: &Ui, pane: &mut Pane, text: &str) {
     let r = pane.rect(theme::SECTION_CONTENT_X, 0.0, theme::SECTION_CONTENT_W, theme::SUBLABEL_HEIGHT);
     ui.painter().text(Pos2::new(r.left(), r.center().y), Align2::LEFT_CENTER, text, theme::font_body_strong(), theme::TEXT_SECONDARY);
     pane.y += theme::SUBLABEL_HEIGHT + 4.0;
 }
 
 /// Row advance after a 24px field row.
-fn row_end(pane: &mut Pane) {
+pub(super) fn row_end(pane: &mut Pane) {
     pane.y += theme::FIELD_HEIGHT + 4.0;
 }
 
@@ -348,7 +348,7 @@ fn selection_ui(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[NodeId]) {
             let col = if ui.memory(|m| m.has_focus(id)) { theme::BORDER_SELECTED } else { theme::BORDER };
             ui.painter().rect_stroke(name_r, theme::cr(theme::RADIUS_MEDIUM), Stroke::new(1.0, col), StrokeKind::Inside);
         }
-        let comp = matches!(n0.kind, NodeKind::Component(_) | NodeKind::Instance { .. });
+        let comp = matches!(n0.kind, NodeKind::Component(_) | NodeKind::ComponentSet(_) | NodeKind::Instance { .. }) || n0.component.source.is_some();
         if let Some(s) = field::edit_text(ui, name_r, id, &n0.name, theme::font_large(), if comp { theme::TEXT_COMPONENT } else { theme::TEXT }, 8.0) {
             app.rename(sel[0], &s);
         }
@@ -370,6 +370,9 @@ fn selection_ui(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[NodeId]) {
     }
     pane.y += theme::FIELD_HEIGHT + 8.0;
     section_sep(ui, pane, false);
+    if !multi {
+        super::components::sections(app, ui, pane, sel[0]);
+    }
 
     // ---- Position
     title(ui, pane, "Position", None, false);

@@ -41,6 +41,11 @@ pub fn show(app: &mut App, ui: &mut Ui, rect: Rect) {
     y += theme::LEFT_HEADER_HEIGHT;
     widgets::hline(&p, x0, inner.right(), y - 1.0, theme::BORDER);
 
+    if app.ui.rail == Some(crate::app::RailItem::Assets) {
+        super::assets::show(app, ui, Rect::from_min_max(Pos2::new(x0, y), inner.max));
+        return;
+    }
+
     // ---- pages
     section_title(ui, Rect::from_min_size(Pos2::new(x0, y), Vec2::new(inner.width(), theme::PANEL_TITLE_ROW_HEIGHT)), "Pages");
     let tr = Rect::from_min_size(Pos2::new(x0, y), Vec2::new(inner.width(), theme::PANEL_TITLE_ROW_HEIGHT));

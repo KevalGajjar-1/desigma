@@ -14,6 +14,8 @@ use std::time::Duration;
 fn sel_color(app: &App, id: NodeId) -> Color32 {
     match app.doc.get(id).map(|n| &n.kind) {
         Some(NodeKind::Component(_) | NodeKind::ComponentSet(_) | NodeKind::Instance { .. }) => theme::CANVAS_COMPONENT,
+        // Layers inside an instance share the instance's purple.
+        Some(_) if app.doc.get(id).is_some_and(|n| n.component.source.is_some()) => theme::CANVAS_COMPONENT,
         _ => theme::CANVAS_SELECTION,
     }
 }
@@ -43,7 +45,8 @@ pub fn label_rects(app: &App, rect: ERect) -> Vec<(NodeId, ERect)> {
         let bb = world_aabb(&app.doc, *id);
         let tl = app.view.to_screen(rect.min, v2(bb.x, bb.y));
         let w_px = bb.w * app.view.zoom;
-        let text_w = n.name.chars().count() as f32 * theme::FONT_SIZE_LABEL_CANVAS * 0.66;
+        let icon_w = if matches!(n.kind, NodeKind::Component(_) | NodeKind::ComponentSet(_)) { 18.0 } else { 0.0 };
+        let text_w = n.name.chars().count() as f32 * theme::FONT_SIZE_LABEL_CANVAS * 0.66 + icon_w;
         let w = text_w.min(w_px.max(24.0));
         let h = theme::FONT_SIZE_LABEL_CANVAS + 3.0;
         let r = ERect::from_min_size(Pos2::new(tl.x, tl.y - theme::CANVAS_LABEL_GAP - h), EV::new(w, h));
@@ -83,9 +86,15 @@ pub fn overlays(app: &App, ui: &Ui, rect: ERect) {
         let Some(n) = app.doc.get(id) else { continue };
         let selected = app.is_selected(id);
         let hovered = app.hover == Some(id) || app.hover_layer == Some(id);
-        let col = if selected || hovered { sel_color(app, id) } else { lab_col };
-        let name = crate::widgets::elide(&p, &n.name, &theme::font_body(), r.width());
-        p.text(Pos2::new(r.left(), r.center().y), Align2::LEFT_CENTER, name, theme::font_body(), col);
+        let is_comp = matches!(n.kind, NodeKind::Component(_) | NodeKind::ComponentSet(_));
+        // Main components always carry the purple label with a component icon.
+        let col = if selected || hovered || is_comp { sel_color(app, id) } else { lab_col };
+        let dx = if is_comp { 18.0 } else { 0.0 };
+        if is_comp {
+            crate::icons::paint(&p, crate::icons::Icon::Component, Pos2::new(r.left() + 7.0, r.center().y), 14.0, col);
+        }
+        let name = crate::widgets::elide(&p, &n.name, &theme::font_body(), (r.width() - dx).max(8.0));
+        p.text(Pos2::new(r.left() + dx, r.center().y), Align2::LEFT_CENTER, name, theme::font_body(), col);
     }
 
     // Hover outline.
