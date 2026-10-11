@@ -1,5 +1,14 @@
 //! Assets panel (rail "Assets"): local components grouped by page and frame,
-//! with search. Drag a row onto the canvas to place an instance.
+//! with search, a list/grid toggle and a rendered thumbnail per component.
+//! Drag a row onto the canvas to place an instance.
+//!
+//! Thumbnails are `desigma_render::render_node` renders scaled to fit, rendered
+//! lazily (a couple per frame, only for rows that are on screen) and kept as
+//! egui textures keyed by node id. Each texture remembers a fingerprint of the
+//! component's subtree (plus the components its instances point at); the
+//! fingerprint is re-checked every few tenths of a second for visible rows and
+//! a changed one queues a re-render, so editing a component updates its
+//! thumbnail without redrawing the others.
 
 use super::{clipped, scrollbar, wheel_scroll};
 use crate::app::App;
@@ -7,8 +16,11 @@ use crate::comp_ops::AssetEntry;
 use crate::icons::{self, Icon};
 use crate::theme;
 use crate::widgets;
-use desigma_doc::NodeId;
-use egui::{Align2, Color32, Id, LayerId, Order, Pos2, Rect, Sense, Stroke, StrokeKind, TextEdit, Ui, Vec2};
+use desigma_doc::{Document, NodeId, NodeKind};
+use egui::{Align2, Color32, Context, Id, LayerId, Order, Pos2, Rect, Sense, Stroke, StrokeKind, TextEdit, TextureHandle, TextureId, TextureOptions, Ui, Vec2};
+use std::collections::{HashMap, HashSet};
+use std::hash::Hasher;
+use std::time::Instant;
 
 #[derive(Default)]
 pub struct AssetsState {
@@ -16,17 +28,44 @@ pub struct AssetsState {
     pub scroll: f32,
     /// Component being dragged out of the panel.
     pub drag: Option<NodeId>,
+    /// Grid of previews instead of the list.
+    pub grid: bool,
+    thumbs: Thumbs,
 }
 
-const ROW_H: f32 = 32.0;
+impl AssetsState {
+    /// Thumbnails rendered so far (tests and diagnostics).
+    #[cfg(test)]
+    pub fn thumbs_rendered(&self) -> usize {
+        self.thumbs.renders
+    }
+
+    /// Whether a texture exists for `id`.
+    #[cfg(test)]
+    pub fn has_thumb(&self, id: NodeId) -> bool {
+        self.thumbs.map.get(&id).is_some_and(|t| t.tex.is_some())
+    }
+}
+
+const ROW_H: f32 = 48.0;
 const GROUP_H: f32 = 28.0;
 const SEARCH_H: f32 = 40.0;
+/// Edge of the square thumbnail box in list view.
+const THUMB: f32 = 40.0;
+const GRID_GAP: f32 = 8.0;
+const GRID_PREVIEW_H: f32 = 72.0;
+const GRID_LABEL_H: f32 = 24.0;
+const GRID_ROW_H: f32 = GRID_PREVIEW_H + GRID_LABEL_H + GRID_GAP;
+const VIEW_BTN: f32 = 24.0;
 
 #[derive(Clone)]
 enum Line {
     Page(String),
     Container(String),
+    /// One list row.
     Item(usize),
+    /// One row of grid cells.
+    Cells(Vec<usize>),
 }
 
 /// Entries matching `query` (case-insensitive on name, frame and page).
@@ -40,38 +79,290 @@ pub fn filtered(entries: &[AssetEntry], query: &str) -> Vec<usize> {
         .collect()
 }
 
-fn lines(entries: &[AssetEntry], shown: &[usize]) -> Vec<Line> {
+/// Grid columns that fit `width`.
+fn grid_cols(width: f32) -> usize {
+    (((width - GRID_GAP) / 96.0).floor() as usize).clamp(1, 4)
+}
+
+fn lines(entries: &[AssetEntry], shown: &[usize], cols: Option<usize>) -> Vec<Line> {
     let mut out = Vec::new();
     let (mut page, mut container) = (String::new(), String::new());
+    let mut pending: Vec<usize> = Vec::new();
+    let flush = |out: &mut Vec<Line>, pending: &mut Vec<usize>| {
+        if !pending.is_empty() {
+            out.push(Line::Cells(std::mem::take(pending)));
+        }
+    };
     for &i in shown {
         let e = &entries[i];
-        if out.is_empty() || e.page != page {
+        if (out.is_empty() && pending.is_empty()) || e.page != page {
+            flush(&mut out, &mut pending);
             out.push(Line::Page(e.page.clone()));
             page = e.page.clone();
             container = String::new();
         }
         if e.container != container {
+            flush(&mut out, &mut pending);
             container = e.container.clone();
             if !container.is_empty() {
                 out.push(Line::Container(container.clone()));
             }
         }
-        out.push(Line::Item(i));
+        match cols {
+            Some(c) => {
+                pending.push(i);
+                if pending.len() == c {
+                    flush(&mut out, &mut pending);
+                }
+            }
+            None => out.push(Line::Item(i)),
+        }
     }
+    flush(&mut out, &mut pending);
     out
 }
 
 fn line_h(l: &Line) -> f32 {
     match l {
         Line::Item(_) => ROW_H,
+        Line::Cells(_) => GRID_ROW_H,
         _ => GROUP_H,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// thumbnails
+
+/// How often (seconds) a visible thumbnail's fingerprint is re-checked.
+const RECHECK: f64 = 0.4;
+/// Thumbnails rendered per frame, and the time after which no more start.
+const RENDERS_PER_FRAME: usize = 2;
+const RENDER_TIME_BUDGET_MS: u128 = 8;
+/// Fingerprint checks per frame.
+const CHECKS_PER_FRAME: usize = 8;
+/// Textures kept; entries not drawn recently are dropped past this.
+const MAX_TEXTURES: usize = 160;
+
+struct Thumb {
+    tex: Option<TextureHandle>,
+    /// Fingerprint of the subtree the texture was rendered from.
+    fp: u64,
+    /// Pixel bounds the texture was rendered for.
+    bounds: (u32, u32),
+    checked: f64,
+    used: u64,
+    stale: bool,
+}
+
+#[derive(Default)]
+struct Thumbs {
+    map: HashMap<NodeId, Thumb>,
+    frame: u64,
+    renders: usize,
+    renders_left: usize,
+    checks_left: usize,
+    started: Option<Instant>,
+    /// Some visible thumbnail still waits for its render.
+    pending: bool,
+}
+
+/// Hash of everything that decides how `id` renders: its subtree, and the
+/// subtrees of the components its instances point at (a few levels deep).
+fn fingerprint(doc: &Document, id: NodeId) -> u64 {
+    fn rec(doc: &Document, id: NodeId, h: &mut std::collections::hash_map::DefaultHasher, seen: &mut HashSet<NodeId>, depth: usize) {
+        if depth > 4 || !seen.insert(id) {
+            return;
+        }
+        let mut targets = Vec::new();
+        doc.walk(id, |n, _| {
+            if let Ok(b) = serde_json::to_vec(n) {
+                h.write(&b);
+            }
+            if let NodeKind::Instance { component: Some(c), .. } = &n.kind {
+                targets.push(*c);
+            }
+        });
+        for t in targets {
+            rec(doc, t, h, seen, depth + 1);
+        }
+    }
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    rec(doc, id, &mut h, &mut HashSet::new(), 0);
+    h.finish()
+}
+
+/// Renders `id` scaled to fit `bounds` pixels (never upscaled past 1:1 at
+/// `max_scale`).
+fn render_thumb(doc: &Document, id: NodeId, bounds: (u32, u32), max_scale: f32) -> Option<egui::ColorImage> {
+    let n = doc.get(id)?;
+    if !(n.size.x > 0.0 && n.size.y > 0.0) {
+        return None;
+    }
+    let fit = (bounds.0 as f32 / n.size.x).min(bounds.1 as f32 / n.size.y);
+    let scale = fit.min(max_scale).max(1e-3);
+    let pm = desigma_render::render_node(doc, id, scale)?;
+    let (w, h) = (pm.width() as usize, pm.height() as usize);
+    Some(egui::ColorImage::from_rgba_premultiplied([w, h], pm.data()))
+}
+
+impl Thumbs {
+    fn begin_frame(&mut self) {
+        self.frame += 1;
+        self.renders_left = RENDERS_PER_FRAME;
+        self.checks_left = CHECKS_PER_FRAME;
+        self.started = Some(Instant::now());
+        self.pending = false;
+    }
+
+    /// Drops textures that have not been drawn for a while.
+    fn end_frame(&mut self) {
+        if self.map.len() > MAX_TEXTURES {
+            let frame = self.frame;
+            self.map.retain(|_, t| t.used + 120 >= frame);
+        }
+    }
+
+    /// Texture and its size in points for `id`, fitting a `max` points box.
+    /// Renders (or re-renders) it when the budget allows; a stale texture keeps
+    /// showing until its replacement is ready.
+    fn get(&mut self, ctx: &Context, doc: &Document, id: NodeId, max: Vec2, now: f64) -> Option<(TextureId, Vec2)> {
+        let ppp = ctx.pixels_per_point();
+        let bounds = ((max.x * ppp).round().max(1.0) as u32, (max.y * ppp).round().max(1.0) as u32);
+        let frame = self.frame;
+        let t = self.map.entry(id).or_insert(Thumb { tex: None, fp: 0, bounds: (0, 0), checked: f64::NEG_INFINITY, used: 0, stale: true });
+        t.used = frame;
+        if t.bounds != bounds {
+            t.stale = true;
+        }
+        if !t.stale && now - t.checked > RECHECK && self.checks_left > 0 {
+            self.checks_left -= 1;
+            t.checked = now;
+            if fingerprint(doc, id) != t.fp {
+                t.stale = true;
+            }
+        }
+        if t.stale {
+            let in_time = self.started.is_none_or(|s| s.elapsed().as_millis() < RENDER_TIME_BUDGET_MS);
+            if self.renders_left > 0 && in_time {
+                self.renders_left -= 1;
+                self.renders += 1;
+                t.fp = fingerprint(doc, id);
+                t.bounds = bounds;
+                t.checked = now;
+                t.stale = false;
+                match render_thumb(doc, id, bounds, ppp.max(1.0)) {
+                    Some(img) => match &mut t.tex {
+                        Some(h) => h.set(img, TextureOptions::LINEAR),
+                        None => t.tex = Some(ctx.load_texture(format!("asset-thumb-{}", id.0), img, TextureOptions::LINEAR)),
+                    },
+                    None => t.tex = None,
+                }
+            } else {
+                self.pending = true;
+            }
+        }
+        t.tex.as_ref().map(|h| (h.id(), h.size_vec2() / ppp))
+    }
+}
+
+// ---------------------------------------------------------------------------
+
+/// What happened to the rows this frame.
+#[derive(Default)]
+struct Outcome {
+    started: Option<NodeId>,
+    go_main: Option<NodeId>,
+}
+
+fn paint_thumb(p: &egui::Painter, thumbs: &mut Thumbs, ctx: &Context, doc: &Document, e: &AssetEntry, boxr: Rect, now: f64) {
+    p.rect_filled(boxr, theme::cr(theme::RADIUS_MEDIUM), theme::BG_SECONDARY);
+    let inner = boxr.shrink(4.0);
+    match thumbs.get(ctx, doc, e.id, inner.size(), now) {
+        Some((tex, size)) => {
+            let r = Rect::from_center_size(inner.center(), size);
+            p.image(tex, r, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), Color32::WHITE);
+        }
+        None => icons::paint(p, Icon::Component, boxr.center(), 16.0, theme::CANVAS_COMPONENT),
+    }
+    p.rect_stroke(boxr, theme::cr(theme::RADIUS_MEDIUM), Stroke::new(1.0, theme::BORDER_TRANSLUCENT), StrokeKind::Inside);
+}
+
+#[allow(clippy::too_many_arguments)]
+fn list_item(ui: &mut Ui, p: &egui::Painter, thumbs: &mut Thumbs, doc: &Document, e: &AssetEntry, row: Rect, dragging: Option<NodeId>, now: f64, out: &mut Outcome) {
+    let r = ui.interact(row, ui.id().with(("asset", e.id.0)), Sense::click_and_drag());
+    widgets::record(ui, &format!("asset:{}", e.name), row);
+    let inset = row.shrink2(Vec2::new(8.0, 0.0));
+    if r.hovered() || dragging == Some(e.id) {
+        p.rect_filled(inset, theme::cr(theme::RADIUS_MEDIUM), theme::BG_HOVER);
+    }
+    let boxr = Rect::from_min_size(Pos2::new(inset.left() + 4.0, row.center().y - THUMB / 2.0), Vec2::splat(THUMB));
+    if row.intersects(ui.clip_rect()) {
+        paint_thumb(p, thumbs, ui.ctx(), doc, e, boxr, now);
+    }
+    let label = if e.variants > 0 { format!("{} ({})", e.name, e.variants) } else { e.name.clone() };
+    let s = widgets::elide(p, &label, &theme::font_body(), inset.right() - boxr.right() - 20.0);
+    p.text(Pos2::new(boxr.right() + 12.0, row.center().y), Align2::LEFT_CENTER, s, theme::font_body(), theme::TEXT);
+    if r.drag_started() {
+        out.started = Some(e.id);
+    }
+    if r.double_clicked() {
+        out.go_main = Some(e.id);
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn grid_cell(ui: &mut Ui, p: &egui::Painter, thumbs: &mut Thumbs, doc: &Document, e: &AssetEntry, cell: Rect, dragging: Option<NodeId>, now: f64, out: &mut Outcome) {
+    let r = ui.interact(cell, ui.id().with(("asset", e.id.0)), Sense::click_and_drag());
+    let preview = Rect::from_min_size(cell.min, Vec2::new(cell.width(), GRID_PREVIEW_H));
+    widgets::record(ui, &format!("asset:{}", e.name), preview);
+    if r.hovered() || dragging == Some(e.id) {
+        p.rect_filled(cell.expand(2.0), theme::cr(theme::RADIUS_MEDIUM), theme::BG_HOVER);
+    }
+    if cell.intersects(ui.clip_rect()) {
+        paint_thumb(p, thumbs, ui.ctx(), doc, e, preview, now);
+    }
+    let label = if e.variants > 0 { format!("{} ({})", e.name, e.variants) } else { e.name.clone() };
+    let s = widgets::elide(p, &label, &theme::font_small(), cell.width() - 4.0);
+    p.text(Pos2::new(cell.left() + 2.0, preview.bottom() + GRID_LABEL_H / 2.0), Align2::LEFT_CENTER, s, theme::font_small(), theme::TEXT_SECONDARY);
+    if r.drag_started() {
+        out.started = Some(e.id);
+    }
+    if r.double_clicked() {
+        out.go_main = Some(e.id);
+    }
+}
+
+/// The list / grid switch next to the search box.
+fn view_toggle(ui: &mut Ui, at: Pos2, grid: &mut bool) {
+    for (i, is_grid) in [false, true].into_iter().enumerate() {
+        let rect = Rect::from_min_size(Pos2::new(at.x + i as f32 * (VIEW_BTN + 2.0), at.y), Vec2::splat(VIEW_BTN));
+        let r = ui.interact(rect, ui.id().with(("assets-view", is_grid)), Sense::click());
+        let selected = *grid == is_grid;
+        widgets::button_bg(ui.painter(), rect, &r, selected, theme::cr(theme::RADIUS_MEDIUM));
+        widgets::record(ui, if is_grid { "assets-view-grid" } else { "assets-view-list" }, rect);
+        let col = if selected { theme::ICON_SELECTED } else if r.hovered() { theme::ICON } else { theme::ICON_SECONDARY };
+        let p = ui.painter();
+        let c = rect.center();
+        if is_grid {
+            for (dx, dy) in [(-1.0, -1.0), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)] {
+                p.rect_filled(Rect::from_center_size(Pos2::new(c.x + dx * 3.5, c.y + dy * 3.5), Vec2::splat(5.0)), 1.0, col);
+            }
+        } else {
+            for dy in [-4.5, 0.0, 4.5] {
+                p.rect_filled(Rect::from_center_size(Pos2::new(c.x, c.y + dy), Vec2::new(12.0, 2.0)), 1.0, col);
+            }
+        }
+        if r.on_hover_text(if is_grid { "Grid view" } else { "List view" }).clicked() {
+            *grid = is_grid;
+        }
     }
 }
 
 pub fn show(app: &mut App, ui: &mut Ui, region: Rect) {
     let p = ui.painter().clone();
-    // ---- search
-    let sr = Rect::from_min_size(Pos2::new(region.left() + 8.0, region.top() + 8.0), Vec2::new(region.width() - 16.0, 24.0));
+    // ---- search + view toggle
+    let toggle_w = VIEW_BTN * 2.0 + 2.0;
+    let sr = Rect::from_min_size(Pos2::new(region.left() + 8.0, region.top() + 8.0), Vec2::new(region.width() - 16.0 - toggle_w - 4.0, 24.0));
     p.rect_filled(sr, theme::cr(theme::RADIUS_MEDIUM), theme::BG_SECONDARY);
     icons::paint(&p, Icon::Search, Pos2::new(sr.left() + 14.0, sr.center().y), 14.0, theme::ICON_SECONDARY);
     let mut q = std::mem::take(&mut app.assets.query);
@@ -88,12 +379,19 @@ pub fn show(app: &mut App, ui: &mut Ui, region: Rect) {
     ui.put(inner, te);
     widgets::record(ui, "assets-search", sr);
     app.assets.query = q;
+    let mut grid = app.assets.grid;
+    view_toggle(ui, Pos2::new(sr.right() + 4.0, sr.top()), &mut grid);
+    if grid != app.assets.grid {
+        app.assets.grid = grid;
+        app.assets.scroll = 0.0;
+    }
 
     // ---- list
     let list = Rect::from_min_max(Pos2::new(region.left(), region.top() + SEARCH_H), region.max);
     let entries = app.local_components();
     let shown = filtered(&entries, &app.assets.query);
-    let ls = lines(&entries, &shown);
+    let cols = app.assets.grid.then(|| grid_cols(list.width() - 16.0));
+    let ls = lines(&entries, &shown, cols);
     let content_h: f32 = ls.iter().map(line_h).sum::<f32>() + 8.0;
     let mut scroll = app.assets.scroll;
     wheel_scroll(ui, list, &mut scroll, content_h);
@@ -105,53 +403,54 @@ pub fn show(app: &mut App, ui: &mut Ui, region: Rect) {
         p.text(Pos2::new(list.center().x, list.top() + 48.0), Align2::CENTER_CENTER, "No results", theme::font_body(), theme::TEXT_TERTIARY);
     }
 
-    let mut started: Option<NodeId> = None;
-    let mut go_main: Option<NodeId> = None;
-    clipped(ui, list, |ui| {
-        let p = ui.painter().clone();
-        let mut y = list.top() - scroll;
-        for l in &ls {
-            let h = line_h(l);
-            let row = Rect::from_min_size(Pos2::new(list.left(), y), Vec2::new(list.width(), h));
-            y += h;
-            if row.bottom() < list.top() || row.top() > list.bottom() {
-                continue;
-            }
-            match l {
-                Line::Page(name) => {
-                    p.text(Pos2::new(row.left() + theme::PANEL_PADDING_X, row.center().y), Align2::LEFT_CENTER, name, theme::font_body_strong(), theme::TEXT);
+    let mut thumbs = std::mem::take(&mut app.assets.thumbs);
+    thumbs.begin_frame();
+    let dragging = app.assets.drag;
+    let now = app.now;
+    let mut out = Outcome::default();
+    {
+        let doc = &app.doc;
+        clipped(ui, list, |ui| {
+            let p = ui.painter().clone();
+            let mut y = list.top() - scroll;
+            for l in &ls {
+                let h = line_h(l);
+                let row = Rect::from_min_size(Pos2::new(list.left(), y), Vec2::new(list.width(), h));
+                y += h;
+                if row.bottom() < list.top() || row.top() > list.bottom() {
+                    continue;
                 }
-                Line::Container(name) => {
-                    let s = widgets::elide(&p, name, &theme::font_body(), row.width() - 40.0);
-                    p.text(Pos2::new(row.left() + theme::PANEL_PADDING_X + 8.0, row.center().y), Align2::LEFT_CENTER, s, theme::font_body(), theme::TEXT_SECONDARY);
-                }
-                Line::Item(i) => {
-                    let e = &entries[*i];
-                    let r = ui.interact(row, ui.id().with(("asset", e.id.0)), Sense::click_and_drag());
-                    widgets::record(ui, &format!("asset:{}", e.name), row);
-                    let inset = row.shrink2(Vec2::new(8.0, 0.0));
-                    if r.hovered() || app.assets.drag == Some(e.id) {
-                        p.rect_filled(inset, theme::cr(theme::RADIUS_MEDIUM), theme::BG_HOVER);
+                match l {
+                    Line::Page(name) => {
+                        p.text(Pos2::new(row.left() + theme::PANEL_PADDING_X, row.center().y), Align2::LEFT_CENTER, name, theme::font_body_strong(), theme::TEXT);
                     }
-                    icons::paint(&p, if e.variants > 0 { Icon::Component } else { Icon::Component }, Pos2::new(inset.left() + 20.0, row.center().y), 16.0, theme::CANVAS_COMPONENT);
-                    let label = if e.variants > 0 { format!("{} ({})", e.name, e.variants) } else { e.name.clone() };
-                    let s = widgets::elide(&p, &label, &theme::font_body(), inset.width() - 44.0);
-                    p.text(Pos2::new(inset.left() + 36.0, row.center().y), Align2::LEFT_CENTER, s, theme::font_body(), theme::TEXT);
-                    if r.drag_started() {
-                        started = Some(e.id);
+                    Line::Container(name) => {
+                        let s = widgets::elide(&p, name, &theme::font_body(), row.width() - 40.0);
+                        p.text(Pos2::new(row.left() + theme::PANEL_PADDING_X + 8.0, row.center().y), Align2::LEFT_CENTER, s, theme::font_body(), theme::TEXT_SECONDARY);
                     }
-                    if r.double_clicked() {
-                        go_main = Some(e.id);
+                    Line::Item(i) => list_item(ui, &p, &mut thumbs, doc, &entries[*i], row, dragging, now, &mut out),
+                    Line::Cells(ix) => {
+                        let n = cols.unwrap_or(1) as f32;
+                        let cw = (list.width() - 16.0 - GRID_GAP * (n - 1.0)) / n;
+                        for (k, i) in ix.iter().enumerate() {
+                            let cell = Rect::from_min_size(Pos2::new(list.left() + 8.0 + k as f32 * (cw + GRID_GAP), row.top()), Vec2::new(cw, GRID_PREVIEW_H + GRID_LABEL_H));
+                            grid_cell(ui, &p, &mut thumbs, doc, &entries[*i], cell, dragging, now, &mut out);
+                        }
                     }
                 }
             }
-        }
-    });
-    scrollbar(ui, list, scroll, content_h);
-    if started.is_some() {
-        app.assets.drag = started;
+        });
     }
-    if let Some(c) = go_main {
+    thumbs.end_frame();
+    if thumbs.pending {
+        ui.ctx().request_repaint();
+    }
+    app.assets.thumbs = thumbs;
+    scrollbar(ui, list, scroll, content_h);
+    if out.started.is_some() {
+        app.assets.drag = out.started;
+    }
+    if let Some(c) = out.go_main {
         app.go_to_main_component(c);
     }
     drag(app, ui);

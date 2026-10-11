@@ -702,3 +702,5 @@ fn text_tool_auto_resizes_with_real_measurement() {
 mod components;
 mod menus;
 mod proto;
+
+mod assets_thumbs;
