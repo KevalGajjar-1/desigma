@@ -553,17 +553,7 @@ fn selection_ui(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[NodeId]) {
 
     // ---- Export
     section_sep(ui, pane, false);
-    title(ui, pane, "Export", None, false);
-    let r = pane.full(0.0);
-    let resp = ui.interact(r, ui.id().with("export-btn"), Sense::click());
-    ui.painter().rect_filled(r, theme::cr(theme::RADIUS_MEDIUM), if resp.hovered() { theme::BG_TERTIARY } else { theme::BG_SECONDARY });
-    icons::paint(ui.painter(), Icon::Export, Pos2::new(r.left() + 16.0, r.center().y), 14.0, theme::ICON_SECONDARY);
-    let label = widgets::elide(ui.painter(), &format!("Export {}", n0.name), &theme::font_body(), r.width() - 44.0);
-    ui.painter().text(Pos2::new(r.left() + 32.0, r.center().y), Align2::LEFT_CENTER, label, theme::font_body(), theme::TEXT);
-    if resp.clicked() {
-        app.export_selection();
-    }
-    pane.y += theme::FIELD_HEIGHT + 12.0;
+    pane.y += super::export::section(app, ui, pane.x0, pane.oy + pane.y, sel);
 }
 
 fn sizing_of(n: &Node, horizontal: bool) -> Sizing {

@@ -1,0 +1,16 @@
+[package]
+name = "desigma-export"
+description = "PNG/JPG/SVG export and Dev Mode CSS for desigma documents"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+base64 = "0.22"
+cosmic-text = "0.19.0"
+desigma-doc.workspace = true
+desigma-render.workspace = true
+# Bundled fonts only; text outlining never touches the network.
+desigma-fonts = { path = "../desigma-fonts", default-features = false }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+tiny-skia.workspace = true

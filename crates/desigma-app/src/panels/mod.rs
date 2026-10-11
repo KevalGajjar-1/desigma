@@ -1,3 +1,5 @@
+pub mod export;
+pub mod inspect;
 pub mod layers;
 pub mod left;
 pub mod menus;

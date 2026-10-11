@@ -7,6 +7,7 @@ members = [
     "crates/desigma-fig",
     "crates/desigma-app",
     "crates/desigma-diff",
+    "crates/desigma-export",
 ]
 
 [workspace.package]
@@ -20,6 +21,7 @@ desigma-doc = { path = "crates/desigma-doc" }
 desigma-render = { path = "crates/desigma-render" }
 desigma-fig = { path = "crates/desigma-fig" }
 desigma-fonts = { path = "crates/desigma-fonts" }
+desigma-export = { path = "crates/desigma-export" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"

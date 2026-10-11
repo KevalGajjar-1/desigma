@@ -810,12 +810,14 @@ impl App {
         };
         let name = self.doc.get(id).map(|n| n.name.clone()).unwrap_or_default();
         let Some(path) = io::pick_export(&name) else { return };
-        match desigma_render::render_node(&self.doc, id, 1.0) {
-            Some(pm) => match pm.save_png(&path) {
-                Ok(()) => self.show_toast(format!("Exported {}", path.display()), false),
-                Err(e) => self.show_toast(format!("Export failed: {e}"), true),
-            },
-            None => self.show_toast("Nothing to export", true),
+        let png = desigma_export::export_png(&self.doc, id, 1.0);
+        if png.is_empty() {
+            self.show_toast("Nothing to export", true);
+            return;
+        }
+        match std::fs::write(&path, png) {
+            Ok(()) => self.show_toast(format!("Exported {}", path.display()), false),
+            Err(e) => self.show_toast(format!("Export failed: {e}"), true),
         }
     }
 }

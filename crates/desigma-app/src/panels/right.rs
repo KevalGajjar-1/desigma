@@ -101,6 +101,8 @@ pub fn show(app: &mut App, ui: &mut Ui, rect: Rect) {
     let region = Rect::from_min_max(Pos2::new(rect.left() + 1.0, content_top + 1.0), rect.max);
     if active == RightTab::Prototype {
         p.text(Pos2::new(region.center().x, region.top() + 48.0), Align2::CENTER_CENTER, "Prototype mode is not available yet", theme::font_body(), theme::TEXT_TERTIARY);
+    } else if app.ui.dev_mode {
+        super::inspect::show(app, ui, region);
     } else {
         properties::show(app, ui, region);
     }
