@@ -33,8 +33,8 @@ pub fn show(app: &mut App, ui: &mut Ui, rect: Rect) {
         app.ui.menu_anchor = Some(hit);
     }
     let sub = p.text(Pos2::new(x0 + theme::PANEL_PADDING_X, y + theme::LEFT_SUBLABEL_Y + 8.0), Align2::LEFT_CENTER, "Drafts", theme::font_body(), theme::TEXT_SECONDARY);
-    widgets::badge(&p, Pos2::new(sub.right() + 6.0, sub.center().y - theme::BADGE_HEIGHT / 2.0), "Free");
-    let tb = Rect::from_min_size(Pos2::new(inner.right() - theme::PANEL_ACTION_RIGHT_PAD - theme::PANEL_ACTION_BUTTON, y + 8.0), Vec2::splat(theme::PANEL_ACTION_BUTTON));
+    widgets::badge(&p, Pos2::new(sub.right() + theme::BADGE_GAP, sub.center().y - theme::BADGE_HEIGHT / 2.0), "Free");
+    let tb = Rect::from_min_size(Pos2::new(inner.right() - theme::LEFT_SIDEBAR_BTN_RIGHT_PAD - theme::PANEL_ACTION_BUTTON, y + theme::LEFT_ACTION_Y), Vec2::splat(theme::PANEL_ACTION_BUTTON));
     if widgets::icon_button(ui, tb, "sidebar", Icon::Sidebar, false, "Hide sidebar").clicked() {
         app.ui.left_collapsed = true;
     }
@@ -51,7 +51,7 @@ pub fn show(app: &mut App, ui: &mut Ui, rect: Rect) {
     if widgets::icon_button(ui, plus, "page-add", Icon::Plus, false, "Add page").clicked() {
         app.add_page();
     }
-    let search = plus.translate(Vec2::new(-theme::PANEL_ACTION_BUTTON, 0.0));
+    let search = plus.translate(Vec2::new(-theme::PAGES_SEARCH_DX, 0.0));
     widgets::icon_button(ui, search, "page-search", Icon::Search, false, "Search pages");
     y += theme::PANEL_TITLE_ROW_HEIGHT;
 

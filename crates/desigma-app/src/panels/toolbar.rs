@@ -29,6 +29,16 @@ pub fn tool_icon(t: Tool) -> Icon {
     }
 }
 
+/// Groups with a dropdown chevron (the text tool keeps one for its sub-menu).
+pub fn has_chevron(group: &[Tool]) -> bool {
+    group.len() > 1 || group.contains(&Tool::Text)
+}
+
+/// Width of the mode switcher group.
+pub fn mode_switch_width() -> f32 {
+    theme::MODE_SEGMENTS as f32 * theme::MODE_SWITCH_W + theme::MODE_SWITCH_PAD * 2.0
+}
+
 /// Total toolbar width for the current group set.
 pub fn toolbar_width() -> f32 {
     let mut w = theme::TOOLBELT_PADDING * 2.0;
@@ -37,11 +47,11 @@ pub fn toolbar_width() -> f32 {
             w += theme::TOOL_GROUP_GAP;
         }
         w += theme::TOOL_BUTTON;
-        if g.len() > 1 {
+        if has_chevron(g) {
             w += theme::TOOL_CHEVRON_GAP + theme::TOOL_CHEVRON_W;
         }
     }
-    w + theme::TOOL_GROUP_GAP + theme::TOOL_BUTTON + theme::TOOL_GROUP_GAP + theme::MODE_SWITCH_W * 2.0
+    w + theme::TOOL_GROUP_GAP + theme::TOOL_BUTTON + theme::TOOLBAR_DIVIDER_GAP_BEFORE + theme::BORDER_WIDTH + theme::TOOLBAR_DIVIDER_GAP_AFTER + mode_switch_width()
 }
 
 pub fn toolbar_rect(screen: Rect) -> Rect {
@@ -74,14 +84,11 @@ pub fn show(app: &mut App, ui: &mut Ui, screen: Rect) {
         let shown = if selected { app.tool } else { tool };
         let br = Rect::from_min_size(Pos2::new(x, y), Vec2::splat(theme::TOOL_BUTTON));
         let resp = ui.interact(br, ui.id().with(("tool", gi)), Sense::click());
-        let (radius_btn, has_chev) = if group.len() > 1 {
-            (theme::cr_each(theme::RADIUS_MEDIUM, 0, 0, theme::RADIUS_MEDIUM), true)
-        } else {
-            (theme::cr(theme::RADIUS_MEDIUM), false)
-        };
+        let has_chev = has_chevron(group);
+        // Only the 32x32 icon button takes the selected fill.
         let fill = if selected { theme::BG_TOOLBAR_SELECTED } else if resp.hovered() { theme::BG_TOOLBAR_HOVER } else { Color32::TRANSPARENT };
         if fill != Color32::TRANSPARENT {
-            p.rect_filled(br, radius_btn, fill);
+            p.rect_filled(br, theme::cr(theme::RADIUS_MEDIUM), fill);
         }
         icons::paint(&p, tool_icon(shown), br.center(), theme::TOOL_ICON_SIZE, if selected { Color32::WHITE } else { theme::ICON });
         if resp.clicked() {
@@ -95,11 +102,12 @@ pub fn show(app: &mut App, ui: &mut Ui, screen: Rect) {
             let cr = Rect::from_min_size(Pos2::new(x, y), Vec2::new(theme::TOOL_CHEVRON_W, theme::TOOL_BUTTON));
             let cresp = ui.interact(cr, ui.id().with(("tool-chev", gi)), Sense::click());
             let open = app.ui.menu == Some(MenuKind::ToolGroup(gi));
-            let cfill = if open { theme::BG_TOOLBAR_HOVER } else if selected { theme::BG_TOOLBAR_SELECTED } else if cresp.hovered() { theme::BG_TOOLBAR_HOVER } else { Color32::TRANSPARENT };
-            if cfill != Color32::TRANSPARENT {
-                p.rect_filled(cr, theme::cr_each(0, theme::RADIUS_MEDIUM, theme::RADIUS_MEDIUM, 0), cfill);
+            // The chevron stays transparent unless hovered or its menu is open.
+            if open || cresp.hovered() {
+                p.rect_filled(cr, theme::cr(theme::RADIUS_MEDIUM), theme::BG_TOOLBAR_HOVER);
             }
-            icons::paint(&p, Icon::ChevronUp, cr.center(), 10.0, if selected && !open { Color32::WHITE } else { theme::ICON_SECONDARY });
+            let cc = Pos2::new(br.right() + theme::TOOL_CHEVRON_CENTER_DX, cr.center().y);
+            icons::paint(&p, Icon::ChevronDown, cc, 16.0, theme::ICON_SECONDARY);
             if cresp.clicked() {
                 app.ui.menu = if open { None } else { Some(MenuKind::ToolGroup(gi)) };
                 app.ui.menu_anchor = Some(cr);
@@ -119,23 +127,36 @@ pub fn show(app: &mut App, ui: &mut Ui, screen: Rect) {
     if aresp.on_hover_text("Actions").clicked() {
         app.show_toast("Actions are not available yet", false);
     }
-    x += theme::TOOL_BUTTON + theme::TOOL_GROUP_GAP;
+    x += theme::TOOL_BUTTON + theme::TOOLBAR_DIVIDER_GAP_BEFORE;
 
-    // Design / dev mode switcher.
-    let sw = Rect::from_min_size(Pos2::new(x, y), Vec2::new(theme::MODE_SWITCH_W * 2.0, theme::TOOL_BUTTON));
+    // Full-height 1px divider before the mode switcher.
+    widgets::vline(&p, x, bar.top() + 1.0, bar.bottom() - 1.0, theme::BORDER);
+    x += theme::BORDER_WIDTH + theme::TOOLBAR_DIVIDER_GAP_AFTER;
+
+    // Mode switcher: draw, design, prototype, dev (design / dev are the working modes).
+    let sw = Rect::from_min_size(Pos2::new(x, y), Vec2::new(mode_switch_width(), theme::TOOL_BUTTON));
     p.rect_filled(sw, theme::cr(theme::RADIUS_MEDIUM), theme::BG_TOOLBAR_MODE_SWITCHER);
-    for (i, (icon, dev)) in [(Icon::Design, false), (Icon::Dev, true)].into_iter().enumerate() {
-        let r = Rect::from_min_size(Pos2::new(x + i as f32 * theme::MODE_SWITCH_W, y), Vec2::new(theme::MODE_SWITCH_W, theme::TOOL_BUTTON));
+    let modes = [(Icon::Pencil, "Draw"), (Icon::Design, "Design"), (Icon::Component, "Prototype"), (Icon::Dev, "Dev mode")];
+    for (i, (icon, label)) in modes.into_iter().enumerate() {
+        let r = Rect::from_min_size(
+            Pos2::new(x + theme::MODE_SWITCH_PAD + i as f32 * theme::MODE_SWITCH_W, y + theme::MODE_SWITCH_PAD),
+            Vec2::new(theme::MODE_SWITCH_W, theme::TOOL_BUTTON - theme::MODE_SWITCH_PAD * 2.0),
+        );
         let resp = ui.interact(r, ui.id().with(("mode", i)), Sense::click());
-        let sel = app.ui.dev_mode == dev;
+        let sel = if app.ui.dev_mode { i == 3 } else { i == 1 };
         if sel {
-            p.rect_filled(r.shrink(2.0), theme::cr(theme::RADIUS_SMALL + 1), theme::BG_TOOLBAR_SELECTED);
+            // Active segment: darker inset tile.
+            p.rect_filled(r, theme::cr(theme::MODE_TILE_RADIUS), theme::BG_TOOLBAR);
         } else if resp.hovered() {
-            p.rect_filled(r.shrink(2.0), theme::cr(theme::RADIUS_SMALL + 1), theme::BG_TOOLBAR_HOVER);
+            p.rect_filled(r, theme::cr(theme::MODE_TILE_RADIUS), theme::BG_TOOLBAR_HOVER);
         }
-        icons::paint(&p, icon, r.center(), 16.0, if sel { Color32::WHITE } else { theme::ICON_SECONDARY });
-        if resp.on_hover_text(if dev { "Dev mode" } else { "Design" }).clicked() {
-            app.ui.dev_mode = dev;
+        icons::paint(&p, icon, r.center(), 16.0, if sel { theme::ICON_SELECTED } else { theme::ICON_SECONDARY });
+        if resp.on_hover_text(label).clicked() {
+            match i {
+                1 => app.ui.dev_mode = false,
+                3 => app.ui.dev_mode = true,
+                _ => app.show_toast(format!("{label} mode is not available yet"), false),
+            }
         }
     }
 }
@@ -151,6 +172,15 @@ mod tests {
         assert!((r.center().x - 800.0).abs() < 0.5);
         assert_eq!(r.bottom(), 1088.0 - theme::TOOLBELT_BOTTOM_MARGIN);
         assert_eq!(r.height(), theme::TOOLBELT_HEIGHT);
+    }
+
+    #[test]
+    fn toolbelt_is_512_wide_like_figma() {
+        assert_eq!(toolbar_width(), 512.0);
+        assert_eq!(mode_switch_width(), 122.0);
+        let screen = Rect::from_min_size(Pos2::ZERO, Vec2::new(800.0, 600.0));
+        let r = toolbar_rect(screen);
+        assert_eq!((r.left(), r.right()), (144.0, 656.0));
     }
 
     #[test]

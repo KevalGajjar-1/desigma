@@ -90,9 +90,10 @@ pub fn num_field(ui: &mut Ui, rect: Rect, key: impl crate::widgets::Key, prefix:
     match prefix {
         Prefix::None => {}
         Prefix::Text(s) => {
-            p.text(c, Align2::CENTER_CENTER, s, theme::font_body(), theme::TEXT_TERTIARY);
+            // Left-aligned label, 8px in; the value starts 24px in.
+            p.text(Pos2::new(rect.left() + theme::FIELD_PREFIX_X, rect.center().y), Align2::LEFT_CENTER, s, theme::font_body(), theme::TEXT_SECONDARY);
         }
-        Prefix::Icon(i) => icons::paint(p, i, c, 12.0, theme::TEXT_TERTIARY),
+        Prefix::Icon(i) => icons::paint(p, i, c, 12.0, theme::TEXT_SECONDARY),
     }
     let scrubbed = if pw > 0.0 { scrub_prefix(ui, Rect::from_min_size(rect.min, egui::vec2(pw, rect.height())), id, value) } else { None };
     let text_rect = Rect::from_min_max(Pos2::new(rect.left() + pw, rect.top()), rect.max);

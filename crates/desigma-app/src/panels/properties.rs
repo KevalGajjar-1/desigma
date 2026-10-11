@@ -99,7 +99,7 @@ fn title(ui: &mut Ui, pane: &mut Pane, text: &str, action: Option<Icon>, dim: bo
 
 fn sublabel(ui: &Ui, pane: &mut Pane, text: &str) {
     let r = pane.rect(theme::SECTION_CONTENT_X, 0.0, theme::SECTION_CONTENT_W, theme::SUBLABEL_HEIGHT);
-    ui.painter().text(Pos2::new(r.left(), r.center().y), Align2::LEFT_CENTER, text, theme::font_body(), theme::TEXT_SECONDARY);
+    ui.painter().text(Pos2::new(r.left(), r.center().y), Align2::LEFT_CENTER, text, theme::font_body_strong(), theme::TEXT_SECONDARY);
     pane.y += theme::SUBLABEL_HEIGHT + 4.0;
 }
 
@@ -124,6 +124,10 @@ fn segmented(ui: &mut Ui, pane: &Pane, x: f32, key: &str, items: &[Icon], select
         let bg = if sel { theme::BG_TERTIARY } else if resp.hovered() { theme::BG_TERTIARY.gamma_multiply(0.6) } else { theme::BG_SECONDARY };
         ui.painter().rect_filled(r, radius, bg);
         icons::paint(ui.painter(), *icon, r.center(), 16.0, if sel { theme::ICON } else { theme::ICON_SECONDARY });
+        if i > 0 {
+            // 1px gap between neighbouring segments.
+            widgets::vline(ui.painter(), r.left(), r.top(), r.bottom(), theme::BG);
+        }
         if resp.clicked() {
             out = Some(i);
         }
@@ -378,6 +382,11 @@ fn selection_ui(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[NodeId]) {
     if let Some(i) = segmented(ui, pane, theme::SECTION_CONTENT_X + 3.0 * theme::SEGMENT_W + theme::SEGMENT_GROUP_GAP, "alignv", &v, None) {
         app.align([Align::Top, Align::VCenter, Align::Bottom][i]);
     }
+    let dist_r = pane.rect(theme::DISTRIBUTE_BTN_X, 0.0, theme::PANEL_ACTION_BUTTON, theme::PANEL_ACTION_BUTTON);
+    widgets::record(ui, "distribute", dist_r);
+    if widgets::icon_button(ui, dist_r, "distribute", Icon::Distribute, false, "Distribute spacing").clicked() {
+        app.distribute_selection();
+    }
     row_end(pane);
     sublabel(ui, pane, "Position");
     let xs = common(app, sel, |n| n.transform.tx);
@@ -389,6 +398,7 @@ fn selection_ui(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[NodeId]) {
         app.edit_nodes(sel, |n| n.transform.ty = y);
     }
     row_end(pane);
+    sublabel(ui, pane, "Rotation");
     let rot = common(app, sel, |n| (-n.transform.rotation_rad().to_degrees() * 100.0).round() / 100.0);
     if let Some(deg) = field::num_field(ui, pane.col(0, 0.0), "rot", Prefix::Icon(Icon::Rotation), rot, "°") {
         if multi {
@@ -399,47 +409,22 @@ fn selection_ui(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[NodeId]) {
             app.edit_nodes(sel, |n| n.transform = crate::canvas::handles::rotate_about_center(&n.transform, n.size, rad));
         }
     }
-    row_end(pane);
-    sublabel(ui, pane, "Dimensions");
-    let ws = common(app, sel, |n| n.size.x);
-    let hs = common(app, sel, |n| n.size.y);
-    let w_new = field::num_field(ui, pane.col(0, 0.0), "w", Prefix::Text("W"), ws, "");
-    let h_new = if is_line { None } else { field::num_field(ui, pane.col(1, 0.0), "h", Prefix::Text("H"), hs, "") };
-    if w_new.is_some() || h_new.is_some() {
-        resize_selection(app, sel, w_new, h_new);
+    for i in 0..3 {
+        widgets::record(ui, &format!("xform:{i}"), pane.rect(theme::FIELD_COL_X[1] + i as f32 * theme::SEGMENT_W, 0.0, theme::SEGMENT_W, theme::FIELD_HEIGHT));
+    }
+    if let Some(i) = segmented(ui, pane, theme::FIELD_COL_X[1], "xform", &[Icon::Rotate90, Icon::FlipH, Icon::FlipV], None) {
+        match i {
+            0 => app.rotate_selection(-std::f32::consts::FRAC_PI_2),
+            1 => app.flip_selection(true),
+            _ => app.flip_selection(false),
+        }
     }
     row_end(pane);
-    if parent_frame && !parent_al && !multi {
-        sublabel(ui, pane, "Constraints");
-        let hn = ["Left", "Right", "Left & Right", "Center", "Scale"].map(String::from);
-        let vn = ["Top", "Bottom", "Top & Bottom", "Center", "Scale"].map(String::from);
-        let order = [Constraint::Min, Constraint::Max, Constraint::Stretch, Constraint::Center, Constraint::Scale];
-        let hi = order.iter().position(|c| *c == n0.constraints.horizontal).unwrap_or(0);
-        let vi = order.iter().position(|c| *c == n0.constraints.vertical).unwrap_or(0);
-        if let Some(i) = dropdown(ui, pane.col(0, 0.0), "con-h", &hn[hi], &hn) {
-            app.edit_nodes(sel, |n| n.constraints.horizontal = order[i]);
-        }
-        if let Some(i) = dropdown(ui, pane.col(1, 0.0), "con-v", &vn[vi], &vn) {
-            app.edit_nodes(sel, |n| n.constraints.vertical = order[i]);
-        }
-        row_end(pane);
-    }
-    if parent_al || (is_frame && n0.kind.frame_props().map(|f| f.auto_layout.is_some()).unwrap_or(false)) || is_text {
-        sublabel(ui, pane, "Resizing");
-        let opts = ["Fixed", "Hug", "Fill"].map(String::from);
-        let order = [Sizing::Fixed, Sizing::Hug, Sizing::Fill];
-        let (hs, vs) = (sizing_of(&n0, true), sizing_of(&n0, false));
-        if let Some(i) = dropdown(ui, pane.col(0, 0.0), "rs-h", &format!("W: {}", opts[order.iter().position(|s| *s == hs).unwrap_or(0)]), &opts) {
-            set_sizing(app, sel, true, order[i]);
-        }
-        if let Some(i) = dropdown(ui, pane.col(1, 0.0), "rs-v", &format!("H: {}", opts[order.iter().position(|s| *s == vs).unwrap_or(0)]), &opts) {
-            set_sizing(app, sel, false, order[i]);
-        }
-        row_end(pane);
-    }
     pane.y += 4.0;
 
-    // ---- Auto layout
+    let al_frame = is_frame && !multi && n0.kind.frame_props().map(|f| f.auto_layout.is_some()).unwrap_or(false);
+
+    // ---- Auto layout (carries the dimensions of auto-layout frames)
     if is_frame && !multi {
         section_sep(ui, pane, false);
         let al = n0.kind.frame_props().and_then(|f| f.auto_layout);
@@ -447,11 +432,34 @@ fn selection_ui(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[NodeId]) {
             app.toggle_auto_layout();
         }
         if let Some(a) = al {
-            auto_layout_ui(app, ui, pane, sel, a);
+            auto_layout_ui(app, ui, pane, sel, a, &n0, parent_al);
         }
-        if al.is_none() {
-            pane.y -= 0.0;
+    }
+
+    // ---- Layout: dimensions, resizing and constraints of everything else
+    if !al_frame {
+        section_sep(ui, pane, false);
+        title(ui, pane, "Layout", None, false);
+        dimensions_ui(app, ui, pane, sel, is_line);
+        if parent_al || is_text {
+            resizing_ui(app, ui, pane, sel, &n0);
         }
+        if parent_frame && !parent_al && !multi {
+            sublabel(ui, pane, "Constraints");
+            let hn = ["Left", "Right", "Left & Right", "Center", "Scale"].map(String::from);
+            let vn = ["Top", "Bottom", "Top & Bottom", "Center", "Scale"].map(String::from);
+            let order = [Constraint::Min, Constraint::Max, Constraint::Stretch, Constraint::Center, Constraint::Scale];
+            let hi = order.iter().position(|c| *c == n0.constraints.horizontal).unwrap_or(0);
+            let vi = order.iter().position(|c| *c == n0.constraints.vertical).unwrap_or(0);
+            if let Some(i) = dropdown(ui, pane.col(0, 0.0), "con-h", &hn[hi], &hn) {
+                app.edit_nodes(sel, |n| n.constraints.horizontal = order[i]);
+            }
+            if let Some(i) = dropdown(ui, pane.col(1, 0.0), "con-v", &vn[vi], &vn) {
+                app.edit_nodes(sel, |n| n.constraints.vertical = order[i]);
+            }
+            row_end(pane);
+        }
+        pane.y += 4.0;
     }
 
     // ---- Typography
@@ -617,7 +625,33 @@ fn resize_selection(app: &mut App, sel: &[NodeId], w: Option<f32>, h: Option<f32
     app.run_tx(tx);
 }
 
-fn auto_layout_ui(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[NodeId], a: AutoLayout) {
+fn dimensions_ui(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[NodeId], is_line: bool) {
+    sublabel(ui, pane, "Dimensions");
+    let ws = common(app, sel, |n| n.size.x);
+    let hs = common(app, sel, |n| n.size.y);
+    let w_new = field::num_field(ui, pane.col(0, 0.0), "w", Prefix::Text("W"), ws, "");
+    let h_new = if is_line { None } else { field::num_field(ui, pane.col(1, 0.0), "h", Prefix::Text("H"), hs, "") };
+    if w_new.is_some() || h_new.is_some() {
+        resize_selection(app, sel, w_new, h_new);
+    }
+    row_end(pane);
+}
+
+fn resizing_ui(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[NodeId], n0: &Node) {
+    sublabel(ui, pane, "Resizing");
+    let opts = ["Fixed", "Hug", "Fill"].map(String::from);
+    let order = [Sizing::Fixed, Sizing::Hug, Sizing::Fill];
+    let (hs, vs) = (sizing_of(n0, true), sizing_of(n0, false));
+    if let Some(i) = dropdown(ui, pane.col(0, 0.0), "rs-h", &format!("W: {}", opts[order.iter().position(|s| *s == hs).unwrap_or(0)]), &opts) {
+        set_sizing(app, sel, true, order[i]);
+    }
+    if let Some(i) = dropdown(ui, pane.col(1, 0.0), "rs-v", &format!("H: {}", opts[order.iter().position(|s| *s == vs).unwrap_or(0)]), &opts) {
+        set_sizing(app, sel, false, order[i]);
+    }
+    row_end(pane);
+}
+
+fn auto_layout_ui(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[NodeId], a: AutoLayout, n0: &Node, parent_al: bool) {
     sublabel(ui, pane, "Flow");
     let dir_sel = if a.wrap {
         2
@@ -646,6 +680,9 @@ fn auto_layout_ui(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[NodeId], a
         update_al(app, sel, |al| al.item_spacing = v);
     }
     row_end(pane);
+    dimensions_ui(app, ui, pane, sel, false);
+    let _ = parent_al;
+    resizing_ui(app, ui, pane, sel, n0);
     sublabel(ui, pane, "Padding");
     let ph = a.padding[1].max(a.padding[3]);
     let pv = a.padding[0].max(a.padding[2]);
@@ -814,6 +851,7 @@ fn paint_rows(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[NodeId], paint
         let op_r = pane.rect(theme::SWATCH_ROW_X + theme::SWATCH_SIZE + 8.0 + 96.0 + 4.0, 0.0, theme::OPACITY_FIELD_W, theme::FIELD_HEIGHT);
         let eye_r = pane.rect(theme::RIGHT_NAME_ACTION_X[1] - 1.0 + 4.0, 0.0, theme::PANEL_ACTION_BUTTON, theme::PANEL_ACTION_BUTTON);
         let minus_r = pane.rect(theme::SECTION_TRAILING_X, 0.0, theme::PANEL_ACTION_BUTTON, theme::PANEL_ACTION_BUTTON);
+        widgets::record(ui, &format!("sw:{stroke}:{i}"), sw);
         let swr = ui.interact(sw, ui.id().with(("sw", key)), Sense::click());
         widgets::swatch(ui.painter(), sw, paint_preview(p));
         if swr.clicked() {

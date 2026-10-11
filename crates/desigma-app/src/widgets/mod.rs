@@ -92,11 +92,11 @@ pub fn icon_button(ui: &mut Ui, rect: Rect, id: impl crate::widgets::Key, icon: 
 
 /// Pill-shaped small tag (e.g. the "Free" plan badge).
 pub fn badge(p: &Painter, pos: Pos2, s: &str) -> Rect {
-    let font = theme::font_small_strong();
+    let font = theme::font_small_medium();
     let w = text_width(p, s, &font) + theme::BADGE_PAD_X * 2.0;
     let r = Rect::from_min_size(pos, Vec2::new(w, theme::BADGE_HEIGHT));
     p.rect_filled(r, theme::cr(theme::RADIUS_SMALL), theme::BADGE_BG);
-    p.text(r.center(), Align2::CENTER_CENTER, s, font, theme::TEXT_SECONDARY);
+    p.text(r.center(), Align2::CENTER_CENTER, s, font, theme::BADGE_TEXT);
     r
 }
 

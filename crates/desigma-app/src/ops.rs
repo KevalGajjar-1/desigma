@@ -47,6 +47,18 @@ pub fn apply_resize(doc: &mut Document, ed: &mut Edit, id: NodeId, size: Vec2, t
 /// the page-space point `center`, keeping each node's parent untouched.
 pub fn rotate_nodes_about(doc: &mut Document, ed: &mut Edit, nodes: &[(NodeId, Affine)], center: Vec2, delta: f32) {
     let rot = Affine::translate(center.x, center.y) * Affine::rotate(delta) * Affine::translate(-center.x, -center.y);
+    transform_nodes(doc, ed, nodes, rot);
+}
+
+/// Mirrors nodes across the vertical (`horizontal`) or horizontal line through `center`.
+pub fn flip_nodes_about(doc: &mut Document, ed: &mut Edit, nodes: &[(NodeId, Affine)], center: Vec2, horizontal: bool) {
+    let s = if horizontal { Affine::scale(-1.0, 1.0) } else { Affine::scale(1.0, -1.0) };
+    let m = Affine::translate(center.x, center.y) * s * Affine::translate(-center.x, -center.y);
+    transform_nodes(doc, ed, nodes, m);
+}
+
+/// Applies the page-space transform `rot` to every `(node, world transform at start)`.
+fn transform_nodes(doc: &mut Document, ed: &mut Edit, nodes: &[(NodeId, Affine)], rot: Affine) {
     // Compute everything first: relayout of a shared group parent moves its transform.
     let new: Vec<(NodeId, Affine)> = nodes
         .iter()
@@ -66,6 +78,51 @@ pub fn rotate_nodes_about(doc: &mut Document, ed: &mut Edit, nodes: &[(NodeId, A
 }
 
 impl App {
+    /// Mirrors the selection across the centre of its bounding box.
+    pub fn flip_selection(&mut self, horizontal: bool) {
+        let tops = self.top_selection();
+        let Some(bb) = union_all(tops.iter().map(|i| world_aabb(&self.doc, *i))) else { return };
+        let nodes: Vec<(NodeId, Affine)> = tops.iter().map(|i| (*i, self.doc.world_transform(*i))).collect();
+        let mut tx = Tx::new();
+        flip_nodes_about(&mut self.doc, &mut tx.ed, &nodes, rect_center(&bb), horizontal);
+        self.run_tx(tx);
+    }
+
+    /// Spaces three or more selected layers evenly along their dominant axis.
+    pub fn distribute_selection(&mut self) -> bool {
+        let tops = self.top_selection();
+        if tops.len() < 3 {
+            self.show_toast("Select three or more layers to distribute", false);
+            return false;
+        }
+        let mut items: Vec<(NodeId, Rect)> = tops.iter().map(|i| (*i, world_aabb(&self.doc, *i))).collect();
+        let bb = union_all(items.iter().map(|i| i.1)).unwrap_or_default();
+        let horizontal = bb.w >= bb.h;
+        let (start, len): (fn(&Rect) -> f32, fn(&Rect) -> f32) = if horizontal { (|r| r.x, |r| r.w) } else { (|r| r.y, |r| r.h) };
+        items.sort_by(|a, b| start(&a.1).partial_cmp(&start(&b.1)).unwrap_or(std::cmp::Ordering::Equal));
+        let total: f32 = items.iter().map(|i| len(&i.1)).sum();
+        let first = start(&items[0].1);
+        let last = start(&items[items.len() - 1].1) + len(&items[items.len() - 1].1);
+        let gap = (last - first - total) / (items.len() as f32 - 1.0);
+        let mut tx = Tx::new();
+        let mut cursor = first;
+        for (id, r) in &items {
+            let d = cursor - start(r);
+            let page_delta = if horizontal { v2(d, 0.0) } else { v2(0.0, d) };
+            let dp = delta_to_parent(&self.doc, *id, page_delta);
+            if let Some(n) = tx.ed.node(&mut self.doc, *id) {
+                n.transform.tx += dp.x;
+                n.transform.ty += dp.y;
+            }
+            cursor += len(r) + gap;
+        }
+        for (id, _) in &items {
+            layout::relayout_up(&mut self.doc, &mut tx.ed, *id);
+        }
+        self.run_tx(tx);
+        true
+    }
+
     /// Rotates the selection by `delta` radians around the centre of its bounding box.
     pub fn rotate_selection(&mut self, delta: f32) {
         let tops = self.top_selection();
@@ -942,5 +999,49 @@ mod tests {
         app.undo();
         assert_eq!(app.doc.get(ids[0]).unwrap().transform.rotation_rad(), 0.0);
         assert!(!app.hist.can_undo());
+    }
+
+    #[test]
+    fn flip_mirrors_about_selection_center() {
+        let (mut app, ids) = app_with_rects();
+        app.selection = vec![ids[0], ids[2]];
+        let bb = app.selection_bounds().unwrap();
+        let before: Vec<Rect> = ids.iter().map(|i| world_aabb(&app.doc, *i)).collect();
+        app.flip_selection(true);
+        let after: Vec<Rect> = ids.iter().map(|i| world_aabb(&app.doc, *i)).collect();
+        // x mirrored inside the union box, y untouched, size kept
+        assert!((after[0].x - (bb.x + bb.w - (before[0].x - bb.x) - before[0].w)).abs() < 1e-3);
+        assert!((after[2].x - (bb.x + bb.w - (before[2].x - bb.x) - before[2].w)).abs() < 1e-3);
+        assert_eq!((after[0].y, after[0].w), (before[0].y, before[0].w));
+        assert_eq!(after[1], before[1], "unselected node untouched");
+        app.flip_selection(true);
+        let again = world_aabb(&app.doc, ids[0]);
+        assert!((again.x - before[0].x).abs() < 1e-3, "flipping twice restores");
+        app.undo();
+        app.undo();
+        assert_eq!(world_aabb(&app.doc, ids[0]), before[0]);
+        app.flip_selection(false);
+        let v = world_aabb(&app.doc, ids[0]);
+        assert!((v.y - (bb.y + bb.h - (before[0].y - bb.y) - before[0].h)).abs() < 1e-3);
+    }
+
+    #[test]
+    fn distribute_evens_out_gaps() {
+        let mut d = Document::new("t");
+        let page = d.add_page("p");
+        let mut ids = vec![];
+        for x in [0.0, 60.0, 300.0] {
+            let id = d.alloc_id();
+            ids.push(d.insert(page, Node::rectangle(id, Rect::new(x, 0.0, 50.0, 50.0))).unwrap());
+        }
+        let mut app = App::new(d);
+        app.selection = ids.clone();
+        assert!(app.distribute_selection());
+        let xs: Vec<f32> = ids.iter().map(|i| world_aabb(&app.doc, *i).x).collect();
+        assert_eq!(xs, vec![0.0, 150.0, 300.0]);
+        app.undo();
+        assert_eq!(world_aabb(&app.doc, ids[1]).x, 60.0);
+        app.selection = ids[..2].to_vec();
+        assert!(!app.distribute_selection(), "needs three layers");
     }
 }

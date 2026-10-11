@@ -54,9 +54,11 @@ pub const SHADOW_COLOR: Color32 = rgba(0x000000, 0x59);
 pub const SHADOW_COLOR_STRONG: Color32 = rgba(0x000000, 0x80);
 pub const INNER_HIGHLIGHT: Color32 = rgba(0xFFFFFF, 0x14);
 pub const LOGO_GRADIENT_A: Color32 = rgb(0x0C8CE9);
-pub const AVATAR_BG: Color32 = rgb(0xE6A23C);
-pub const AVATAR_FG: Color32 = rgb(0x1E1E1E);
-pub const BADGE_BG: Color32 = rgb(0x383838);
+pub const AVATAR_BG: Color32 = rgb(0xE13814);
+pub const AVATAR_FG: Color32 = rgb(0xFFFFFF);
+/// Measured on the Figma capture: bg_selected at roughly 70% over the panel.
+pub const BADGE_BG: Color32 = rgb(0x31374F);
+pub const BADGE_TEXT: Color32 = TEXT_BRAND;
 pub const CHECKER_A: Color32 = rgb(0xFFFFFF);
 pub const CHECKER_B: Color32 = rgb(0xCCCCCC);
 
@@ -78,17 +80,23 @@ pub const LIGHT_BG_THRESHOLD: f32 = 0.5;
 pub const FONT_SIZE_SMALL: f32 = 9.0;
 pub const FONT_SIZE_BODY: f32 = 11.0;
 pub const FONT_SIZE_LARGE: f32 = 13.0;
+pub const CHEVRON_SMALL: f32 = 10.0;
 pub const FONT_SIZE_LABEL_CANVAS: f32 = 11.0;
 pub const FAMILY_STRONG: &str = "desigma-strong";
 pub const UI_FONT_FAMILY: &str = "Inter";
 /// Variable-font instances of the bundled Inter (ui-spec font.weight_default / weight_strong).
 pub const UI_FONT_WEIGHT: f32 = 450.0;
 pub const UI_FONT_WEIGHT_STRONG: f32 = 550.0;
+pub const UI_FONT_WEIGHT_MEDIUM: f32 = 500.0;
+pub const FAMILY_MEDIUM: &str = "desigma-medium";
 /// Inter's optical-size axis at text sizes.
 pub const UI_FONT_OPSZ: f32 = 14.0;
 
 pub fn font_small() -> FontId {
     FontId::new(FONT_SIZE_SMALL, FontFamily::Proportional)
+}
+pub fn font_small_medium() -> FontId {
+    FontId::new(FONT_SIZE_SMALL, FontFamily::Name(FAMILY_MEDIUM.into()))
 }
 pub fn font_small_strong() -> FontId {
     FontId::new(FONT_SIZE_SMALL, FontFamily::Name(FAMILY_STRONG.into()))
@@ -134,12 +142,21 @@ pub const RAIL_ITEM_SIZE: f32 = 56.0;
 pub const RAIL_FIRST_Y: f32 = 56.0;
 pub const RAIL_GROUP_GAP: f32 = 16.0;
 pub const RAIL_ICON_SIZE: f32 = 20.0;
-pub const RAIL_LABEL_GAP: f32 = 4.0;
+/// 1px separators under the logo and before the last group (y relative to the rail top / item cell).
+pub const RAIL_SEPARATOR_Y: f32 = 48.0;
+pub const RAIL_SEPARATOR_INSET: f32 = 20.0;
+pub const RAIL_TILE: f32 = 32.0;
+pub const RAIL_ICON_CENTER_Y: f32 = 20.0;
+pub const RAIL_LABEL_CENTER_Y: f32 = 44.0;
 
 pub const LEFT_PANEL_WIDTH: f32 = 240.0;
 pub const LEFT_HEADER_HEIGHT: f32 = 65.0;
-pub const LEFT_FILE_NAME_Y: f32 = 14.0;
-pub const LEFT_SUBLABEL_Y: f32 = 36.0;
+pub const LEFT_FILE_NAME_Y: f32 = 16.0;
+pub const LEFT_SUBLABEL_Y: f32 = 40.0;
+pub const LEFT_ACTION_Y: f32 = 12.0;
+pub const LEFT_SIDEBAR_BTN_RIGHT_PAD: f32 = 12.0;
+pub const PAGES_SEARCH_DX: f32 = 28.0;
+pub const BADGE_GAP: f32 = 8.0;
 pub const PANEL_TITLE_ROW_HEIGHT: f32 = 40.0;
 pub const PANEL_ACTION_BUTTON: f32 = 24.0;
 pub const PANEL_ACTION_RIGHT_PAD: f32 = 8.0;
@@ -166,7 +183,12 @@ pub const RIGHT_AVATAR_X: f32 = 9.0;
 pub const RIGHT_AVATAR_Y: f32 = 12.0;
 pub const RIGHT_AVATAR_W: f32 = 50.0;
 pub const RIGHT_AVATAR_H: f32 = 24.0;
+pub const RIGHT_AVATAR_CIRCLE: f32 = 24.0;
 pub const RIGHT_PRESENT_FROM_RIGHT: f32 = 116.0;
+/// Outlined play triangle of the present button.
+pub const PRESENT_ICON_W: f32 = 15.0;
+pub const PRESENT_ICON_H: f32 = 16.0;
+pub const PRESENT_ICON_STROKE: f32 = 1.2;
 pub const RIGHT_BTN_Y: f32 = 8.0;
 pub const RIGHT_BTN_SIZE: f32 = 32.0;
 pub const RIGHT_PRESENT_CHEVRON_W: f32 = 16.0;
@@ -190,7 +212,10 @@ pub const SECTION_TRAILING_X: f32 = 209.0;
 pub const FIELD_HEIGHT: f32 = 24.0;
 pub const FIELD_WIDTH_HALF: f32 = 88.0;
 pub const FIELD_COL_X: [f32; 2] = [17.0, 113.0];
-pub const FIELD_PREFIX_W: f32 = 23.0;
+pub const FIELD_PREFIX_W: f32 = 24.0;
+/// Prefix labels (X, Y, W, ...) start this far inside the field.
+pub const FIELD_PREFIX_X: f32 = 8.0;
+pub const DISTRIBUTE_BTN_X: f32 = 209.0;
 pub const SUBLABEL_HEIGHT: f32 = 16.0;
 pub const SEGMENT_W: f32 = 29.0;
 pub const SEGMENT_GROUP_GAP: f32 = 8.0;
@@ -208,10 +233,19 @@ pub const TOOLBELT_BOTTOM_MARGIN: f32 = 12.0;
 pub const TOOLBELT_PADDING: f32 = 8.0;
 pub const TOOL_BUTTON: f32 = 32.0;
 pub const TOOL_CHEVRON_W: f32 = 16.0;
-pub const TOOL_CHEVRON_GAP: f32 = 1.0;
+pub const TOOL_CHEVRON_GAP: f32 = 0.0;
+/// The chevron glyph sits this far right of its button's right edge.
+pub const TOOL_CHEVRON_CENTER_DX: f32 = 11.0;
 pub const TOOL_GROUP_GAP: f32 = 8.0;
 pub const TOOL_ICON_SIZE: f32 = 20.0;
-pub const MODE_SWITCH_W: f32 = 28.0;
+/// Mode switcher: 4 segments (draw, design, prototype, dev) in a padded rounded group.
+pub const MODE_SEGMENTS: usize = 4;
+pub const MODE_SWITCH_PAD: f32 = 2.0;
+pub const MODE_SWITCH_W: f32 = 29.5;
+pub const MODE_TILE_RADIUS: u8 = 3;
+/// 1px divider before the switcher: distance after the last tool, and before the switcher.
+pub const TOOLBAR_DIVIDER_GAP_BEFORE: f32 = 13.0;
+pub const TOOLBAR_DIVIDER_GAP_AFTER: f32 = 8.0;
 
 pub const MENU_WIDTH: f32 = 200.0;
 pub const MENU_ITEM_HEIGHT: f32 = 24.0;
@@ -329,10 +363,14 @@ pub fn install_fonts(ctx: &egui::Context) {
     };
     fonts.font_data.insert("ui-regular".into(), instance(UI_FONT_WEIGHT));
     fonts.font_data.insert("ui-strong".into(), instance(UI_FONT_WEIGHT_STRONG));
+    fonts.font_data.insert("ui-medium".into(), instance(UI_FONT_WEIGHT_MEDIUM));
     fonts.families.entry(FontFamily::Proportional).or_default().insert(0, "ui-regular".into());
     let mut strong_family = vec!["ui-strong".to_string()];
     strong_family.extend(fonts.families.get(&FontFamily::Proportional).cloned().unwrap_or_default());
     fonts.families.insert(FontFamily::Name(FAMILY_STRONG.into()), strong_family);
+    let mut medium_family = vec!["ui-medium".to_string()];
+    medium_family.extend(fonts.families.get(&FontFamily::Proportional).cloned().unwrap_or_default());
+    fonts.families.insert(FontFamily::Name(FAMILY_MEDIUM.into()), medium_family);
     ctx.set_fonts(fonts);
 }
 

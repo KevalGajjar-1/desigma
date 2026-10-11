@@ -312,7 +312,8 @@ fn page_add_and_switch() {
 fn inspector_x_field_edits_position() {
     let mut s = Sim::with(Options { select: Some("Card".into()), ..Default::default() });
     let id = s.by_name("Card");
-    s.click(Pos2::new(1410.0, 247.0));
+    let r = s.field_rect("x");
+    s.click(Pos2::new(r.left() + 40.0, r.center().y));
     s.type_text("700");
     s.key(Key::Enter);
     assert_eq!(s.app().doc.get(id).unwrap().transform.tx, 700.0);
@@ -372,7 +373,8 @@ fn dropped_into_frame_on_move() {
 #[test]
 fn color_swatch_opens_picker_without_panic() {
     let mut s = Sim::with(Options { select: Some("Card".into()), ..Default::default() });
-    s.click(Pos2::new(1384.0, 733.0));
+    let sw = s.rect_of("sw:false:0");
+    s.click(sw.center());
     assert!(s.app().props.picker.is_some());
     s.frame(vec![]);
     s.key(Key::Escape);
