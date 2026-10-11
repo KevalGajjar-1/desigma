@@ -118,7 +118,8 @@ pub fn import_variables_value(doc: &mut Document, v: &Value) -> usize {
                 kind,
                 values,
                 description: fstr(v, "description").unwrap_or("").to_string(),
-                scopes: farr(v, "scopes").iter().filter_map(|s| s.as_str().map(String::from)).collect(),
+                // an empty list means "all", which Figma spells ALL_SCOPES
+                scopes: farr(v, "scopes").iter().filter_map(|s| s.as_str().filter(|s| *s != "ALL_SCOPES").map(String::from)).collect(),
                 hidden_from_publishing: fbool(v, "hiddenFromPublishing").unwrap_or(false),
                 key: fstr(v, "key").map(String::from),
             },
