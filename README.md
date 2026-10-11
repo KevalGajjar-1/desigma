@@ -187,7 +187,7 @@ desigma-diff compare reference.png actual.png --out diff.png   # pixel-compare t
 
 ## License
 
-Licensed under either of MIT or Apache-2.0, at your option.
+Licensed under either of [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your option. Unless you state otherwise, any contribution you submit for inclusion is dual-licensed the same way, without additional terms.
 
 Bundled Inter is © The Inter Project Authors, licensed under the SIL Open Font License 1.1 (see `crates/desigma-fonts/assets/inter/OFL.txt`).
 
