@@ -969,6 +969,9 @@ fn effect_name(e: &Effect) -> (&'static str, bool) {
         Effect::InnerShadow { visible, .. } => ("Inner shadow", *visible),
         Effect::LayerBlur { visible, .. } => ("Layer blur", *visible),
         Effect::BackgroundBlur { visible, .. } => ("Background blur", *visible),
+        Effect::Noise(n) => ("Noise", n.visible),
+        Effect::Texture(t) => ("Texture", t.visible),
+        Effect::Glass(g) => ("Glass", g.visible),
     }
 }
 
@@ -1052,6 +1055,8 @@ fn effect_rows(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[NodeId], effe
                 }
                 pane.y += theme::FIELD_HEIGHT + 8.0;
             }
+            // Editors for these arrive with the Figma-style effects menu.
+            Effect::Noise(_) | Effect::Texture(_) | Effect::Glass(_) => {}
         }
     }
 }
@@ -1071,6 +1076,9 @@ fn set_effect_visible(e: &mut Effect, v: bool) {
         | Effect::InnerShadow { visible, .. }
         | Effect::LayerBlur { visible, .. }
         | Effect::BackgroundBlur { visible, .. } => *visible = v,
+        Effect::Noise(n) => n.visible = v,
+        Effect::Texture(t) => t.visible = v,
+        Effect::Glass(g) => g.visible = v,
     }
 }
 
@@ -1082,6 +1090,7 @@ fn convert_effect(e: &Effect, kind: usize) -> Effect {
         Effect::LayerBlur { radius, visible } | Effect::BackgroundBlur { radius, visible } => {
             (Color::rgba(0, 0, 0, 64), DVec2::new(0.0, 4.0), *radius, 0.0, *visible)
         }
+        other => (Color::rgba(0, 0, 0, 64), DVec2::new(0.0, 4.0), 4.0, 0.0, other.visible()),
     };
     match kind {
         0 => Effect::DropShadow { color, offset, radius, spread, visible, show_behind: false },
