@@ -219,7 +219,7 @@ fn row_menu_deletes_a_variable_and_its_bindings_in_one_step() {
     // Rename, Duplicate, Delete
     s.click(Pos2::new(p.x + 20.0, p.y + theme::MENU_PADDING + 2.0 * theme::MENU_ITEM_HEIGHT + 12.0));
     assert!(!s.app().doc.variables.contains_key(&ink));
-    assert!(s.app().doc.get(title).unwrap().variables.bindings.get("fills/0").is_none());
+    assert!(!s.app().doc.get(title).unwrap().variables.bindings.contains_key("fills/0"));
     s.shell.app.undo();
     assert!(s.app().doc.variables.contains_key(&ink));
     assert_eq!(s.app().doc.get(title).unwrap().variables.bindings["fills/0"], ink);

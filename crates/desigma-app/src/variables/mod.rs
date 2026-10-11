@@ -297,7 +297,7 @@ mod tests {
         app.bind_variable(&[rect], &["fills/0"], &brand);
         let mut store = VariableStore::from_doc(&app.doc);
         store.delete_variable(&brand);
-        assert!(app.commit_store(store, &[brand.clone()], &[]));
+        assert!(app.commit_store(store, std::slice::from_ref(&brand), &[]));
         assert!(app.doc.get(rect).unwrap().variables.bindings.is_empty());
         app.undo();
         assert_eq!(app.doc.get(rect).unwrap().variables.bindings["fills/0"], brand);
