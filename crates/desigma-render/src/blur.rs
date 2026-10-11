@@ -113,10 +113,10 @@ struct Span {
 fn nonzero_bbox(data: &[u8], w: usize, h: usize) -> Option<Span> {
     let (mut x0, mut x1) = (usize::MAX, 0usize);
     let (mut y0, mut y1) = (usize::MAX, 0usize);
-    let solid = |c: &[u8]| u32::from_ne_bytes([c[0], c[1], c[2], c[3]]) != 0;
+    let solid = |c: &[u8; 4]| u32::from_ne_bytes(*c) != 0;
     for (y, row) in data.chunks_exact(w * 4).take(h).enumerate() {
-        let Some(first) = row.chunks_exact(4).position(solid) else { continue };
-        let last = row.chunks_exact(4).rposition(solid).unwrap_or(first);
+        let Some(first) = row.as_chunks::<4>().0.iter().position(solid) else { continue };
+        let last = row.as_chunks::<4>().0.iter().rposition(solid).unwrap_or(first);
         x0 = x0.min(first);
         x1 = x1.max(last + 1);
         y0 = y0.min(y);
@@ -266,7 +266,7 @@ fn store_px(d: &mut [u8], v: &Px) {
 
 /// Keeps the premultiplied invariant (rounding can push colour above alpha).
 fn fix_premul(data: &mut [u8]) {
-    for px in data.chunks_exact_mut(4) {
+    for px in data.as_chunks_mut::<4>().0.iter_mut() {
         let a = px[3];
         for c in px.iter_mut().take(3) {
             if *c > a {
@@ -331,7 +331,7 @@ fn blur_full(pm: &mut Pixmap, w: usize, h: usize, bb: Span, sigma: f32) {
     let data = pm.data_mut();
     for y in 0..ah {
         let src = &data[((a.y0 + y) * w + a.x0) * 4..((a.y0 + y) * w + a.x1) * 4];
-        for (d, s) in buf[y * aw..(y + 1) * aw].iter_mut().zip(src.chunks_exact(4)) {
+        for (d, s) in buf[y * aw..(y + 1) * aw].iter_mut().zip(src.as_chunks::<4>().0.iter()) {
             *d = [s[0] as f32, s[1] as f32, s[2] as f32, s[3] as f32];
         }
     }
@@ -339,7 +339,7 @@ fn blur_full(pm: &mut Pixmap, w: usize, h: usize, bb: Span, sigma: f32) {
     blur_core(&mut buf, aw, ah, &radii, nz);
     for y in 0..ah {
         let dst = &mut data[((a.y0 + y) * w + a.x0) * 4..((a.y0 + y) * w + a.x1) * 4];
-        for (d, s) in dst.chunks_exact_mut(4).zip(&buf[y * aw..(y + 1) * aw]) {
+        for (d, s) in dst.as_chunks_mut::<4>().0.iter_mut().zip(&buf[y * aw..(y + 1) * aw]) {
             store_px(d, s);
         }
     }
@@ -386,7 +386,7 @@ fn blur_down(pm: &mut Pixmap, w: usize, h: usize, bb: Span, sigma: f32, k: usize
                 if gx1 <= gx0 {
                     continue;
                 }
-                for px in row[gx0 * 4..gx1 * 4].chunks_exact(4) {
+                for px in row[gx0 * 4..gx1 * 4].as_chunks::<4>().0.iter() {
                     for c in 0..4 {
                         o[c] += px[c] as f32;
                     }
@@ -448,7 +448,7 @@ fn blur_down(pm: &mut Pixmap, w: usize, h: usize, bb: Span, sigma: f32, k: usize
             }
         }
         let dst = &mut data[(y * w + fx0) * 4..(y * w + fx1) * 4];
-        for (d, &(i0, i1, tx)) in dst.chunks_exact_mut(4).zip(&taps) {
+        for (d, &(i0, i1, tx)) in dst.as_chunks_mut::<4>().0.iter_mut().zip(&taps) {
             let (p, q) = (&row_buf[i0], &row_buf[i1]);
             let v = [p[0] + (q[0] - p[0]) * tx, p[1] + (q[1] - p[1]) * tx, p[2] + (q[2] - p[2]) * tx, p[3] + (q[3] - p[3]) * tx];
             store_px(d, &v);
@@ -578,7 +578,7 @@ mod tests {
         pm.data_mut()[i + 3] = 255;
         pm.data_mut()[i] = 255;
         gaussian_blur(&mut pm, 3.0);
-        let total: f32 = pm.data().chunks_exact(4).map(|p| p[3] as f32).sum();
+        let total: f32 = pm.data().as_chunks::<4>().0.iter().map(|p| p[3] as f32).sum();
         assert!((total - 255.0).abs() < 25.0, "total {total}");
         let center = pm.data()[i + 3];
         assert!(center > 0 && center < 60, "center {center}");

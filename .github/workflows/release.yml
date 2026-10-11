@@ -8,6 +8,7 @@ on:
   workflow_dispatch:
 
 env:
+  RUST_VERSION: "1.93.1"
   CARGO_TERM_COLOR: always
 
 permissions:
@@ -42,8 +43,9 @@ jobs:
             libxcursor-dev libxrandr-dev libxi-dev libgl1-mesa-dev \
             libfontconfig1-dev
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: ${{ env.RUST_VERSION }}
           targets: ${{ matrix.target }}
 
       - uses: Swatinem/rust-cache@v2

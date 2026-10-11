@@ -163,7 +163,7 @@ fn build_patch(key: &Key, k: i32) -> Patch {
         pm.fill_path(&path, &p, sk::FillRule::Winding, ts, None);
     }
     gaussian_blur_at(&mut pm, sigma, (0, 0), Edges::Margined);
-    Patch { w: w as usize, h: h as usize, alpha: pm.data().chunks_exact(4).map(|p| p[3]).collect() }
+    Patch { w: w as usize, h: h as usize, alpha: pm.data().as_chunks::<4>().0.iter().map(|p| p[3]).collect() }
 }
 
 fn patch_for(key: Key, k: i32) -> Arc<Patch> {
@@ -266,7 +266,7 @@ pub fn drop_shadow_rrect(
         }
         let prow = &patch.alpha[py * patch.w..(py + 1) * patch.w];
         let out = &mut data[ry_i * rw * 4..(ry_i + 1) * rw * 4];
-        for (o, &xm) in out.chunks_exact_mut(4).zip(&xmap) {
+        for (o, &xm) in out.as_chunks_mut::<4>().0.iter_mut().zip(&xmap) {
             if xm >= 0 {
                 let m = prow[xm as usize];
                 if m != 0 {

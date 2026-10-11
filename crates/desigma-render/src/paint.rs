@@ -62,7 +62,7 @@ pub fn custom_blend(b: d::BlendMode) -> Option<CustomBlend> {
 /// `co = cs(1-ab) + cb(1-as) + as*ab*B(Cb, Cs)` with a custom blend function B.
 pub fn blend_layer(target: &mut sk::Pixmap, layer: &sk::Pixmap, opacity: f32, mode: CustomBlend) {
     let opacity = opacity.clamp(0.0, 1.0);
-    for (dst, src) in target.data_mut().chunks_exact_mut(4).zip(layer.data().chunks_exact(4)) {
+    for (dst, src) in target.data_mut().as_chunks_mut::<4>().0.iter_mut().zip(layer.data().as_chunks::<4>().0.iter()) {
         if src[3] == 0 {
             continue;
         }
@@ -123,7 +123,7 @@ fn hash_bytes(key: &str, data: &[u8]) -> u64 {
 
 fn premultiplied_pixmap(img: &image::RgbaImage) -> Option<sk::Pixmap> {
     let mut pm = sk::Pixmap::new(img.width(), img.height())?;
-    for (dst, src) in pm.data_mut().chunks_exact_mut(4).zip(img.as_raw().chunks_exact(4)) {
+    for (dst, src) in pm.data_mut().as_chunks_mut::<4>().0.iter_mut().zip(img.as_raw().as_chunks::<4>().0.iter()) {
         let a = src[3] as u32;
         dst[0] = ((src[0] as u32 * a + 127) / 255) as u8;
         dst[1] = ((src[1] as u32 * a + 127) / 255) as u8;

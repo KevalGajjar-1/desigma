@@ -90,8 +90,10 @@ fn delta(a: &sk::Pixmap, b: &sk::Pixmap, c: &Case) -> u8 {
         }
     }
     a.data()
-        .chunks_exact(4)
-        .zip(b.data().chunks_exact(4))
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(b.data().as_chunks::<4>().0.iter())
         .enumerate()
         .filter(|(i, _)| !skip[*i])
         .map(|(_, (p, q))| p.iter().zip(q).map(|(x, y)| x.abs_diff(*y)).max().unwrap_or(0))
