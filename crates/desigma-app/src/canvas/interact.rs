@@ -987,7 +987,7 @@ mod tests {
 
     #[test]
     fn text_metrics_follow_font_size() {
-        let mut t = desigma_doc::TextProps { content: String::new(), style: Default::default(), runs: vec![], auto_resize: Default::default() };
+        let mut t = desigma_doc::TextProps { content: String::new(), style: Default::default(), runs: vec![], auto_resize: Default::default(), max_lines: None };
         t.style.font_size = 20.0;
         let (cw, lh) = text_metrics(&t);
         assert!(cw > 10.0 && lh > 20.0);

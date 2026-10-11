@@ -33,6 +33,15 @@ pub struct Node {
     pub is_mask: bool,
     /// Style id per property ("fill", "stroke", "text", "effect", "grid").
     pub style_refs: BTreeMap<String, String>,
+    /// Precomputed fill outline in local space (Figma `fillGeometry`). When
+    /// present, renderers may use it instead of deriving geometry, e.g. for
+    /// boolean operations whose result was computed by Figma.
+    #[serde(default)]
+    pub fill_geometry: Option<Vec<Path>>,
+    /// Precomputed stroke outline in local space (Figma `strokeGeometry`),
+    /// already expanded by weight/align; filled with the stroke paints.
+    #[serde(default)]
+    pub stroke_geometry: Option<Vec<Path>>,
 }
 
 impl Node {
@@ -59,6 +68,8 @@ impl Node {
             layout_child: LayoutChild::default(),
             is_mask: false,
             style_refs: BTreeMap::new(),
+            fill_geometry: None,
+            stroke_geometry: None,
         }
     }
 
@@ -87,7 +98,13 @@ impl Node {
     pub fn text(id: NodeId, r: Rect, content: impl Into<String>, style: TextStyle) -> Self {
         Self::placed(
             id,
-            NodeKind::Text(TextProps { content: content.into(), style, runs: Vec::new(), auto_resize: TextAutoResize::WidthAndHeight }),
+            NodeKind::Text(TextProps {
+                content: content.into(),
+                style,
+                runs: Vec::new(),
+                auto_resize: TextAutoResize::WidthAndHeight,
+                max_lines: None,
+            }),
             r,
         )
     }
@@ -204,6 +221,10 @@ pub struct TextProps {
     /// Style overrides over byte ranges of `content`; empty means uniform.
     pub runs: Vec<TextRun>,
     pub auto_resize: TextAutoResize,
+    /// Maximum visible lines when `auto_resize` is `Truncate`; overflow ends in "…".
+    /// `None` truncates at the box height.
+    #[serde(default)]
+    pub max_lines: Option<u32>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]

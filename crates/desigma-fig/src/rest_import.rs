@@ -43,10 +43,12 @@ pub(crate) fn blend(s: &str) -> BlendMode {
         "DARKEN" => BlendMode::Darken,
         "MULTIPLY" => BlendMode::Multiply,
         // No linear burn/dodge in the document model; closest relatives.
-        "LINEAR_BURN" | "COLOR_BURN" => BlendMode::ColorBurn,
+        "LINEAR_BURN" => BlendMode::LinearBurn,
+        "COLOR_BURN" => BlendMode::ColorBurn,
         "LIGHTEN" => BlendMode::Lighten,
         "SCREEN" => BlendMode::Screen,
-        "LINEAR_DODGE" | "COLOR_DODGE" => BlendMode::ColorDodge,
+        "LINEAR_DODGE" => BlendMode::LinearDodge,
+        "COLOR_DODGE" => BlendMode::ColorDodge,
         "OVERLAY" => BlendMode::Overlay,
         "SOFT_LIGHT" => BlendMode::SoftLight,
         "HARD_LIGHT" => BlendMode::HardLight,
@@ -712,7 +714,7 @@ fn text_props(v: &Value) -> TextProps {
             i = j;
         }
     }
-    TextProps { content, style, runs, auto_resize: auto }
+    TextProps { content, style, runs, auto_resize: auto, max_lines: None }
 }
 
 fn layout_child(v: &Value, parent: Option<LayoutDirection>, kind: &NodeKind) -> LayoutChild {

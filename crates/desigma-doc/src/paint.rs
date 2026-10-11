@@ -52,9 +52,11 @@ pub enum BlendMode {
     Darken,
     Multiply,
     ColorBurn,
+    LinearBurn,
     Lighten,
     Screen,
     ColorDodge,
+    LinearDodge,
     Overlay,
     SoftLight,
     HardLight,
@@ -199,8 +201,10 @@ pub enum TextDecoration {
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub enum LineHeight {
+    /// The font's natural line height (ascent + descent + line gap).
     Auto,
     Pixels(f32),
+    /// Percent of the font size: `Percent(120.0)` = 1.2 × font_size.
     Percent(f32),
 }
 
@@ -219,6 +223,7 @@ pub struct TextStyle {
     pub align_v: TextAlignV,
     pub case: TextCase,
     pub decoration: TextDecoration,
+    /// Text colour lives here; `Node::fills` is unused for text nodes.
     pub fills: Vec<Paint>,
 }
 

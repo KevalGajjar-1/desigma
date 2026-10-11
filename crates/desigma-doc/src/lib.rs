@@ -40,6 +40,9 @@ pub struct Document {
     /// Page node ids in display order. Each page is a node with [`NodeKind::Page`].
     pub pages: Vec<NodeId>,
     pub styles: BTreeMap<String, Style>,
+    /// Display metadata for entries of `styles`, same keys.
+    #[serde(default)]
+    pub style_meta: BTreeMap<String, StyleMeta>,
     /// Embedded images keyed by content hash (Figma `imageRef`).
     pub images: BTreeMap<String, Vec<u8>>,
     next_id: u64,
@@ -53,6 +56,17 @@ impl Document {
     pub fn alloc_id(&mut self) -> NodeId {
         self.next_id += 1;
         NodeId(self.next_id)
+    }
+
+    /// Ensures future [`Self::alloc_id`] calls return ids above `id`, so
+    /// callers can assign deterministic ids themselves.
+    pub fn reserve_ids(&mut self, id: NodeId) {
+        self.next_id = self.next_id.max(id.0);
+    }
+
+    /// Display name of a shared style: its metadata name, else the key.
+    pub fn style_name<'a>(&'a self, key: &'a str) -> &'a str {
+        self.style_meta.get(key).map(|m| m.name.as_str()).filter(|n| !n.is_empty()).unwrap_or(key)
     }
 
     pub fn add_page(&mut self, name: impl Into<String>) -> NodeId {
@@ -176,6 +190,28 @@ impl Document {
     pub fn from_json(s: &str) -> serde_json::Result<Self> {
         serde_json::from_str(s)
     }
+}
+
+/// Which node property a shared style applies to.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum StyleProperty {
+    #[default]
+    Fill,
+    Stroke,
+    Text,
+    Effect,
+    Grid,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct StyleMeta {
+    /// Name as shown in the UI, may contain "/" for grouping ("Brand/Primary").
+    pub name: String,
+    /// Library key (Figma style `key`), for linking to published libraries.
+    pub key: Option<String>,
+    pub description: String,
+    /// Property the style is used for (a `Style::Fill` can be a stroke style).
+    pub property: StyleProperty,
 }
 
 /// Shared (library) style referenced by nodes via `style_refs`.

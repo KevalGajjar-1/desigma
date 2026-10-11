@@ -11,6 +11,9 @@ pub enum Command {
     Reparent { id: NodeId, parent: NodeId, index: usize },
     /// Replace a node's own properties (children/parent are preserved).
     Update { node: Box<Node> },
+    /// Insert a page subtree (page node first) at `index` in `Document::pages`.
+    InsertPage { index: usize, nodes: Vec<Node> },
+    RemovePage { id: NodeId },
     Batch(Vec<Command>),
 }
 
@@ -54,6 +57,28 @@ impl Command {
                 node.children = std::mem::take(&mut cur.children);
                 let old = std::mem::replace(cur, *node);
                 Command::Update { node: Box::new(Node { children: Vec::new(), ..old }) }
+            }
+            Command::InsertPage { index, nodes } => {
+                let root = nodes.first().ok_or(DocError::NotFound(NodeId(0)))?;
+                if !matches!(root.kind, NodeKind::Page { .. }) {
+                    return Err(DocError::NotAContainer(root.id));
+                }
+                let root = root.id;
+                for mut n in nodes {
+                    if n.id == root {
+                        n.parent = None;
+                    }
+                    doc.nodes.insert(n.id, n);
+                }
+                let index = index.min(doc.pages.len());
+                doc.pages.insert(index, root);
+                doc.bump_ids();
+                Command::RemovePage { id: root }
+            }
+            Command::RemovePage { id } => {
+                let index = doc.pages.iter().position(|p| *p == id).ok_or(DocError::NotFound(id))?;
+                let nodes = doc.remove(id)?;
+                Command::InsertPage { index, nodes }
             }
             Command::Batch(cmds) => {
                 let mut inv = Vec::with_capacity(cmds.len());
@@ -132,5 +157,28 @@ mod tests {
         assert_eq!(d.get(page).unwrap().children, vec![id]);
         h.redo(&mut d).unwrap();
         assert!(d.get(id).is_none());
+    }
+
+    #[test]
+    fn undo_redo_pages() {
+        let mut d = Document::new("t");
+        let p1 = d.add_page("P1");
+        let pid = d.alloc_id();
+        let mut page = Node::new(pid, NodeKind::Page { background: Color::WHITE });
+        page.name = "P2".into();
+        let mut h = History::default();
+        h.exec(&mut d, Command::InsertPage { index: 0, nodes: vec![page] }).unwrap();
+        assert_eq!(d.pages, vec![pid, p1]);
+        let rid = d.alloc_id();
+        d.insert(pid, Node::rectangle(rid, Rect::new(0.0, 0.0, 1.0, 1.0))).unwrap();
+
+        h.exec(&mut d, Command::RemovePage { id: pid }).unwrap();
+        assert_eq!(d.pages, vec![p1]);
+        assert!(d.get(rid).is_none());
+        h.undo(&mut d).unwrap();
+        assert_eq!(d.pages, vec![pid, p1]);
+        assert_eq!(d.get(pid).unwrap().children, vec![rid]);
+        h.undo(&mut d).unwrap();
+        assert_eq!(d.pages, vec![p1]);
     }
 }

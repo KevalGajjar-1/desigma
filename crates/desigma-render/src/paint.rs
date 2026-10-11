@@ -21,9 +21,12 @@ pub fn blend_mode(b: d::BlendMode) -> sk::BlendMode {
         B::Darken => sk::BlendMode::Darken,
         B::Multiply => sk::BlendMode::Multiply,
         B::ColorBurn => sk::BlendMode::ColorBurn,
+        // tiny-skia has no linear burn (a + b - 1); approximated until a custom pass exists.
+        B::LinearBurn => sk::BlendMode::ColorBurn,
         B::Lighten => sk::BlendMode::Lighten,
         B::Screen => sk::BlendMode::Screen,
         B::ColorDodge => sk::BlendMode::ColorDodge,
+        B::LinearDodge => sk::BlendMode::Plus,
         B::Overlay => sk::BlendMode::Overlay,
         B::SoftLight => sk::BlendMode::SoftLight,
         B::HardLight => sk::BlendMode::HardLight,
