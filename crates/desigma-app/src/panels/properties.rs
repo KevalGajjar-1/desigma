@@ -592,7 +592,12 @@ fn selection_ui(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[NodeId]) {
     pane.y += 4.0;
 
     // ---- Fill
-    if !is_line {
+    if matches!(n0.kind, NodeKind::Text(_)) {
+        // Text colour lives in the text style, not in `Node::fills`.
+        section_sep(ui, pane, false);
+        title(ui, pane, "Fill", None, false);
+        super::typography::fill_section(app, ui, pane, sel);
+    } else if !is_line {
         section_sep(ui, pane, false);
         if title(ui, pane, "Fill", Some(Icon::Plus), n0.fills.is_empty()) {
             let paint = Paint::solid(Color::from_hex(&format!("{:06X}", theme::DEFAULT_SHAPE_FILL)).unwrap_or(Color::WHITE));
