@@ -71,9 +71,6 @@ jobs:
   fmt:
     name: Rustfmt
     runs-on: ubuntu-latest
-    # Advisory: the tree predates rustfmt.toml and a full reformat would touch
-    # most files. Flip to blocking after a one-off `cargo fmt --all` commit.
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
 

@@ -1,0 +1,3 @@
+# Bulk reformat commits, hidden from `git blame` (GitHub honours this file).
+# One-off cargo fmt --all
+94a2eae7a3700063dd4d1a38843cd9fc02fe54aa
