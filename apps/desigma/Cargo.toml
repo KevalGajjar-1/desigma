@@ -1,0 +1,18 @@
+[package]
+name = "desigma"
+description = "Desigma: a free, offline design tool"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+desigma-core.workspace = true
+desigma-render.workspace = true
+eframe.workspace = true
+egui.workspace = true
+egui-wgpu.workspace = true
+wgpu.workspace = true
+vello.workspace = true
+rfd.workspace = true
+log.workspace = true
+env_logger.workspace = true

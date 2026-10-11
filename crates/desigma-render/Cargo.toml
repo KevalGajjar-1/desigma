@@ -1,0 +1,11 @@
+[package]
+name = "desigma-render"
+description = "GPU vector renderer for Desigma documents (vello)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+desigma-core.workspace = true
+vello.workspace = true
+skrifa = "0.44"
