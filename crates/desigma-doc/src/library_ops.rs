@@ -1160,6 +1160,110 @@ pub fn set_published(doc: &Document, info: PublishInfo) -> Command {
     Command::SetLibraryState { state: st, library_page: doc.library_page }
 }
 
+/// Importer hook: makes instances of a component that lives in another (here
+/// unavailable) file work. Builds a stand-in main component on the hidden
+/// library page from the first instance, points every instance at it (keeping
+/// what differs between instances as overrides) and records it in
+/// [`LibraryState::external`] under `<library_id>/<key>`. `library_id` should
+/// start with [`REMOTE_LIBRARY_PREFIX`]; the library is not "enabled". The
+/// document is edited directly: importers have no history. Returns the
+/// stand-in component.
+pub fn link_remote_component(doc: &mut Document, library_id: &str, key: &str, name: &str, instances: &[NodeId]) -> Option<NodeId> {
+    let first = *instances.first()?;
+    let tmpl = doc.get(first)?.clone();
+    let NodeKind::Instance { frame, .. } = &tmpl.kind else { return None };
+    let page = ensure_library_page(doc);
+    let cid = doc.alloc_id();
+    let mut comp = tmpl.clone();
+    comp.id = cid;
+    comp.parent = None;
+    comp.children.clear();
+    comp.source_id = None;
+    comp.name = name.to_string();
+    comp.transform = Affine::IDENTITY;
+    comp.visible = true;
+    comp.component = ComponentLink::default();
+    comp.prototype = PrototypeProps::default();
+    comp.kind = NodeKind::Component(frame.clone());
+    let cid = doc.insert(page, comp).ok()?;
+
+    fn copy(doc: &mut Document, src: NodeId, parent: NodeId) {
+        let Some(orig) = doc.get(src).cloned() else { return };
+        let id = doc.alloc_id();
+        let mut n = orig.clone();
+        n.id = id;
+        n.children.clear();
+        n.parent = None;
+        n.source_id = None;
+        if doc.insert(parent, n).is_ok() {
+            for k in orig.children {
+                copy(doc, k, id);
+            }
+        }
+    }
+    for k in tmpl.children.clone() {
+        copy(doc, k, cid);
+    }
+
+    /// Pairs the children of `inst` with those of `comp` and records what differs.
+    fn link(doc: &mut Document, inst: NodeId, comp: NodeId) {
+        let (Some(i), Some(c)) = (doc.get(inst).cloned(), doc.get(comp).cloned()) else { return };
+        let mut used = vec![false; c.children.len()];
+        let mut pairs = Vec::new();
+        for pass in 0..2 {
+            for ik in &i.children {
+                if pairs.iter().any(|(a, _)| a == ik) {
+                    continue;
+                }
+                let Some(inode) = doc.get(*ik) else { continue };
+                let hit = c.children.iter().enumerate().position(|(j, ck)| {
+                    !used[j]
+                        && doc
+                            .get(*ck)
+                            .is_some_and(|cn| std::mem::discriminant(&cn.kind) == std::mem::discriminant(&inode.kind) && (pass == 1 || cn.name == inode.name))
+                });
+                if let Some(j) = hit {
+                    used[j] = true;
+                    pairs.push((*ik, c.children[j]));
+                }
+            }
+        }
+        for (ik, ck) in pairs {
+            let (Some(mut inode), Some(cnode)) = (doc.get(ik).cloned(), doc.get(ck).cloned()) else { continue };
+            if inode.component.source.is_none() {
+                inode.component.source = Some(ck);
+                inode.component.overrides = record_override(&cnode, &inode);
+                if let Some(slot) = doc.get_mut(ik) {
+                    *slot = inode;
+                }
+                link(doc, ik, ck);
+            }
+        }
+    }
+    for &inst in instances {
+        let Some(mut n) = doc.get(inst).cloned() else { continue };
+        let base = doc.get(cid).cloned()?;
+        let mut ov = record_override(&base, &n);
+        for f in [OverrideField::Transform, OverrideField::Visible, OverrideField::Locked] {
+            ov.remove(&f);
+        }
+        if let NodeKind::Instance { component, .. } = &mut n.kind {
+            *component = Some(cid);
+        }
+        n.component.source = Some(cid);
+        n.component.overrides = ov;
+        if let Some(slot) = doc.get_mut(inst) {
+            *slot = n;
+        }
+        link(doc, inst, cid);
+    }
+    doc.library.external.insert(
+        local_key(library_id, key),
+        ExternalAsset { library_id: library_id.to_string(), version: 0, kind: LibraryAssetKind::Component, node: Some(cid), local_key: None },
+    );
+    Some(cid)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
