@@ -43,9 +43,103 @@ pub fn apply_resize(doc: &mut Document, ed: &mut Edit, id: NodeId, size: Vec2, t
     }
 }
 
+/// Rotates every `(node, world transform at start)` by `delta` radians about
+/// the page-space point `center`, keeping each node's parent untouched.
+pub fn rotate_nodes_about(doc: &mut Document, ed: &mut Edit, nodes: &[(NodeId, Affine)], center: Vec2, delta: f32) {
+    let rot = Affine::translate(center.x, center.y) * Affine::rotate(delta) * Affine::translate(-center.x, -center.y);
+    transform_nodes(doc, ed, nodes, rot);
+}
+
+/// Mirrors nodes across the vertical (`horizontal`) or horizontal line through `center`.
+pub fn flip_nodes_about(doc: &mut Document, ed: &mut Edit, nodes: &[(NodeId, Affine)], center: Vec2, horizontal: bool) {
+    let s = if horizontal { Affine::scale(-1.0, 1.0) } else { Affine::scale(1.0, -1.0) };
+    let m = Affine::translate(center.x, center.y) * s * Affine::translate(-center.x, -center.y);
+    transform_nodes(doc, ed, nodes, m);
+}
+
+/// Applies the page-space transform `rot` to every `(node, world transform at start)`.
+fn transform_nodes(doc: &mut Document, ed: &mut Edit, nodes: &[(NodeId, Affine)], rot: Affine) {
+    // Compute everything first: relayout of a shared group parent moves its transform.
+    let new: Vec<(NodeId, Affine)> = nodes
+        .iter()
+        .filter_map(|(id, world0)| {
+            let pinv = parent_world(doc, *id).invert()?;
+            Some((*id, pinv * rot * *world0))
+        })
+        .collect();
+    for (id, t) in &new {
+        if let Some(n) = ed.node(doc, *id) {
+            n.transform = *t;
+        }
+    }
+    for (id, _) in &new {
+        layout::relayout_up(doc, ed, *id);
+    }
+}
+
 impl App {
+    /// Mirrors the selection across the centre of its bounding box.
+    pub fn flip_selection(&mut self, horizontal: bool) {
+        let tops = self.top_selection();
+        let Some(bb) = union_all(tops.iter().map(|i| world_aabb(&self.doc, *i))) else { return };
+        let nodes: Vec<(NodeId, Affine)> = tops.iter().map(|i| (*i, self.doc.world_transform(*i))).collect();
+        let mut tx = Tx::new();
+        flip_nodes_about(&mut self.doc, &mut tx.ed, &nodes, rect_center(&bb), horizontal);
+        self.run_tx(tx);
+    }
+
+    /// Spaces three or more selected layers evenly along their dominant axis.
+    pub fn distribute_selection(&mut self) -> bool {
+        let tops = self.top_selection();
+        if tops.len() < 3 {
+            self.show_toast("Select three or more layers to distribute", false);
+            return false;
+        }
+        let mut items: Vec<(NodeId, Rect)> = tops.iter().map(|i| (*i, world_aabb(&self.doc, *i))).collect();
+        let bb = union_all(items.iter().map(|i| i.1)).unwrap_or_default();
+        let horizontal = bb.w >= bb.h;
+        let (start, len): (fn(&Rect) -> f32, fn(&Rect) -> f32) = if horizontal { (|r| r.x, |r| r.w) } else { (|r| r.y, |r| r.h) };
+        items.sort_by(|a, b| start(&a.1).partial_cmp(&start(&b.1)).unwrap_or(std::cmp::Ordering::Equal));
+        let total: f32 = items.iter().map(|i| len(&i.1)).sum();
+        let first = start(&items[0].1);
+        let last = start(&items[items.len() - 1].1) + len(&items[items.len() - 1].1);
+        let gap = (last - first - total) / (items.len() as f32 - 1.0);
+        let mut tx = Tx::new();
+        let mut cursor = first;
+        for (id, r) in &items {
+            let d = cursor - start(r);
+            let page_delta = if horizontal { v2(d, 0.0) } else { v2(0.0, d) };
+            let dp = delta_to_parent(&self.doc, *id, page_delta);
+            if let Some(n) = tx.ed.node(&mut self.doc, *id) {
+                n.transform.tx += dp.x;
+                n.transform.ty += dp.y;
+            }
+            cursor += len(r) + gap;
+        }
+        for (id, _) in &items {
+            layout::relayout_up(&mut self.doc, &mut tx.ed, *id);
+        }
+        self.run_tx(tx);
+        true
+    }
+
+    /// Rotates the selection by `delta` radians around the centre of its bounding box.
+    pub fn rotate_selection(&mut self, delta: f32) {
+        let tops = self.top_selection();
+        let Some(bb) = union_all(tops.iter().map(|i| world_aabb(&self.doc, *i))) else { return };
+        let nodes: Vec<(NodeId, Affine)> = tops.iter().map(|i| (*i, self.doc.world_transform(*i))).collect();
+        let mut tx = Tx::new();
+        rotate_nodes_about(&mut self.doc, &mut tx.ed, &nodes, rect_center(&bb), delta);
+        self.run_tx(tx);
+    }
+
     // ------------------------------------------------------------ plumbing
     pub fn run_tx(&mut self, tx: Tx) -> bool {
+        if self.scrub.is_some() {
+            // Scrubbing: edits stay live in the document; `scrub_end` records them as one step.
+            self.changed();
+            return true;
+        }
         match tx.commit(&mut self.doc, &mut self.hist) {
             Ok(changed) => {
                 self.changed();
@@ -69,6 +163,42 @@ impl App {
             layout::relayout_around(&mut self.doc, &mut tx.ed, *id);
         }
         self.run_tx(tx);
+    }
+
+    /// Starts/ends a scrub session following the flag set by the numeric fields.
+    pub fn scrub_sync(&mut self, ctx: &egui::Context) {
+        let id = egui::Id::new(crate::widgets::field::SCRUB_FLAG);
+        let mut active = ctx.data(|d| d.get_temp::<bool>(id)).unwrap_or(false);
+        if active && !ctx.input(|i| i.pointer.any_down()) {
+            active = false;
+            ctx.data_mut(|d| d.insert_temp(id, false));
+        }
+        match (active, self.scrub.is_some()) {
+            (true, false) => self.scrub = Some(self.doc.nodes.clone()),
+            (false, true) => self.scrub_end(),
+            _ => {}
+        }
+    }
+
+    /// Folds everything changed since the scrub began into one undo step.
+    pub fn scrub_end(&mut self) {
+        let Some(base) = self.scrub.take() else { return };
+        let changed: Vec<NodeId> = base.iter().filter(|(id, old)| self.doc.nodes.get(id).is_some_and(|cur| cur != *old)).map(|(id, _)| *id).collect();
+        let updates: Vec<Command> = changed.iter().filter_map(|id| self.doc.get(*id)).map(|n| Command::Update { node: Box::new(n.clone()) }).collect();
+        for id in &changed {
+            if let (Some(old), Some(cur)) = (base.get(id), self.doc.get_mut(*id)) {
+                *cur = old.clone();
+            }
+        }
+        if updates.is_empty() {
+            return;
+        }
+        let cmd = if updates.len() == 1 { updates.into_iter().next().unwrap() } else { Command::Batch(updates) };
+        if let Err(e) = self.hist.exec(&mut self.doc, cmd) {
+            self.show_toast(format!("Edit failed: {e}"), true);
+        }
+        self.changed();
+        self.sanitize();
     }
 
     pub fn undo(&mut self) {
@@ -501,14 +631,83 @@ impl App {
     }
 
     // ------------------------------------------------------------ pages
-    pub fn add_page(&mut self) {
-        let name = format!("Page {}", self.doc.pages.len() + 1);
-        let id = self.doc.add_page(name);
+    /// Pre-order copy of a subtree (root first), as `InsertPage` expects.
+    fn subtree_nodes(&self, id: NodeId) -> Vec<Node> {
+        let mut out = Vec::new();
+        self.doc.walk(id, |n, _| out.push(n.clone()));
+        out
+    }
+
+    fn unique_page_name(&self, base: &str) -> String {
+        let names: Vec<&str> = self.doc.pages.iter().filter_map(|p| self.doc.get(*p)).map(|n| n.name.as_str()).collect();
+        if !names.contains(&base) {
+            return base.to_string();
+        }
+        (2..).map(|i| format!("{base} {i}")).find(|c| !names.contains(&c.as_str())).unwrap_or_else(|| base.to_string())
+    }
+
+    /// Appends a new empty page (undoable) and switches to it.
+    pub fn add_page(&mut self) -> Option<NodeId> {
+        let id = self.doc.alloc_id();
+        let mut page = Node::new(id, NodeKind::Page { background: Color::from_hex(&format!("{:06X}", theme::DEFAULT_PAGE_BG)).unwrap_or(Color::WHITE) });
+        page.name = format!("Page {}", self.doc.pages.len() + 1);
+        let index = self.doc.pages.len();
+        let mut tx = Tx::new();
+        tx.cmd(&mut self.doc, Command::InsertPage { index, nodes: vec![page] }).ok()?;
+        self.run_tx(tx);
         self.switch_page(id);
+        Some(id)
+    }
+
+    /// Duplicates a page with all its layers right after it; returns the copy.
+    pub fn duplicate_page(&mut self, id: NodeId) -> Option<NodeId> {
+        let index = self.doc.pages.iter().position(|p| *p == id)? + 1;
+        let mut nodes = clipboard::clone_subtree(&mut self.doc, id);
+        let root = nodes.first_mut()?;
+        root.name = self.unique_page_name(&format!("{} copy", self.doc.get(id)?.name));
+        let new_id = root.id;
+        let mut tx = Tx::new();
+        tx.cmd(&mut self.doc, Command::InsertPage { index, nodes }).ok()?;
+        self.run_tx(tx);
+        self.switch_page(new_id);
+        Some(new_id)
+    }
+
+    /// Deletes a page; the last remaining page can never be deleted.
+    pub fn delete_page(&mut self, id: NodeId) -> bool {
+        if self.doc.pages.len() <= 1 || !self.doc.pages.contains(&id) {
+            return false;
+        }
+        let pos = self.doc.pages.iter().position(|p| *p == id).unwrap_or(0);
+        let mut tx = Tx::new();
+        if tx.cmd(&mut self.doc, Command::RemovePage { id }).is_err() {
+            return false;
+        }
+        self.run_tx(tx);
+        if self.page == id || !self.doc.nodes.contains_key(&self.page) {
+            let next = self.doc.pages[pos.min(self.doc.pages.len() - 1)];
+            self.switch_page(next);
+        }
+        true
+    }
+
+    /// Moves a page to `index` (position after removal) in the page list.
+    pub fn move_page(&mut self, id: NodeId, index: usize) {
+        let Some(from) = self.doc.pages.iter().position(|p| *p == id) else { return };
+        let index = index.min(self.doc.pages.len().saturating_sub(1));
+        if from == index {
+            return;
+        }
+        let nodes = self.subtree_nodes(id);
+        let mut tx = Tx::new();
+        if tx.cmd(&mut self.doc, Command::RemovePage { id }).is_ok() {
+            let _ = tx.cmd(&mut self.doc, Command::InsertPage { index, nodes });
+        }
+        self.run_tx(tx);
     }
 
     pub fn switch_page(&mut self, id: NodeId) {
-        if self.doc.nodes.contains_key(&id) {
+        if self.doc.pages.contains(&id) {
             self.page = id;
             self.selection.clear();
             self.canvas.reset_interaction();
@@ -728,5 +927,121 @@ mod tests {
         app.ungroup_selection();
         assert_eq!(app.doc.get(ids[0]).unwrap().parent, Some(app.page));
         assert_eq!(world_aabb(&app.doc, ids[1]).x, 100.0);
+    }
+
+    #[test]
+    fn pages_add_rename_duplicate_delete_are_undoable() {
+        let (mut app, ids) = app_with_rects();
+        let p1 = app.page;
+        let p2 = app.add_page().unwrap();
+        assert_eq!(app.doc.pages, vec![p1, p2]);
+        assert_eq!(app.page, p2);
+        app.rename(p2, "Second");
+        assert_eq!(app.doc.get(p2).unwrap().name, "Second");
+        app.undo();
+        assert_eq!(app.doc.get(p2).unwrap().name, "Page 2");
+        app.undo();
+        assert_eq!(app.doc.pages, vec![p1]);
+        app.redo();
+        assert_eq!(app.doc.pages, vec![p1, p2]);
+
+        let copy = app.duplicate_page(p1).unwrap();
+        assert_eq!(app.doc.pages, vec![p1, copy, p2]);
+        assert_eq!(app.doc.get(copy).unwrap().children.len(), ids.len());
+        assert!(app.doc.get(copy).unwrap().name.ends_with("copy"));
+        assert!(app.doc.get(copy).unwrap().children.iter().all(|c| !ids.contains(c)), "fresh ids");
+
+        assert!(app.delete_page(copy));
+        assert_eq!(app.doc.pages, vec![p1, p2]);
+        assert!(app.doc.nodes.contains_key(&app.page));
+        app.undo();
+        assert_eq!(app.doc.pages, vec![p1, copy, p2]);
+        assert_eq!(app.doc.get(copy).unwrap().children.len(), ids.len());
+    }
+
+    #[test]
+    fn last_page_cannot_be_deleted_and_pages_reorder() {
+        let (mut app, _ids) = app_with_rects();
+        let p1 = app.page;
+        assert!(!app.delete_page(p1));
+        assert_eq!(app.doc.pages.len(), 1);
+        let p2 = app.add_page().unwrap();
+        let p3 = app.add_page().unwrap();
+        app.move_page(p3, 0);
+        assert_eq!(app.doc.pages, vec![p3, p1, p2]);
+        app.undo();
+        assert_eq!(app.doc.pages, vec![p1, p2, p3]);
+        assert!(app.delete_page(p1));
+        assert!(!app.delete_page(p2) || app.doc.pages.len() == 1);
+        assert!(!app.doc.pages.is_empty());
+        assert!(app.doc.nodes.contains_key(&app.page));
+    }
+
+    #[test]
+    fn multi_rotate_pivots_about_bbox_center() {
+        let (mut app, ids) = app_with_rects();
+        app.selection = vec![ids[0], ids[2]];
+        let bb = app.selection_bounds().unwrap();
+        let c0 = rect_center(&bb);
+        app.rotate_selection(std::f32::consts::FRAC_PI_2);
+        for id in [ids[0], ids[2]] {
+            let n = app.doc.get(id).unwrap();
+            assert!((n.transform.rotation_rad() - std::f32::consts::FRAC_PI_2).abs() < 1e-4);
+        }
+        // the union box (now rotated) is centred on the same point and swapped in shape
+        let bb1 = app.selection_bounds().unwrap();
+        let c1 = rect_center(&bb1);
+        assert!((c0.x - c1.x).abs() < 1e-2 && (c0.y - c1.y).abs() < 1e-2, "{c0:?} vs {c1:?}");
+        assert!(dist(c0, c1) < 1e-2);
+        assert!((bb1.w - bb.h).abs() < 1e-2 && (bb1.h - bb.w).abs() < 1e-2);
+        // untouched node did not move
+        assert_eq!(app.doc.get(ids[1]).unwrap().transform.tx, 100.0);
+        app.undo();
+        assert_eq!(app.doc.get(ids[0]).unwrap().transform.rotation_rad(), 0.0);
+        assert!(!app.hist.can_undo());
+    }
+
+    #[test]
+    fn flip_mirrors_about_selection_center() {
+        let (mut app, ids) = app_with_rects();
+        app.selection = vec![ids[0], ids[2]];
+        let bb = app.selection_bounds().unwrap();
+        let before: Vec<Rect> = ids.iter().map(|i| world_aabb(&app.doc, *i)).collect();
+        app.flip_selection(true);
+        let after: Vec<Rect> = ids.iter().map(|i| world_aabb(&app.doc, *i)).collect();
+        // x mirrored inside the union box, y untouched, size kept
+        assert!((after[0].x - (bb.x + bb.w - (before[0].x - bb.x) - before[0].w)).abs() < 1e-3);
+        assert!((after[2].x - (bb.x + bb.w - (before[2].x - bb.x) - before[2].w)).abs() < 1e-3);
+        assert_eq!((after[0].y, after[0].w), (before[0].y, before[0].w));
+        assert_eq!(after[1], before[1], "unselected node untouched");
+        app.flip_selection(true);
+        let again = world_aabb(&app.doc, ids[0]);
+        assert!((again.x - before[0].x).abs() < 1e-3, "flipping twice restores");
+        app.undo();
+        app.undo();
+        assert_eq!(world_aabb(&app.doc, ids[0]), before[0]);
+        app.flip_selection(false);
+        let v = world_aabb(&app.doc, ids[0]);
+        assert!((v.y - (bb.y + bb.h - (before[0].y - bb.y) - before[0].h)).abs() < 1e-3);
+    }
+
+    #[test]
+    fn distribute_evens_out_gaps() {
+        let mut d = Document::new("t");
+        let page = d.add_page("p");
+        let mut ids = vec![];
+        for x in [0.0, 60.0, 300.0] {
+            let id = d.alloc_id();
+            ids.push(d.insert(page, Node::rectangle(id, Rect::new(x, 0.0, 50.0, 50.0))).unwrap());
+        }
+        let mut app = App::new(d);
+        app.selection = ids.clone();
+        assert!(app.distribute_selection());
+        let xs: Vec<f32> = ids.iter().map(|i| world_aabb(&app.doc, *i).x).collect();
+        assert_eq!(xs, vec![0.0, 150.0, 300.0]);
+        app.undo();
+        assert_eq!(world_aabb(&app.doc, ids[1]).x, 60.0);
+        app.selection = ids[..2].to_vec();
+        assert!(!app.distribute_selection(), "needs three layers");
     }
 }

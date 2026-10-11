@@ -92,11 +92,11 @@ pub fn icon_button(ui: &mut Ui, rect: Rect, id: impl crate::widgets::Key, icon: 
 
 /// Pill-shaped small tag (e.g. the "Free" plan badge).
 pub fn badge(p: &Painter, pos: Pos2, s: &str) -> Rect {
-    let font = theme::font_small_strong();
+    let font = theme::font_small_medium();
     let w = text_width(p, s, &font) + theme::BADGE_PAD_X * 2.0;
     let r = Rect::from_min_size(pos, Vec2::new(w, theme::BADGE_HEIGHT));
     p.rect_filled(r, theme::cr(theme::RADIUS_SMALL), theme::BADGE_BG);
-    p.text(r.center(), Align2::CENTER_CENTER, s, font, theme::TEXT_SECONDARY);
+    p.text(r.center(), Align2::CENTER_CENTER, s, font, theme::BADGE_TEXT);
     r
 }
 
@@ -112,6 +112,15 @@ pub fn swatch(p: &Painter, rect: Rect, color: Color32) {
     p.rect_filled(rect, r, color);
     p.rect_stroke(rect, r, Stroke::new(1.0, theme::BORDER_TRANSLUCENT), StrokeKind::Inside);
 }
+
+/// Test hook: remembers where a named widget was drawn so UI tests can find it.
+#[cfg(test)]
+pub fn record(ui: &Ui, name: &str, rect: Rect) {
+    ui.ctx().data_mut(|d| d.insert_temp(Id::new(("test-rect", name.to_string())), rect));
+}
+#[cfg(not(test))]
+#[inline]
+pub fn record(_ui: &Ui, _name: &str, _rect: Rect) {}
 
 pub fn fmt_num(v: f32) -> String {
     let s = format!("{:.2}", v);

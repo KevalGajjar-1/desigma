@@ -2,7 +2,7 @@
 //! badge, guides, marquee, pen preview and the text caret.
 
 use super::handles::Handle;
-use super::interact::{caret_line_col, selection_box, text_metrics};
+use super::interact::{selection_box, text_wrap_width};
 use super::snap::GuideAxis;
 use super::*;
 use crate::theme;
@@ -114,7 +114,7 @@ pub fn overlays(app: &App, ui: &Ui, rect: ERect) {
             let small = w.min(h) <= theme::CANVAS_HANDLE_SIZE * 3.0;
             let only_corners = small && !is_line;
             let dvs = corners.map(|c| dv(to_s(c)));
-            if app.canvas.text.is_none() && matches!(app.tool, tools::Tool::Move | tools::Tool::Scale) {
+            if app.canvas.text.is_none() && app.canvas.vedit.is_none() && matches!(app.tool, tools::Tool::Move | tools::Tool::Scale) {
                 for hnd in Handle::ALL {
                     if is_line && !matches!(hnd, Handle::L | Handle::R) {
                         continue;
@@ -141,6 +141,8 @@ pub fn overlays(app: &App, ui: &Ui, rect: ERect) {
             }
         }
     }
+
+    vector::overlay(app, &p, rect);
 
     // Snap guides & measurements.
     let gcol = theme::GUIDE_COLOR;
@@ -174,6 +176,13 @@ pub fn overlays(app: &App, ui: &Ui, rect: ERect) {
         p.text(r.center(), Align2::CENTER_CENTER, text, font, theme::GUIDE_TEXT);
     }
 
+    // Auto-layout insertion indicator.
+    if let Interaction::Move(m) = &app.canvas.inter {
+        if let Some(r) = &m.reorder {
+            p.line_segment([to_s(r.line[0]), to_s(r.line[1])], Stroke::new(theme::AL_INDICATOR_WIDTH, theme::DROP_INDICATOR));
+        }
+    }
+
     // Marquee.
     if let Interaction::Marquee { start, cur, .. } = &app.canvas.inter {
         let (a, b) = (to_s(*start), to_s(*cur));
@@ -196,10 +205,7 @@ pub fn overlays(app: &App, ui: &Ui, rect: ERect) {
         if let Some(n) = app.doc.get(sess.id) {
             if let NodeKind::Text(t) = &n.kind {
                 let w = app.doc.world_transform(sess.id);
-                let (cw, lh) = text_metrics(t);
-                let (line, col) = caret_line_col(&t.content, sess.caret);
-                let x = col as f32 * cw;
-                let y = line as f32 * lh;
+                let (x, y, lh) = crate::textmeasure::caret_rect(t, text_wrap_width(t, n.size), sess.caret);
                 let a = to_s(w.apply(v2(x, y)));
                 let b = to_s(w.apply(v2(x, y + lh)));
                 let blink = (ui.input(|i| i.time) * 2.0) as i64 % 2 == 0;

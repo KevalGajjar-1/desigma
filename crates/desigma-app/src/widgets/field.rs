@@ -73,6 +73,8 @@ fn eval_simple(s: &str) -> Option<f32> {
 
 /// Numeric field with a prefix label/icon. `value == None` shows "Mixed".
 pub fn num_field(ui: &mut Ui, rect: Rect, key: impl crate::widgets::Key, prefix: Prefix, value: Option<f32>, suffix: &str) -> Option<f32> {
+    #[cfg(test)]
+    ui.ctx().data_mut(|d| d.insert_temp(Id::new(("field-rect", format!("{key:?}"))), rect));
     let id = ui.id().with(("num", key));
     let display = match value {
         Some(v) => format!("{}{}", fmt_num(v), suffix),
@@ -88,12 +90,51 @@ pub fn num_field(ui: &mut Ui, rect: Rect, key: impl crate::widgets::Key, prefix:
     match prefix {
         Prefix::None => {}
         Prefix::Text(s) => {
-            p.text(c, Align2::CENTER_CENTER, s, theme::font_body(), theme::TEXT_TERTIARY);
+            // Left-aligned label, 8px in; the value starts 24px in.
+            p.text(Pos2::new(rect.left() + theme::FIELD_PREFIX_X, rect.center().y), Align2::LEFT_CENTER, s, theme::font_body(), theme::TEXT_SECONDARY);
         }
-        Prefix::Icon(i) => icons::paint(p, i, c, 12.0, theme::TEXT_TERTIARY),
+        Prefix::Icon(i) => icons::paint(p, i, c, 12.0, theme::TEXT_SECONDARY),
     }
+    let scrubbed = if pw > 0.0 { scrub_prefix(ui, Rect::from_min_size(rect.min, egui::vec2(pw, rect.height())), id, value) } else { None };
     let text_rect = Rect::from_min_max(Pos2::new(rect.left() + pw, rect.top()), rect.max);
-    edit_text(ui, text_rect, id, &display, theme::font_body(), theme::TEXT, if pw > 0.0 { 0.0 } else { 8.0 }).and_then(|s| parse_number(&s))
+    edit_text(ui, text_rect, id, &display, theme::font_body(), theme::TEXT, if pw > 0.0 { 0.0 } else { 8.0 }).and_then(|s| parse_number(&s)).or(scrubbed)
+}
+
+/// Context-data key that is true while any numeric label is being scrubbed;
+/// the app snapshots the document on its rising edge and folds all edits
+/// made during the drag into one undo step on its falling edge.
+pub const SCRUB_FLAG: &str = "desigma-scrub-active";
+
+/// Figma-style scrubbing: dragging a field's prefix changes the value by one
+/// unit per pixel (x10 with Shift) and shows the horizontal-resize cursor.
+fn scrub_prefix(ui: &mut Ui, prefix: Rect, id: Id, value: Option<f32>) -> Option<f32> {
+    let sid = id.with("scrub");
+    let resp = ui.interact(prefix, sid, Sense::drag());
+    if resp.hovered() || resp.dragged() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+    }
+    let flag = Id::new(SCRUB_FLAG);
+    if resp.drag_started() {
+        ui.ctx().data_mut(|d| {
+            d.insert_temp(flag, true);
+            d.insert_temp(sid, (value.unwrap_or(0.0), 0.0f32, f32::NAN));
+        });
+    }
+    let mut out = None;
+    if resp.dragged() {
+        let (dx, shift) = ui.input(|i| (i.pointer.delta().x, i.modifiers.shift));
+        let (start, acc, last) = ui.ctx().data(|d| d.get_temp::<(f32, f32, f32)>(sid)).unwrap_or((value.unwrap_or(0.0), 0.0, f32::NAN));
+        let acc = acc + dx * if shift { 10.0 } else { 1.0 };
+        let v = start + acc.round();
+        if v != last && !(last.is_nan() && acc.round() == 0.0) {
+            out = Some(v);
+        }
+        ui.ctx().data_mut(|d| d.insert_temp(sid, (start, acc, if out.is_some() { v } else { last })));
+    }
+    if resp.drag_stopped() {
+        ui.ctx().data_mut(|d| d.insert_temp(flag, false));
+    }
+    out
 }
 
 /// Paints the standard field background with hover/focus border.

@@ -22,6 +22,8 @@ pub enum PickTarget {
     Stroke(usize),
     PageBg,
     Shadow(usize),
+    /// A colour from the Selection colors list (rgb of the colour being replaced).
+    SelColor(u32),
 }
 
 pub struct Picker {
@@ -37,6 +39,8 @@ pub struct PropsState {
     pub scroll: f32,
     pub content_h: f32,
     pub picker: Option<Picker>,
+    /// Collapsed style folders in the Styles section.
+    pub folded: std::collections::HashSet<String>,
 }
 
 struct Pane {
@@ -95,7 +99,7 @@ fn title(ui: &mut Ui, pane: &mut Pane, text: &str, action: Option<Icon>, dim: bo
 
 fn sublabel(ui: &Ui, pane: &mut Pane, text: &str) {
     let r = pane.rect(theme::SECTION_CONTENT_X, 0.0, theme::SECTION_CONTENT_W, theme::SUBLABEL_HEIGHT);
-    ui.painter().text(Pos2::new(r.left(), r.center().y), Align2::LEFT_CENTER, text, theme::font_body(), theme::TEXT_SECONDARY);
+    ui.painter().text(Pos2::new(r.left(), r.center().y), Align2::LEFT_CENTER, text, theme::font_body_strong(), theme::TEXT_SECONDARY);
     pane.y += theme::SUBLABEL_HEIGHT + 4.0;
 }
 
@@ -120,6 +124,10 @@ fn segmented(ui: &mut Ui, pane: &Pane, x: f32, key: &str, items: &[Icon], select
         let bg = if sel { theme::BG_TERTIARY } else if resp.hovered() { theme::BG_TERTIARY.gamma_multiply(0.6) } else { theme::BG_SECONDARY };
         ui.painter().rect_filled(r, radius, bg);
         icons::paint(ui.painter(), *icon, r.center(), 16.0, if sel { theme::ICON } else { theme::ICON_SECONDARY });
+        if i > 0 {
+            // 1px gap between neighbouring segments.
+            widgets::vline(ui.painter(), r.left(), r.top(), r.bottom(), theme::BG);
+        }
         if resp.clicked() {
             out = Some(i);
         }
@@ -203,49 +211,115 @@ fn page_section(app: &mut App, ui: &mut Ui, pane: &mut Pane) {
 
 fn styles_section(app: &mut App, ui: &mut Ui, pane: &mut Pane) {
     title(ui, pane, "Styles", Some(Icon::Plus), false);
-    let text_styles: Vec<(String, TextStyle)> = app.doc.styles.iter().filter_map(|(k, s)| if let Style::Text(t) = s { Some((k.clone(), t.clone())) } else { None }).collect();
-    let fill_styles: Vec<(String, Vec<Paint>)> = app.doc.styles.iter().filter_map(|(k, s)| if let Style::Fill(f) = s { Some((k.clone(), f.clone())) } else { None }).collect();
-    if !text_styles.is_empty() {
-        sublabel(ui, pane, "Text styles");
-        for (name, t) in &text_styles {
-            let r = pane.rect(8.0, 0.0, theme::RIGHT_PANEL_WIDTH - 17.0, 28.0);
-            let resp = ui.interact(r, ui.id().with(("tstyle", name)), Sense::hover());
-            if resp.hovered() {
-                ui.painter().rect_filled(r, theme::cr(theme::RADIUS_MEDIUM), theme::BG_HOVER);
-            }
-            ui.painter().text(Pos2::new(r.left() + 10.0, r.center().y), Align2::LEFT_CENTER, "Ag", theme::font_body_strong(), theme::TEXT);
-            let nm = widgets::elide(ui.painter(), name, &theme::font_body(), 110.0);
-            ui.painter().text(Pos2::new(r.left() + 36.0, r.center().y), Align2::LEFT_CENTER, nm, theme::font_body(), theme::TEXT);
-            let lh = match t.line_height {
-                LineHeight::Pixels(p) => fmt_num(p),
-                LineHeight::Percent(p) => fmt_num(t.font_size * p / 100.0),
-                LineHeight::Auto => fmt_num(t.font_size),
-            };
-            ui.painter().text(Pos2::new(r.right() - 10.0, r.center().y), Align2::RIGHT_CENTER, format!("{}/{}", fmt_num(t.font_size), lh), theme::font_body(), theme::TEXT_TERTIARY);
-            pane.y += 28.0;
-        }
-        pane.y += 4.0;
-    }
-    if !fill_styles.is_empty() {
-        sublabel(ui, pane, "Color styles");
-        for (name, paints) in &fill_styles {
-            let r = pane.rect(8.0, 0.0, theme::RIGHT_PANEL_WIDTH - 17.0, 28.0);
-            let resp = ui.interact(r, ui.id().with(("cstyle", name)), Sense::hover());
-            if resp.hovered() {
-                ui.painter().rect_filled(r, theme::cr(theme::RADIUS_MEDIUM), theme::BG_HOVER);
-            }
-            let sw = Rect::from_center_size(Pos2::new(r.left() + 18.0, r.center().y), Vec2::splat(theme::SWATCH_SIZE));
-            let col = paints.first().and_then(|p| if let PaintKind::Solid(c) = &p.kind { Some(to_c32(*c, p.opacity)) } else { None }).unwrap_or(Color32::GRAY);
-            widgets::swatch(ui.painter(), sw, col);
-            let nm = widgets::elide(ui.painter(), name, &theme::font_body(), 130.0);
-            ui.painter().text(Pos2::new(r.left() + 36.0, r.center().y), Align2::LEFT_CENTER, nm, theme::font_body(), theme::TEXT);
-            pane.y += 28.0;
-        }
-        pane.y += 4.0;
-    }
+    styles_list(app, ui, pane, &[]);
     pane.y += 4.0;
     section_sep(ui, pane, false);
     title(ui, pane, "Export", Some(Icon::Plus), true);
+}
+
+/// Text and colour styles grouped in folders by their "/" prefix. Clicking a
+/// row applies the style to `target`.
+fn styles_list(app: &mut App, ui: &mut Ui, pane: &mut Pane, target: &[NodeId]) {
+    let applied = |app: &App, prop: &str| target.first().and_then(|t| app.doc.get(*t)).and_then(|n| n.style_refs.get(prop).cloned());
+    for (label, text) in [("Text styles", true), ("Color styles", false)] {
+        let entries = crate::styles::style_entries(&app.doc, text);
+        if entries.is_empty() {
+            continue;
+        }
+        sublabel(ui, pane, label);
+        let current = applied(app, if text { "text" } else { "fill" });
+        let mut last_folder: Option<String> = None;
+        for e in &entries {
+            let folder_key = format!("{label}/{}", e.folder);
+            if !e.folder.is_empty() && last_folder.as_deref() != Some(e.folder.as_str()) {
+                let r = pane.rect(8.0, 0.0, theme::RIGHT_PANEL_WIDTH - 17.0, theme::STYLE_FOLDER_ROW_H);
+                widgets::record(ui, &format!("folder:{folder_key}"), r);
+                let resp = ui.interact(r, ui.id().with(("sfolder", &folder_key)), Sense::click());
+                if resp.hovered() {
+                    ui.painter().rect_filled(r, theme::cr(theme::RADIUS_MEDIUM), theme::BG_HOVER);
+                }
+                let open = !app.props.folded.contains(&folder_key);
+                icons::paint(ui.painter(), if open { Icon::ChevronDown } else { Icon::ChevronRight }, Pos2::new(r.left() + 14.0, r.center().y), 12.0, theme::ICON_TERTIARY);
+                ui.painter().text(Pos2::new(r.left() + 28.0, r.center().y), Align2::LEFT_CENTER, &e.folder, theme::font_body(), theme::TEXT_SECONDARY);
+                if resp.clicked() {
+                    if open {
+                        app.props.folded.insert(folder_key.clone());
+                    } else {
+                        app.props.folded.remove(&folder_key);
+                    }
+                }
+                pane.y += theme::STYLE_FOLDER_ROW_H;
+            }
+            last_folder = Some(e.folder.clone());
+            if !e.folder.is_empty() && app.props.folded.contains(&folder_key) {
+                continue;
+            }
+            let indent = if e.folder.is_empty() { 0.0 } else { theme::STYLE_INDENT };
+            let r = pane.rect(8.0, 0.0, theme::RIGHT_PANEL_WIDTH - 17.0, theme::STYLE_ROW_H);
+            widgets::record(ui, &format!("style:{}", e.key), r);
+            let resp = ui.interact(r, ui.id().with((if text { "tstyle" } else { "cstyle" }, &e.key)), Sense::click());
+            let is_current = current.as_deref() == Some(e.key.as_str());
+            if is_current {
+                ui.painter().rect_filled(r, theme::cr(theme::RADIUS_MEDIUM), theme::BG_SELECTED);
+            } else if resp.hovered() {
+                ui.painter().rect_filled(r, theme::cr(theme::RADIUS_MEDIUM), theme::BG_HOVER);
+            }
+            if text {
+                let Some(Style::Text(t)) = app.doc.styles.get(&e.key).cloned() else { continue };
+                ui.painter().text(Pos2::new(r.left() + 10.0 + indent, r.center().y), Align2::LEFT_CENTER, "Ag", theme::font_body_strong(), theme::TEXT);
+                let nm = widgets::elide(ui.painter(), &e.leaf, &theme::font_body(), 110.0 - indent);
+                ui.painter().text(Pos2::new(r.left() + 36.0 + indent, r.center().y), Align2::LEFT_CENTER, nm, theme::font_body(), theme::TEXT);
+                let lh = match t.line_height {
+                    LineHeight::Pixels(p) => fmt_num(p),
+                    LineHeight::Percent(p) => fmt_num(t.font_size * p / 100.0),
+                    LineHeight::Auto => fmt_num(t.font_size),
+                };
+                ui.painter().text(Pos2::new(r.right() - 10.0, r.center().y), Align2::RIGHT_CENTER, format!("{}/{}", fmt_num(t.font_size), lh), theme::font_body(), theme::TEXT_TERTIARY);
+            } else {
+                let Some(Style::Fill(paints)) = app.doc.styles.get(&e.key).cloned() else { continue };
+                let sw = Rect::from_center_size(Pos2::new(r.left() + 18.0 + indent, r.center().y), Vec2::splat(theme::SWATCH_SIZE));
+                let col = paints.first().and_then(|p| if let PaintKind::Solid(c) = &p.kind { Some(to_c32(*c, p.opacity)) } else { None }).unwrap_or(Color32::GRAY);
+                widgets::swatch(ui.painter(), sw, col);
+                let nm = widgets::elide(ui.painter(), &e.leaf, &theme::font_body(), 130.0 - indent);
+                ui.painter().text(Pos2::new(r.left() + 36.0 + indent, r.center().y), Align2::LEFT_CENTER, nm, theme::font_body(), theme::TEXT);
+            }
+            if resp.clicked() && !target.is_empty() {
+                app.apply_style(target, &e.key);
+            }
+            pane.y += theme::STYLE_ROW_H;
+        }
+        pane.y += 4.0;
+    }
+}
+
+/// Unique colours of the selection subtree; editing one replaces it everywhere.
+fn selection_colors_section(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[NodeId]) {
+    let cols = crate::styles::selection_colors(&app.doc, sel);
+    let nested = sel.iter().any(|s| app.doc.get(*s).map(|n| !n.children.is_empty()).unwrap_or(false));
+    if cols.is_empty() || !(cols.len() >= 2 || sel.len() > 1 || nested) {
+        return;
+    }
+    section_sep(ui, pane, false);
+    title(ui, pane, "Selection colors", None, false);
+    for (i, c) in cols.iter().enumerate() {
+        let sw = pane.rect(theme::SWATCH_ROW_X, 4.0, theme::SWATCH_SIZE, theme::SWATCH_SIZE);
+        let hex_r = pane.rect(theme::SWATCH_ROW_X + theme::SWATCH_SIZE + 8.0, 0.0, 96.0, theme::FIELD_HEIGHT);
+        widgets::record(ui, &format!("selsw:{i}"), sw);
+        widgets::record(ui, &format!("selhex:{i}"), hex_r);
+        let swr = ui.interact(sw, ui.id().with(("selsw", i)), Sense::click());
+        widgets::swatch(ui.painter(), sw, to_c32(*c, 1.0));
+        if swr.clicked() {
+            let rgb = u32::from_str_radix(&c.to_hex(), 16).unwrap_or(0);
+            open_picker(app, PickTarget::SelColor(rgb), to_c32(*c, 1.0), sw, sel.to_vec());
+        }
+        if let Some(s) = field::text_input(ui, hex_r, ("selhex", i), &c.to_hex()) {
+            if let Some(nc) = Color::from_hex(&s) {
+                app.replace_selection_color(sel, *c, nc);
+            }
+        }
+        pane.y += theme::FIELD_HEIGHT + 8.0;
+    }
+    pane.y += 4.0;
 }
 
 // ---------------------------------------------------------------- selection
@@ -308,6 +382,11 @@ fn selection_ui(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[NodeId]) {
     if let Some(i) = segmented(ui, pane, theme::SECTION_CONTENT_X + 3.0 * theme::SEGMENT_W + theme::SEGMENT_GROUP_GAP, "alignv", &v, None) {
         app.align([Align::Top, Align::VCenter, Align::Bottom][i]);
     }
+    let dist_r = pane.rect(theme::DISTRIBUTE_BTN_X, 0.0, theme::PANEL_ACTION_BUTTON, theme::PANEL_ACTION_BUTTON);
+    widgets::record(ui, "distribute", dist_r);
+    if widgets::icon_button(ui, dist_r, "distribute", Icon::Distribute, false, "Distribute spacing").clicked() {
+        app.distribute_selection();
+    }
     row_end(pane);
     sublabel(ui, pane, "Position");
     let xs = common(app, sel, |n| n.transform.tx);
@@ -319,52 +398,33 @@ fn selection_ui(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[NodeId]) {
         app.edit_nodes(sel, |n| n.transform.ty = y);
     }
     row_end(pane);
+    sublabel(ui, pane, "Rotation");
     let rot = common(app, sel, |n| (-n.transform.rotation_rad().to_degrees() * 100.0).round() / 100.0);
     if let Some(deg) = field::num_field(ui, pane.col(0, 0.0), "rot", Prefix::Icon(Icon::Rotation), rot, "°") {
-        let rad = -deg.to_radians();
-        app.edit_nodes(sel, |n| n.transform = crate::canvas::handles::rotate_about_center(&n.transform, n.size, rad));
+        if multi {
+            // A group rotates as one body around its bounding-box centre.
+            app.rotate_selection(-(deg - rot.unwrap_or(0.0)).to_radians());
+        } else {
+            let rad = -deg.to_radians();
+            app.edit_nodes(sel, |n| n.transform = crate::canvas::handles::rotate_about_center(&n.transform, n.size, rad));
+        }
+    }
+    for i in 0..3 {
+        widgets::record(ui, &format!("xform:{i}"), pane.rect(theme::FIELD_COL_X[1] + i as f32 * theme::SEGMENT_W, 0.0, theme::SEGMENT_W, theme::FIELD_HEIGHT));
+    }
+    if let Some(i) = segmented(ui, pane, theme::FIELD_COL_X[1], "xform", &[Icon::Rotate90, Icon::FlipH, Icon::FlipV], None) {
+        match i {
+            0 => app.rotate_selection(-std::f32::consts::FRAC_PI_2),
+            1 => app.flip_selection(true),
+            _ => app.flip_selection(false),
+        }
     }
     row_end(pane);
-    sublabel(ui, pane, "Dimensions");
-    let ws = common(app, sel, |n| n.size.x);
-    let hs = common(app, sel, |n| n.size.y);
-    let w_new = field::num_field(ui, pane.col(0, 0.0), "w", Prefix::Text("W"), ws, "");
-    let h_new = if is_line { None } else { field::num_field(ui, pane.col(1, 0.0), "h", Prefix::Text("H"), hs, "") };
-    if w_new.is_some() || h_new.is_some() {
-        resize_selection(app, sel, w_new, h_new);
-    }
-    row_end(pane);
-    if parent_frame && !parent_al && !multi {
-        sublabel(ui, pane, "Constraints");
-        let hn = ["Left", "Right", "Left & Right", "Center", "Scale"].map(String::from);
-        let vn = ["Top", "Bottom", "Top & Bottom", "Center", "Scale"].map(String::from);
-        let order = [Constraint::Min, Constraint::Max, Constraint::Stretch, Constraint::Center, Constraint::Scale];
-        let hi = order.iter().position(|c| *c == n0.constraints.horizontal).unwrap_or(0);
-        let vi = order.iter().position(|c| *c == n0.constraints.vertical).unwrap_or(0);
-        if let Some(i) = dropdown(ui, pane.col(0, 0.0), "con-h", &hn[hi], &hn) {
-            app.edit_nodes(sel, |n| n.constraints.horizontal = order[i]);
-        }
-        if let Some(i) = dropdown(ui, pane.col(1, 0.0), "con-v", &vn[vi], &vn) {
-            app.edit_nodes(sel, |n| n.constraints.vertical = order[i]);
-        }
-        row_end(pane);
-    }
-    if parent_al || (is_frame && n0.kind.frame_props().map(|f| f.auto_layout.is_some()).unwrap_or(false)) || is_text {
-        sublabel(ui, pane, "Resizing");
-        let opts = ["Fixed", "Hug", "Fill"].map(String::from);
-        let order = [Sizing::Fixed, Sizing::Hug, Sizing::Fill];
-        let (hs, vs) = (sizing_of(&n0, true), sizing_of(&n0, false));
-        if let Some(i) = dropdown(ui, pane.col(0, 0.0), "rs-h", &format!("W: {}", opts[order.iter().position(|s| *s == hs).unwrap_or(0)]), &opts) {
-            set_sizing(app, sel, true, order[i]);
-        }
-        if let Some(i) = dropdown(ui, pane.col(1, 0.0), "rs-v", &format!("H: {}", opts[order.iter().position(|s| *s == vs).unwrap_or(0)]), &opts) {
-            set_sizing(app, sel, false, order[i]);
-        }
-        row_end(pane);
-    }
     pane.y += 4.0;
 
-    // ---- Auto layout
+    let al_frame = is_frame && !multi && n0.kind.frame_props().map(|f| f.auto_layout.is_some()).unwrap_or(false);
+
+    // ---- Auto layout (carries the dimensions of auto-layout frames)
     if is_frame && !multi {
         section_sep(ui, pane, false);
         let al = n0.kind.frame_props().and_then(|f| f.auto_layout);
@@ -372,11 +432,34 @@ fn selection_ui(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[NodeId]) {
             app.toggle_auto_layout();
         }
         if let Some(a) = al {
-            auto_layout_ui(app, ui, pane, sel, a);
+            auto_layout_ui(app, ui, pane, sel, a, &n0, parent_al);
         }
-        if al.is_none() {
-            pane.y -= 0.0;
+    }
+
+    // ---- Layout: dimensions, resizing and constraints of everything else
+    if !al_frame {
+        section_sep(ui, pane, false);
+        title(ui, pane, "Layout", None, false);
+        dimensions_ui(app, ui, pane, sel, is_line);
+        if parent_al || is_text {
+            resizing_ui(app, ui, pane, sel, &n0);
         }
+        if parent_frame && !parent_al && !multi {
+            sublabel(ui, pane, "Constraints");
+            let hn = ["Left", "Right", "Left & Right", "Center", "Scale"].map(String::from);
+            let vn = ["Top", "Bottom", "Top & Bottom", "Center", "Scale"].map(String::from);
+            let order = [Constraint::Min, Constraint::Max, Constraint::Stretch, Constraint::Center, Constraint::Scale];
+            let hi = order.iter().position(|c| *c == n0.constraints.horizontal).unwrap_or(0);
+            let vi = order.iter().position(|c| *c == n0.constraints.vertical).unwrap_or(0);
+            if let Some(i) = dropdown(ui, pane.col(0, 0.0), "con-h", &hn[hi], &hn) {
+                app.edit_nodes(sel, |n| n.constraints.horizontal = order[i]);
+            }
+            if let Some(i) = dropdown(ui, pane.col(1, 0.0), "con-v", &vn[vi], &vn) {
+                app.edit_nodes(sel, |n| n.constraints.vertical = order[i]);
+            }
+            row_end(pane);
+        }
+        pane.y += 4.0;
     }
 
     // ---- Typography
@@ -460,6 +543,14 @@ fn selection_ui(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[NodeId]) {
     }
     effect_rows(app, ui, pane, sel, &n0.effects);
 
+    // ---- Selection colors / Styles
+    selection_colors_section(app, ui, pane, sel);
+    if !app.doc.styles.is_empty() {
+        section_sep(ui, pane, false);
+        title(ui, pane, "Styles", None, false);
+        styles_list(app, ui, pane, sel);
+    }
+
     // ---- Export
     section_sep(ui, pane, false);
     title(ui, pane, "Export", None, false);
@@ -534,7 +625,33 @@ fn resize_selection(app: &mut App, sel: &[NodeId], w: Option<f32>, h: Option<f32
     app.run_tx(tx);
 }
 
-fn auto_layout_ui(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[NodeId], a: AutoLayout) {
+fn dimensions_ui(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[NodeId], is_line: bool) {
+    sublabel(ui, pane, "Dimensions");
+    let ws = common(app, sel, |n| n.size.x);
+    let hs = common(app, sel, |n| n.size.y);
+    let w_new = field::num_field(ui, pane.col(0, 0.0), "w", Prefix::Text("W"), ws, "");
+    let h_new = if is_line { None } else { field::num_field(ui, pane.col(1, 0.0), "h", Prefix::Text("H"), hs, "") };
+    if w_new.is_some() || h_new.is_some() {
+        resize_selection(app, sel, w_new, h_new);
+    }
+    row_end(pane);
+}
+
+fn resizing_ui(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[NodeId], n0: &Node) {
+    sublabel(ui, pane, "Resizing");
+    let opts = ["Fixed", "Hug", "Fill"].map(String::from);
+    let order = [Sizing::Fixed, Sizing::Hug, Sizing::Fill];
+    let (hs, vs) = (sizing_of(n0, true), sizing_of(n0, false));
+    if let Some(i) = dropdown(ui, pane.col(0, 0.0), "rs-h", &format!("W: {}", opts[order.iter().position(|s| *s == hs).unwrap_or(0)]), &opts) {
+        set_sizing(app, sel, true, order[i]);
+    }
+    if let Some(i) = dropdown(ui, pane.col(1, 0.0), "rs-v", &format!("H: {}", opts[order.iter().position(|s| *s == vs).unwrap_or(0)]), &opts) {
+        set_sizing(app, sel, false, order[i]);
+    }
+    row_end(pane);
+}
+
+fn auto_layout_ui(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[NodeId], a: AutoLayout, n0: &Node, parent_al: bool) {
     sublabel(ui, pane, "Flow");
     let dir_sel = if a.wrap {
         2
@@ -563,6 +680,9 @@ fn auto_layout_ui(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[NodeId], a
         update_al(app, sel, |al| al.item_spacing = v);
     }
     row_end(pane);
+    dimensions_ui(app, ui, pane, sel, false);
+    let _ = parent_al;
+    resizing_ui(app, ui, pane, sel, n0);
     sublabel(ui, pane, "Padding");
     let ph = a.padding[1].max(a.padding[3]);
     let pv = a.padding[0].max(a.padding[2]);
@@ -643,9 +763,7 @@ fn text_ui(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[NodeId], t: &Text
         app.edit_nodes(sel, |n| {
             if let NodeKind::Text(t) = &mut n.kind {
                 t.style.font_size = v;
-                if t.auto_resize == TextAutoResize::WidthAndHeight {
-                    n.size = layout::estimate_text_size(t);
-                }
+                n.size = layout::fit_text(t, n.size);
             }
         });
     }
@@ -710,6 +828,8 @@ fn paint_preview(p: &Paint) -> Color32 {
 
 fn edit_paint_list(app: &mut App, sel: &[NodeId], stroke: bool, f: impl Fn(&mut Vec<Paint>)) {
     app.edit_nodes(sel, |n| {
+        // Hand-editing a paint detaches it from its shared style.
+        n.style_refs.remove(if stroke { "stroke" } else { "fill" });
         if stroke {
             f(&mut n.stroke.paints)
         } else {
@@ -719,6 +839,11 @@ fn edit_paint_list(app: &mut App, sel: &[NodeId], stroke: bool, f: impl Fn(&mut 
 }
 
 fn paint_rows(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[NodeId], paints: &[Paint], stroke: bool) {
+    let linked: Option<String> = sel
+        .first()
+        .and_then(|s| app.doc.get(*s))
+        .and_then(|n| n.style_refs.get(if stroke { "stroke" } else { "fill" }))
+        .map(|k| app.doc.style_name(k).to_string());
     for (i, p) in paints.iter().enumerate() {
         let key = (stroke, i);
         let sw = pane.rect(theme::SWATCH_ROW_X, 4.0, theme::SWATCH_SIZE, theme::SWATCH_SIZE);
@@ -726,6 +851,7 @@ fn paint_rows(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[NodeId], paint
         let op_r = pane.rect(theme::SWATCH_ROW_X + theme::SWATCH_SIZE + 8.0 + 96.0 + 4.0, 0.0, theme::OPACITY_FIELD_W, theme::FIELD_HEIGHT);
         let eye_r = pane.rect(theme::RIGHT_NAME_ACTION_X[1] - 1.0 + 4.0, 0.0, theme::PANEL_ACTION_BUTTON, theme::PANEL_ACTION_BUTTON);
         let minus_r = pane.rect(theme::SECTION_TRAILING_X, 0.0, theme::PANEL_ACTION_BUTTON, theme::PANEL_ACTION_BUTTON);
+        widgets::record(ui, &format!("sw:{stroke}:{i}"), sw);
         let swr = ui.interact(sw, ui.id().with(("sw", key)), Sense::click());
         widgets::swatch(ui.painter(), sw, paint_preview(p));
         if swr.clicked() {
@@ -735,6 +861,11 @@ fn paint_rows(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[NodeId], paint
             }
         }
         match &p.kind {
+            _ if linked.is_some() => {
+                field::field_bg(ui, hex_r, ui.id().with(("ro", key)));
+                let name = widgets::elide(ui.painter(), linked.as_deref().unwrap_or(""), &theme::font_body(), hex_r.width() - 16.0);
+                ui.painter().text(Pos2::new(hex_r.left() + 8.0, hex_r.center().y), Align2::LEFT_CENTER, name, theme::font_body(), theme::TEXT);
+            }
             PaintKind::Solid(c) => {
                 if let Some(s) = field::text_input(ui, hex_r, ("hex", key), &c.to_hex()) {
                     if let Some(nc) = Color::from_hex(&s) {
@@ -908,6 +1039,12 @@ fn open_picker(app: &mut App, target: PickTarget, color: Color32, anchor: Rect, 
 
 fn apply_picker(doc: &mut Document, p: &mut Picker) {
     let c = from_c32(p.color);
+    if let PickTarget::SelColor(old) = p.target {
+        if let Some(old) = Color::from_hex(&format!("{old:06X}")) {
+            crate::styles::replace_color(doc, &mut p.tx.ed, &p.ids, old, Color { a: 1.0, ..c });
+        }
+        return;
+    }
     for id in &p.ids {
         let Some(n) = p.tx.ed.node(doc, *id) else { continue };
         match p.target {
@@ -923,6 +1060,7 @@ fn apply_picker(doc: &mut Document, p: &mut Picker) {
                     pt.opacity = c.a;
                 }
             }
+            PickTarget::SelColor(_) => {}
             PickTarget::PageBg => n.kind = NodeKind::Page { background: c },
             PickTarget::Shadow(i) => {
                 if let Some(e) = n.effects.get_mut(i) {

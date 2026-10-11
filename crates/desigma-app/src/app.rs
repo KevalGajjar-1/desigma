@@ -52,6 +52,7 @@ impl View {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RailItem {
     File,
+    Agents,
     Assets,
     Tools,
     Variables,
@@ -112,6 +113,8 @@ pub struct App {
     pub keep_tool: bool,
     pub first_fit_done: bool,
     pub fonts: FontLoader,
+    /// Document snapshot while a numeric field is being scrubbed (see `widgets::field::SCRUB_FLAG`).
+    pub scrub: Option<std::collections::BTreeMap<NodeId, desigma_doc::Node>>,
 }
 
 impl App {
@@ -140,6 +143,7 @@ impl App {
             keep_tool: false,
             first_fit_done: false,
             fonts: FontLoader::default(),
+            scrub: None,
         }
     }
 

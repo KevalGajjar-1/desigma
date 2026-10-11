@@ -17,22 +17,31 @@ pub fn show(app: &mut App, ui: &mut Ui, rect: Rect) {
     // Avatar pill.
     let av = Rect::from_min_size(Pos2::new(left + theme::RIGHT_AVATAR_X, rect.top() + theme::RIGHT_AVATAR_Y), Vec2::new(theme::RIGHT_AVATAR_W, theme::RIGHT_AVATAR_H));
     let ar = ui.interact(av, ui.id().with("avatar"), Sense::click());
+    // 24px user-colour circle + 16px chevron inside a 50x24 pill that shows a hover background.
     if ar.hovered() {
         p.rect_filled(av, theme::cr(theme::RADIUS_FULL), theme::BG_HOVER);
     }
-    p.circle_filled(Pos2::new(av.left() + 12.0, av.center().y), 10.0, theme::AVATAR_BG);
-    p.text(Pos2::new(av.left() + 12.0, av.center().y), Align2::CENTER_CENTER, "K", theme::font_body_strong(), theme::AVATAR_FG);
-    icons::paint(&p, Icon::ChevronDown, Pos2::new(av.right() - 12.0, av.center().y), 12.0, theme::ICON_SECONDARY);
+    let r_av = theme::RIGHT_AVATAR_CIRCLE / 2.0;
+    p.circle_filled(Pos2::new(av.left() + r_av, av.center().y), r_av, theme::AVATAR_BG);
+    p.text(Pos2::new(av.left() + r_av, av.center().y), Align2::CENTER_CENTER, "K", theme::font_body_strong(), theme::AVATAR_FG);
+    icons::paint(&p, Icon::ChevronDown, Pos2::new(av.left() + theme::RIGHT_AVATAR_CIRCLE + 9.0, av.center().y), theme::CHEVRON_SMALL, theme::ICON_SECONDARY);
 
     // Present button + chevron.
     let pb = Rect::from_min_size(Pos2::new(right - theme::RIGHT_PRESENT_FROM_RIGHT, rect.top() + theme::RIGHT_BTN_Y), Vec2::splat(theme::RIGHT_BTN_SIZE));
     let pr = ui.interact(pb, ui.id().with("present"), Sense::click());
     widgets::button_bg(&p, pb, &pr, false, theme::cr_each(theme::RADIUS_MEDIUM, 0, 0, theme::RADIUS_MEDIUM));
-    icons::paint(&p, Icon::Play, pb.center(), 16.0, theme::ICON);
+    // Outlined play triangle, ~16px tall.
+    let (cx, cy) = (pb.center().x, pb.center().y);
+    let (w, h) = (theme::PRESENT_ICON_W, theme::PRESENT_ICON_H);
+    let x0 = cx - w / 2.0 + 0.5;
+    p.add(egui::Shape::closed_line(
+        vec![Pos2::new(x0, cy - h / 2.0), Pos2::new(x0 + w, cy), Pos2::new(x0, cy + h / 2.0)],
+        egui::Stroke::new(theme::PRESENT_ICON_STROKE, theme::ICON),
+    ));
     let cb = Rect::from_min_size(pb.right_top(), Vec2::new(theme::RIGHT_PRESENT_CHEVRON_W, theme::RIGHT_BTN_SIZE));
     let cr = ui.interact(cb, ui.id().with("present-chev"), Sense::click());
     widgets::button_bg(&p, cb, &cr, false, theme::cr_each(0, theme::RADIUS_MEDIUM, theme::RADIUS_MEDIUM, 0));
-    icons::paint(&p, Icon::ChevronDown, cb.center(), 12.0, theme::ICON_SECONDARY);
+    icons::paint(&p, Icon::ChevronDown, cb.center(), theme::CHEVRON_SMALL, theme::ICON_SECONDARY);
     if pr.clicked() || cr.clicked() {
         app.show_toast("Presentation mode is not available yet", false);
     }
@@ -81,7 +90,7 @@ pub fn show(app: &mut App, ui: &mut Ui, rect: Rect) {
     let open = app.ui.menu == Some(MenuKind::Zoom);
     widgets::button_bg(&p, zr, &zresp, open, theme::cr(theme::RADIUS_MEDIUM));
     p.text(Pos2::new(zr.left() + 8.0, zr.center().y), Align2::LEFT_CENTER, format!("{}%", (app.view.zoom * 100.0).round()), theme::font_body(), theme::TEXT);
-    icons::paint(&p, Icon::ChevronDown, Pos2::new(zr.right() - 10.0, zr.center().y), 12.0, theme::ICON_SECONDARY);
+    icons::paint(&p, Icon::ChevronDown, Pos2::new(zr.right() - 10.0, zr.center().y), theme::CHEVRON_SMALL, theme::ICON_SECONDARY);
     if zresp.clicked() {
         app.ui.menu = if open { None } else { Some(MenuKind::Zoom) };
         app.ui.menu_anchor = Some(zr);

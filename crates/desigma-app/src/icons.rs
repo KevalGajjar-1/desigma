@@ -14,7 +14,6 @@ pub enum Icon {
     Help,
     User,
     ChevronDown,
-    ChevronUp,
     ChevronRight,
     Plus,
     Minus,
@@ -26,7 +25,6 @@ pub enum Icon {
     Sidebar,
     Page,
     Check,
-    Play,
     // tools
     Move,
     Hand,
@@ -75,6 +73,10 @@ pub enum Icon {
     TextLeft,
     TextCenter,
     TextRight,
+    Distribute,
+    Rotate90,
+    FlipH,
+    FlipV,
 }
 
 struct G<'a> {
@@ -172,7 +174,6 @@ pub fn paint(p: &Painter, icon: Icon, center: Pos2, size: f32, col: Color32) {
             g.arc(8.0, 15.0, 5.5, PI, TAU);
         }
         Icon::ChevronDown => g.poly(&[(4.5, 6.5), (8.0, 10.0), (11.5, 6.5)], false),
-        Icon::ChevronUp => g.poly(&[(4.5, 9.5), (8.0, 6.0), (11.5, 9.5)], false),
         Icon::ChevronRight => g.poly(&[(6.0, 4.0), (10.0, 8.0), (6.0, 12.0)], false),
         Icon::Plus => {
             g.line((8.0, 3.0), (8.0, 13.0));
@@ -207,7 +208,6 @@ pub fn paint(p: &Painter, icon: Icon, center: Pos2, size: f32, col: Color32) {
             g.poly(&[(4.0, 2.0), (9.5, 2.0), (12.0, 4.5), (12.0, 14.0), (4.0, 14.0)], true);
         }
         Icon::Check => g.poly(&[(3.0, 8.5), (6.5, 12.0), (13.0, 4.5)], false),
-        Icon::Play => g.fill_poly(&[(5.0, 3.0), (13.0, 8.0), (5.0, 13.0)]),
         Icon::Move => g.fill_poly(&[(3.5, 2.0), (3.5, 12.5), (6.3, 9.8), (8.3, 14.0), (10.2, 13.1), (8.3, 9.0), (12.0, 9.0)]),
         Icon::Hand => {
             g.poly(&[(5.0, 8.0), (5.0, 3.5), (6.6, 3.5), (6.6, 7.0), (6.6, 2.5), (8.2, 2.5), (8.2, 7.0), (8.2, 3.2), (9.8, 3.2), (9.8, 7.5), (9.8, 5.0), (11.4, 5.0), (11.4, 10.0), (9.5, 14.0), (6.5, 14.0), (3.5, 10.0), (3.5, 8.8), (5.0, 9.5)], false);
@@ -378,6 +378,25 @@ pub fn paint(p: &Painter, icon: Icon, center: Pos2, size: f32, col: Color32) {
         }
         Icon::Sparkle => {
             g.fill_poly(&[(8.0, 1.5), (9.4, 6.6), (14.5, 8.0), (9.4, 9.4), (8.0, 14.5), (6.6, 9.4), (1.5, 8.0), (6.6, 6.6)]);
+        }
+        Icon::Distribute => {
+            g.line((4.0, 3.5), (12.0, 3.5));
+            g.rect(5.0, 7.0, 6.0, 2.0, 0.5);
+            g.line((4.0, 12.5), (12.0, 12.5));
+        }
+        Icon::Rotate90 => {
+            g.poly(&[(8.0, 4.5), (12.0, 8.5), (8.0, 12.5), (4.0, 8.5)], true);
+            g.poly(&[(5.0, 2.0), (8.0, 3.0), (6.0, 5.5)], false);
+        }
+        Icon::FlipH => {
+            g.line((8.0, 2.0), (8.0, 14.0));
+            g.poly(&[(6.0, 5.0), (2.5, 8.0), (6.0, 11.0)], true);
+            g.poly(&[(10.0, 5.0), (13.5, 8.0), (10.0, 11.0)], true);
+        }
+        Icon::FlipV => {
+            g.line((2.0, 8.0), (14.0, 8.0));
+            g.poly(&[(5.0, 6.0), (8.0, 2.5), (11.0, 6.0)], true);
+            g.poly(&[(5.0, 10.0), (8.0, 13.5), (11.0, 10.0)], true);
         }
         Icon::TextLeft => {
             g.line((2.5, 4.0), (13.5, 4.0));

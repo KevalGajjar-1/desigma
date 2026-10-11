@@ -7,7 +7,7 @@
 use crate::edit::Edit;
 use crate::util::{aabb_of, rect_corners, v2};
 use desigma_doc::{
-    AutoLayout, Constraint, Document, LayoutAlign, LayoutDirection, LineHeight, NodeId, NodeKind, Rect, Sizing,
+    AutoLayout, Constraint, Document, LayoutAlign, LayoutDirection, NodeId, NodeKind, Rect, Sizing, TextAutoResize,
     TextProps, Vec2,
 };
 
@@ -183,17 +183,18 @@ fn fill_weight(k: &ChildIn) -> f32 {
     }
 }
 
-/// Rough text extent used for hugging text layers (the renderer owns real shaping).
+/// Measured text extent when the text hugs its content (no wrapping).
 pub fn estimate_text_size(t: &TextProps) -> Vec2 {
-    let fs = t.style.font_size;
-    let lh = match t.style.line_height {
-        LineHeight::Auto => fs * 1.21,
-        LineHeight::Pixels(p) => p,
-        LineHeight::Percent(p) => fs * p / 100.0,
-    };
-    let lines: Vec<&str> = if t.content.is_empty() { vec![""] } else { t.content.split('\n').collect() };
-    let w = lines.iter().map(|l| l.chars().count() as f32 * (fs * 0.56 + t.style.letter_spacing)).fold(0.0, f32::max);
-    v2(w.ceil().max(1.0), (lh * lines.len() as f32).ceil())
+    crate::textmeasure::measure(t, None)
+}
+
+/// New node size after a text edit, following the node's auto-resize mode.
+pub fn fit_text(t: &TextProps, size: Vec2) -> Vec2 {
+    match t.auto_resize {
+        TextAutoResize::WidthAndHeight => estimate_text_size(t),
+        TextAutoResize::Height => v2(size.x, crate::textmeasure::measure(t, Some(size.x.max(1.0))).y),
+        _ => size,
+    }
 }
 
 fn child_in(doc: &Document, id: NodeId, horiz: bool) -> ChildIn {
