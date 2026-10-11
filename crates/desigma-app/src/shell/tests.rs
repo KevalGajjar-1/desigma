@@ -1,7 +1,7 @@
 //! End-to-end UI tests: drive the whole window with synthetic egui input.
 
 use super::*;
-use desigma_doc::{NodeId, NodeKind, Vec2 as DV};
+use desigma_doc::{Color, NodeId, NodeKind, Paint, Vec2 as DV};
 use egui::{Modifiers, PointerButton, RawInput};
 
 struct Sim {
@@ -92,6 +92,15 @@ impl Sim {
     }
     fn field_rect(&self, key: &str) -> Rect {
         self.ctx.data(|d| d.get_temp::<Rect>(egui::Id::new(("field-rect", format!("{key:?}"))))).unwrap_or_else(|| panic!("no field {key}"))
+    }
+    fn rect_of(&self, name: &str) -> Rect {
+        self.ctx.data(|d| d.get_temp::<Rect>(egui::Id::new(("test-rect", name.to_string())))).unwrap_or_else(|| panic!("nothing recorded for {name}"))
+    }
+    /// Scrolls the inspector to the bottom and redraws.
+    fn scroll_inspector_down(&mut self) {
+        self.shell.app.props.scroll = 1.0e6;
+        self.frame(vec![]);
+        self.frame(vec![]);
     }
     fn by_name(&self, name: &str) -> NodeId {
         self.app().doc.nodes.values().find(|n| n.name == name).map(|n| n.id).unwrap_or_else(|| panic!("no node {name}"))
@@ -449,4 +458,65 @@ fn shift_multiplies_scrub_by_ten() {
     let y1 = s.app().doc.get(id).unwrap().transform.ty;
     assert!((y1 - y0 - 50.0).abs() <= 10.0, "scrubbed by {}", y1 - y0);
     assert!(y1 - y0 >= 40.0);
+}
+
+#[test]
+fn clicking_a_color_style_applies_it_to_the_selection() {
+    let mut s = Sim::with(Options { select: Some("Hero".into()), ..Default::default() });
+    let hero = s.by_name("Hero");
+    s.scroll_inspector_down();
+    let r = s.rect_of("style:Brand/Primary");
+    s.click(r.center());
+    let n = s.app().doc.get(hero).unwrap();
+    assert_eq!(n.style_refs.get("fill").map(String::as_str), Some("Brand/Primary"));
+    assert_eq!(n.fills, vec![Paint::solid(Color::rgb(0x0C, 0x8C, 0xE9))]);
+    s.cmd_key(Key::Z);
+    assert!(s.app().doc.get(hero).unwrap().style_refs.is_empty());
+}
+
+#[test]
+fn clicking_a_text_style_applies_it_to_text() {
+    let mut s = Sim::with(Options { select: Some("Welcome back".into()), ..Default::default() });
+    let t = s.by_name("Welcome back");
+    s.scroll_inspector_down();
+    let r = s.rect_of("style:Body/Regular");
+    s.click(r.center());
+    match &s.app().doc.get(t).unwrap().kind {
+        NodeKind::Text(tp) => assert_eq!(tp.style.font_size, 16.0),
+        k => panic!("{k:?}"),
+    }
+    assert_eq!(s.app().doc.get(t).unwrap().style_refs.get("text").map(String::as_str), Some("Body/Regular"));
+}
+
+#[test]
+fn style_folders_collapse() {
+    let mut s = Sim::new();
+    // nothing selected: the Styles section is part of the page panel
+    s.shell.app.props.scroll = 0.0;
+    s.frame(vec![]);
+    let r = s.rect_of("folder:Color styles/Brand");
+    s.click(r.center());
+    assert!(s.app().props.folded.contains("Color styles/Brand"));
+    s.click(r.center());
+    assert!(s.app().props.folded.is_empty());
+}
+
+#[test]
+fn editing_a_selection_color_replaces_it_everywhere() {
+    let mut s = Sim::with(Options { select: Some("Welcome".into()), ..Default::default() });
+    let welcome = s.by_name("Welcome");
+    let before = crate::styles::selection_colors(&s.app().doc, &[welcome]);
+    assert!(before.len() >= 3);
+    s.scroll_inspector_down();
+    let r = s.rect_of("selhex:0");
+    s.click(r.center());
+    s.type_text("123456");
+    s.key(Key::Enter);
+    let after = crate::styles::selection_colors(&s.app().doc, &[welcome]);
+    assert!(after.iter().any(|c| c.to_hex() == "123456"));
+    assert!(!after.iter().any(|c| c.to_hex() == before[0].to_hex()));
+    assert_eq!(after.len(), before.len());
+    s.cmd_key(Key::Z);
+    let undone = crate::styles::selection_colors(&s.app().doc, &[welcome]);
+    assert_eq!(undone.iter().map(|c| c.to_hex()).collect::<Vec<_>>(), before.iter().map(|c| c.to_hex()).collect::<Vec<_>>());
 }

@@ -113,6 +113,15 @@ pub fn swatch(p: &Painter, rect: Rect, color: Color32) {
     p.rect_stroke(rect, r, Stroke::new(1.0, theme::BORDER_TRANSLUCENT), StrokeKind::Inside);
 }
 
+/// Test hook: remembers where a named widget was drawn so UI tests can find it.
+#[cfg(test)]
+pub fn record(ui: &Ui, name: &str, rect: Rect) {
+    ui.ctx().data_mut(|d| d.insert_temp(Id::new(("test-rect", name.to_string())), rect));
+}
+#[cfg(not(test))]
+#[inline]
+pub fn record(_ui: &Ui, _name: &str, _rect: Rect) {}
+
 pub fn fmt_num(v: f32) -> String {
     let s = format!("{:.2}", v);
     let s = s.trim_end_matches('0').trim_end_matches('.').to_string();

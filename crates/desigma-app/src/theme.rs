@@ -198,6 +198,9 @@ pub const SWATCH_SIZE: f32 = 16.0;
 pub const SWATCH_RADIUS: u8 = 2;
 pub const SWATCH_ROW_X: f32 = 17.0;
 pub const HEX_FIELD_W: f32 = 72.0;
+pub const STYLE_ROW_H: f32 = 28.0;
+pub const STYLE_FOLDER_ROW_H: f32 = 24.0;
+pub const STYLE_INDENT: f32 = 12.0;
 pub const OPACITY_FIELD_W: f32 = 48.0;
 
 pub const TOOLBELT_HEIGHT: f32 = 48.0;

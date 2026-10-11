@@ -11,6 +11,7 @@ mod layout;
 mod ops;
 mod panels;
 mod shell;
+mod styles;
 mod textmeasure;
 mod theme;
 mod util;
