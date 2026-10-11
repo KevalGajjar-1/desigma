@@ -691,26 +691,56 @@ pub fn finish_pen(app: &mut App) {
 }
 
 // ------------------------------------------------------------------ images
+/// Extensions offered by the image picker.
+pub const IMAGE_EXTENSIONS: [&str; 4] = ["png", "jpg", "jpeg", "webp"];
+
+/// Validates image bytes (PNG, JPEG or WebP) and returns the bytes to embed
+/// plus the pixel size. WebP is re-encoded as PNG so every renderer build can
+/// decode it.
+pub fn prepare_image(bytes: Vec<u8>) -> Result<(Vec<u8>, u32, u32), String> {
+    let fmt = image::guess_format(&bytes).map_err(|_| "Unsupported image (use PNG, JPEG or WebP)".to_string())?;
+    if !matches!(fmt, image::ImageFormat::Png | image::ImageFormat::Jpeg | image::ImageFormat::WebP) {
+        return Err("Unsupported image (use PNG, JPEG or WebP)".into());
+    }
+    let img = image::load_from_memory_with_format(&bytes, fmt).map_err(|e| format!("Cannot decode image: {e}"))?;
+    let (w, h) = (img.width(), img.height());
+    if fmt == image::ImageFormat::WebP {
+        let mut out = std::io::Cursor::new(Vec::new());
+        img.write_to(&mut out, image::ImageFormat::Png).map_err(|e| format!("Cannot convert image: {e}"))?;
+        return Ok((out.into_inner(), w, h));
+    }
+    Ok((bytes, w, h))
+}
+
 fn place_image(app: &mut App, page: DV) {
-    let Some(path) = rfd::FileDialog::new().add_filter("Images", &["png"]).pick_file() else { return };
+    let Some(path) = rfd::FileDialog::new().add_filter("Images", &IMAGE_EXTENSIONS).pick_file() else { return };
     let Ok(bytes) = std::fs::read(&path) else {
         app.show_toast("Cannot read image", true);
         return;
     };
-    let Ok(img) = image::load_from_memory(&bytes) else {
-        app.show_toast("Only PNG images are supported", true);
-        return;
+    let name = path.file_stem().and_then(|s| s.to_str()).unwrap_or("Image").to_string();
+    place_image_bytes(app, page, &name, bytes);
+}
+
+/// Embeds `bytes` and inserts a rectangle filled with the image at `page`.
+pub fn place_image_bytes(app: &mut App, page: DV, name: &str, bytes: Vec<u8>) -> Option<NodeId> {
+    let (bytes, iw, ih) = match prepare_image(bytes) {
+        Ok(v) => v,
+        Err(e) => {
+            app.show_toast(e, true);
+            return None;
+        }
     };
     let key = format!("img-{}", app.doc.images.len() + 1);
     app.doc.images.insert(key.clone(), bytes);
     let parent = create::container_at(&app.doc, app.page, page, &[]);
-    let Some(inv) = app.doc.world_transform(parent).invert() else { return };
+    let inv = app.doc.world_transform(parent).invert()?;
     let o = inv.apply(page);
     let id = app.doc.alloc_id();
-    let (w, h) = (img.width() as f32, img.height() as f32);
+    let (w, h) = (iw as f32, ih as f32);
     let scale = (400.0f32 / w.max(h)).min(1.0);
     let mut n = desigma_doc::Node::rectangle(id, Rect::new(o.x, o.y, w * scale, h * scale));
-    n.name = path.file_stem().and_then(|s| s.to_str()).unwrap_or("Image").to_string();
+    n.name = name.to_string();
     n.fills = vec![desigma_doc::Paint {
         kind: desigma_doc::PaintKind::Image { image_ref: key, scale_mode: desigma_doc::ImageScaleMode::Fill },
         opacity: 1.0,
@@ -719,11 +749,11 @@ fn place_image(app: &mut App, page: DV) {
     }];
     let mut tx = Tx::new();
     let index = app.doc.get(parent).map(|p| p.children.len()).unwrap_or(0);
-    if tx.cmd(&mut app.doc, Command::Insert { parent, index, nodes: vec![n] }).is_ok() {
-        app.run_tx(tx);
-        app.selection = vec![id];
-        app.tool = Tool::Move;
-    }
+    tx.cmd(&mut app.doc, Command::Insert { parent, index, nodes: vec![n] }).ok()?;
+    app.run_tx(tx);
+    app.selection = vec![id];
+    app.tool = Tool::Move;
+    Some(id)
 }
 
 // ------------------------------------------------------------------ text
@@ -771,15 +801,9 @@ pub fn finish_text(app: &mut App, commit: bool) {
     app.changed();
 }
 
-/// (char width, line height) used for caret placement; mirrors `layout::estimate_text_size`.
-pub fn text_metrics(props: &desigma_doc::TextProps) -> (f32, f32) {
-    let fs = props.style.font_size;
-    let lh = match props.style.line_height {
-        desigma_doc::LineHeight::Auto => fs * 1.21,
-        desigma_doc::LineHeight::Pixels(p) => p,
-        desigma_doc::LineHeight::Percent(p) => fs * p / 100.0,
-    };
-    (fs * 0.56 + props.style.letter_spacing, lh)
+/// Wrap width used when shaping a text node (None = hugging, no wrapping).
+pub fn text_wrap_width(t: &desigma_doc::TextProps, size: DV) -> Option<f32> {
+    (t.auto_resize != TextAutoResize::WidthAndHeight).then_some(size.x.max(1.0))
 }
 
 /// Splits a char-index caret into (line, column).
@@ -827,10 +851,7 @@ fn set_caret_at(app: &mut App, page: DV) {
     let NodeKind::Text(t) = &n.kind else { return };
     let Some(inv) = app.doc.world_transform(id).invert() else { return };
     let l = inv.apply(page);
-    let (cw, lh) = text_metrics(t);
-    let line = (l.y / lh).floor().max(0.0) as usize;
-    let col = (l.x / cw).round().max(0.0) as usize;
-    let caret = caret_from_line_col(&t.content, line, col);
+    let caret = crate::textmeasure::hit_caret(t, text_wrap_width(t, n.size), l.x, l.y);
     if let Some(s) = &mut app.canvas.text {
         s.caret = caret;
     }
@@ -848,9 +869,7 @@ fn text_edit_apply(app: &mut App, f: impl FnOnce(&mut String, &mut usize)) {
     if let Some(n) = sess.tx.ed.node(doc, id) {
         if let NodeKind::Text(t) = &mut n.kind {
             f(&mut t.content, &mut caret);
-            if t.auto_resize == TextAutoResize::WidthAndHeight {
-                n.size = layout::estimate_text_size(t);
-            }
+            n.size = layout::fit_text(t, n.size);
         }
     }
     sess.caret = caret;
@@ -986,14 +1005,6 @@ mod tests {
     }
 
     #[test]
-    fn text_metrics_follow_font_size() {
-        let mut t = desigma_doc::TextProps { content: String::new(), style: Default::default(), runs: vec![], auto_resize: Default::default(), max_lines: None };
-        t.style.font_size = 20.0;
-        let (cw, lh) = text_metrics(&t);
-        assert!(cw > 10.0 && lh > 20.0);
-    }
-
-    #[test]
     fn snap_point_aligns_to_edges() {
         let t = [Rect::new(100.0, 100.0, 50.0, 50.0)];
         let (p, r) = snap_point(v2(102.0, 300.0), &t, 1.0);
@@ -1075,5 +1086,40 @@ mod tests {
         let ids = hit::marquee_select(&app.doc, app.page, &r);
         assert_eq!(ids, vec![a]);
         assert!(!ids.contains(&b));
+    }
+
+    fn encode(fmt: image::ImageFormat) -> Vec<u8> {
+        let img = image::DynamicImage::ImageRgb8(image::RgbImage::from_fn(8, 4, |x, y| image::Rgb([x as u8 * 30, y as u8 * 60, 90])));
+        let mut out = std::io::Cursor::new(Vec::new());
+        img.write_to(&mut out, fmt).unwrap();
+        out.into_inner()
+    }
+
+    #[test]
+    fn prepare_image_accepts_png_jpeg_webp() {
+        for fmt in [image::ImageFormat::Png, image::ImageFormat::Jpeg, image::ImageFormat::WebP] {
+            let (bytes, w, h) = prepare_image(encode(fmt)).unwrap_or_else(|e| panic!("{fmt:?}: {e}"));
+            assert_eq!((w, h), (8, 4), "{fmt:?}");
+            if fmt == image::ImageFormat::WebP {
+                assert_eq!(image::guess_format(&bytes).unwrap(), image::ImageFormat::Png, "webp is stored as png");
+            }
+        }
+        assert!(prepare_image(b"not an image".to_vec()).is_err());
+        assert!(prepare_image(b"GIF89a     ;".to_vec()).is_err());
+    }
+
+    #[test]
+    fn place_jpeg_creates_image_fill_and_undoes() {
+        let (mut app, _a, _b) = app_with_two();
+        let n0 = app.doc.nodes.len();
+        let id = place_image_bytes(&mut app, v2(500.0, 500.0), "photo", encode(image::ImageFormat::Jpeg)).unwrap();
+        assert_eq!(app.doc.nodes.len(), n0 + 1);
+        assert_eq!(app.doc.images.len(), 1);
+        let n = app.doc.get(id).unwrap();
+        assert_eq!(n.name, "photo");
+        assert!(matches!(n.fills[0].kind, desigma_doc::PaintKind::Image { .. }));
+        assert!((n.size.x / n.size.y - 2.0).abs() < 1e-3);
+        app.undo();
+        assert_eq!(app.doc.nodes.len(), n0);
     }
 }

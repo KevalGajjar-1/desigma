@@ -16,7 +16,8 @@ desigma-fig.workspace = true
 desigma-fonts.workspace = true
 eframe = "0.35.0"
 rfd = "0.17.2"
-image.workspace = true
+image = { workspace = true, features = ["jpeg", "webp"] }
+cosmic-text = "0.19.0"
 serde_json.workspace = true
 serde.workspace = true
 egui = "0.35"

@@ -102,7 +102,9 @@ fn rectangle_tool_draws_and_undoes() {
     s.key(Key::R);
     assert_eq!(s.app().tool, Tool::Rectangle);
     let (a, b) = (s.screen(300.0, 800.0), s.screen(380.0, 860.0));
+    s.mods = Modifiers::COMMAND; // no snapping
     s.drag(a, b);
+    s.mods = Modifiers::NONE;
     assert_eq!(s.count(), before + 1);
     assert_eq!(s.app().tool, Tool::Move);
     let id = s.app().selection[0];

@@ -2,7 +2,7 @@
 //! badge, guides, marquee, pen preview and the text caret.
 
 use super::handles::Handle;
-use super::interact::{caret_line_col, selection_box, text_metrics};
+use super::interact::{selection_box, text_wrap_width};
 use super::snap::GuideAxis;
 use super::*;
 use crate::theme;
@@ -196,10 +196,7 @@ pub fn overlays(app: &App, ui: &Ui, rect: ERect) {
         if let Some(n) = app.doc.get(sess.id) {
             if let NodeKind::Text(t) = &n.kind {
                 let w = app.doc.world_transform(sess.id);
-                let (cw, lh) = text_metrics(t);
-                let (line, col) = caret_line_col(&t.content, sess.caret);
-                let x = col as f32 * cw;
-                let y = line as f32 * lh;
+                let (x, y, lh) = crate::textmeasure::caret_rect(t, text_wrap_width(t, n.size), sess.caret);
                 let a = to_s(w.apply(v2(x, y)));
                 let b = to_s(w.apply(v2(x, y + lh)));
                 let blink = (ui.input(|i| i.time) * 2.0) as i64 % 2 == 0;

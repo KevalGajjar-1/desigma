@@ -643,9 +643,7 @@ fn text_ui(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[NodeId], t: &Text
         app.edit_nodes(sel, |n| {
             if let NodeKind::Text(t) = &mut n.kind {
                 t.style.font_size = v;
-                if t.auto_resize == TextAutoResize::WidthAndHeight {
-                    n.size = layout::estimate_text_size(t);
-                }
+                n.size = layout::fit_text(t, n.size);
             }
         });
     }
