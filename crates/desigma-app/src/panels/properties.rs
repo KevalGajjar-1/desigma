@@ -41,6 +41,8 @@ pub struct PropsState {
     pub picker: Option<Picker>,
     /// Collapsed style folders in the Styles section.
     pub folded: std::collections::HashSet<String>,
+    /// Page background opacity before the visibility toggle hid it.
+    pub page_alpha_prev: f32,
 }
 
 pub(super) struct Pane {
@@ -180,53 +182,103 @@ pub fn show(app: &mut App, ui: &mut Ui, region: Rect) {
 }
 
 // ---------------------------------------------------------------- no selection
+/// Page background row: swatch, hex and opacity in one 184x24 field group plus a visibility toggle.
 fn page_section(app: &mut App, ui: &mut Ui, pane: &mut Pane) {
-    title(ui, pane, "Page", None, false);
+    let settings = title(ui, pane, "Page", Some(Icon::Opacity), false);
     let bg = match app.doc.get(app.page).map(|n| &n.kind) {
         Some(NodeKind::Page { background }) => *background,
         _ => Color::WHITE,
     };
-    let sw = pane.rect(theme::SWATCH_ROW_X, 4.0, theme::SWATCH_SIZE, theme::SWATCH_SIZE);
-    let hex_r = pane.rect(theme::SWATCH_ROW_X + theme::SWATCH_SIZE + 8.0, 0.0, theme::HEX_FIELD_W + 24.0, theme::FIELD_HEIGHT);
-    let op_r = pane.rect(theme::FIELD_COL_X[1] + 8.0 + 16.0, 0.0, theme::OPACITY_FIELD_W + 24.0, theme::FIELD_HEIGHT);
-    let swr = ui.interact(sw, ui.id().with("page-swatch"), Sense::click());
+    let g = pane.rect(theme::SECTION_CONTENT_X, theme::PAGE_FIELD_DY, theme::SECTION_CONTENT_W, theme::FIELD_HEIGHT);
+    let hex_id = ui.id().with(("txt", "page-hex"));
+    let op_id = ui.id().with(("num", "page-op"));
+    let focused = ui.memory(|m| m.has_focus(hex_id) || m.has_focus(op_id));
+    {
+        let p = ui.painter();
+        p.rect_filled(g, theme::cr(theme::RADIUS_MEDIUM), theme::BG_SECONDARY);
+        if focused {
+            p.rect_stroke(g, theme::cr(theme::RADIUS_MEDIUM), Stroke::new(1.0, theme::BORDER_SELECTED), StrokeKind::Inside);
+        } else if ui.rect_contains_pointer(g) {
+            p.rect_stroke(g, theme::cr(theme::RADIUS_MEDIUM), Stroke::new(1.0, theme::BORDER), StrokeKind::Inside);
+        }
+    }
+    let sw = Rect::from_center_size(Pos2::new(g.left() + theme::PAGE_SWATCH_CX, g.center().y), Vec2::splat(theme::PAGE_SWATCH));
+    let swr = ui.interact(sw.expand(2.0), ui.id().with("page-swatch"), Sense::click());
     widgets::swatch(ui.painter(), sw, to_c32(bg, 1.0));
-    if swr.clicked() {
+    if swr.clicked() || settings {
         open_picker(app, PickTarget::PageBg, to_c32(bg, 1.0), sw, vec![app.page]);
     }
-    if let Some(s) = field::text_input(ui, hex_r, "page-hex", &bg.to_hex()) {
+    let hex_r = Rect::from_min_max(Pos2::new(g.left() + theme::PAGE_HEX_X, g.top()), Pos2::new(g.left() + theme::PAGE_DIVIDER_X, g.bottom()));
+    if let Some(s) = field::edit_text(ui, hex_r, hex_id, &bg.to_hex(), theme::font_body(), theme::TEXT, 0.0) {
         if let Some(c) = Color::from_hex(&s) {
             let page = app.page;
             app.edit_nodes(&[page], |n| n.kind = NodeKind::Page { background: Color { a: bg.a, ..c } });
         }
     }
-    if let Some(v) = field::num_field(ui, op_r, "page-op", Prefix::None, Some((bg.a * 100.0).round()), "%") {
+    widgets::vline(ui.painter(), g.left() + theme::PAGE_DIVIDER_X, g.top(), g.bottom(), theme::BG);
+    let op_r = Rect::from_min_max(Pos2::new(g.left() + theme::PAGE_DIVIDER_X + 1.0, g.top()), Pos2::new(g.right() - theme::PAGE_PERCENT_W, g.bottom()));
+    let op_txt = fmt_num((bg.a * 100.0).round());
+    if let Some(s) = field::edit_text(ui, op_r, op_id, &op_txt, theme::font_body(), theme::TEXT, theme::PAGE_OPACITY_PAD) {
+        if let Ok(v) = s.trim().trim_end_matches('%').trim().parse::<f32>() {
+            let page = app.page;
+            let a = (v / 100.0).clamp(0.0, 1.0);
+            app.edit_nodes(&[page], |n| n.kind = NodeKind::Page { background: Color { a, ..bg } });
+        }
+    }
+    ui.painter().text(Pos2::new(g.right() - theme::PAGE_PERCENT_RIGHT, g.center().y), Align2::RIGHT_CENTER, "%", theme::font_body(), theme::TEXT);
+    // Visibility toggle: hiding sets the background opacity to 0 and remembers the old value.
+    let eye = pane.rect(theme::SECTION_TRAILING_X, theme::PAGE_FIELD_DY, theme::PANEL_ACTION_BUTTON, theme::PANEL_ACTION_BUTTON);
+    let hidden = bg.a <= 0.0;
+    if widgets::icon_button(ui, eye, "page-visible", if hidden { Icon::EyeOff } else { Icon::Eye }, false, if hidden { "Show background" } else { "Hide background" }).clicked() {
         let page = app.page;
-        let a = (v / 100.0).clamp(0.0, 1.0);
+        let a = if hidden { app.props.page_alpha_prev.max(0.01) } else { 0.0 };
+        if !hidden {
+            app.props.page_alpha_prev = bg.a;
+        }
         app.edit_nodes(&[page], |n| n.kind = NodeKind::Page { background: Color { a, ..bg } });
     }
-    pane.y += 36.0;
+    pane.y += theme::PAGE_FIELD_DY + theme::FIELD_HEIGHT + theme::PAGE_BOTTOM_PAD;
     section_sep(ui, pane, false);
 }
 
 fn styles_section(app: &mut App, ui: &mut Ui, pane: &mut Pane) {
     title(ui, pane, "Styles", Some(Icon::Plus), false);
+    let before = pane.y;
     styles_list(app, ui, pane, &[]);
-    pane.y += 4.0;
+    if pane.y > before {
+        pane.y += theme::STYLES_BOTTOM_PAD;
+    }
     section_sep(ui, pane, false);
     title(ui, pane, "Export", Some(Icon::Plus), true);
+    section_sep(ui, pane, false);
+}
+
+/// Colours of a paint (one for solids, the stops for gradients).
+fn paint_colors(p: &Paint) -> Vec<Color32> {
+    match &p.kind {
+        PaintKind::Solid(c) => vec![to_c32(*c, p.opacity)],
+        PaintKind::LinearGradient { stops, .. } | PaintKind::RadialGradient { stops, .. } | PaintKind::AngularGradient { stops, .. } | PaintKind::DiamondGradient { stops, .. } => {
+            stops.iter().map(|g| to_c32(g.color, p.opacity)).collect()
+        }
+        PaintKind::Image { .. } => vec![Color32::GRAY],
+    }
 }
 
 /// Text and colour styles grouped in folders by their "/" prefix. Clicking a
 /// row applies the style to `target`.
 fn styles_list(app: &mut App, ui: &mut Ui, pane: &mut Pane, target: &[NodeId]) {
     let applied = |app: &App, prop: &str| target.first().and_then(|t| app.doc.get(*t)).and_then(|n| n.style_refs.get(prop).cloned());
+    let mut shown_groups = 0;
     for (label, text) in [("Text styles", true), ("Color styles", false)] {
         let entries = crate::styles::style_entries(&app.doc, text);
         if entries.is_empty() {
             continue;
         }
-        sublabel(ui, pane, label);
+        pane.y += if shown_groups == 0 { theme::STYLES_LABEL_GAP } else { theme::STYLES_GROUP_GAP };
+        shown_groups += 1;
+        let lr = pane.rect(theme::SECTION_CONTENT_X, 0.0, theme::SECTION_CONTENT_W, theme::SUBLABEL_HEIGHT);
+        ui.painter().text(Pos2::new(lr.left(), lr.center().y), Align2::LEFT_CENTER, label, theme::font_body(), theme::TEXT_SECONDARY);
+        pane.y += theme::SUBLABEL_HEIGHT + theme::STYLES_ROW_GAP;
         let current = applied(app, if text { "text" } else { "fill" });
         let mut last_folder: Option<String> = None;
         for e in &entries {
@@ -277,18 +329,17 @@ fn styles_list(app: &mut App, ui: &mut Ui, pane: &mut Pane, target: &[NodeId]) {
                 ui.painter().text(Pos2::new(r.right() - 10.0, r.center().y), Align2::RIGHT_CENTER, format!("{}/{}", fmt_num(t.font_size), lh), theme::font_body(), theme::TEXT_TERTIARY);
             } else {
                 let Some(Style::Fill(paints)) = app.doc.styles.get(&e.key).cloned() else { continue };
-                let sw = Rect::from_center_size(Pos2::new(r.left() + 18.0 + indent, r.center().y), Vec2::splat(theme::SWATCH_SIZE));
-                let col = paints.first().and_then(|p| if let PaintKind::Solid(c) = &p.kind { Some(to_c32(*c, p.opacity)) } else { None }).unwrap_or(Color32::GRAY);
-                widgets::swatch(ui.painter(), sw, col);
+                let c = Pos2::new(r.left() + theme::STYLE_SWATCH_CX + indent, r.center().y);
+                let cols = paints.first().map(paint_colors).filter(|c| !c.is_empty()).unwrap_or_else(|| vec![Color32::GRAY]);
+                widgets::swatch_circle(ui.painter(), c, theme::STYLE_SWATCH / 2.0, &cols);
                 let nm = widgets::elide(ui.painter(), &e.leaf, &theme::font_body(), 130.0 - indent);
-                ui.painter().text(Pos2::new(r.left() + 36.0 + indent, r.center().y), Align2::LEFT_CENTER, nm, theme::font_body(), theme::TEXT);
+                ui.painter().text(Pos2::new(r.left() + theme::STYLE_LABEL_X + indent, r.center().y), Align2::LEFT_CENTER, nm, theme::font_body(), theme::TEXT);
             }
             if resp.clicked() && !target.is_empty() {
                 app.apply_style(target, &e.key);
             }
             pane.y += theme::STYLE_ROW_H;
         }
-        pane.y += 4.0;
     }
 }
 
