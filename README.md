@@ -172,7 +172,9 @@ cargo run --release -p desigma-app -- file.fig   # open a Figma file
 cargo test --workspace                           # the test suite
 ```
 
-On Linux you need the usual windowing headers: `pkg-config libxkbcommon-dev libwayland-dev libx11-dev libxcursor-dev libxrandr-dev libxi-dev libgl1-mesa-dev libfontconfig1-dev`. macOS should build but isn't covered by CI yet.
+On Linux you need the usual windowing headers: `pkg-config libxkbcommon-dev libwayland-dev libx11-dev libxcursor-dev libxrandr-dev libxi-dev libgl1-mesa-dev libfontconfig1-dev`. macOS is built and tested in CI.
+
+Want to contribute or cut a release? See [CONTRIBUTING.md](CONTRIBUTING.md) and [docs/releasing.md](docs/releasing.md).
 
 Useful flags for automation and testing:
 

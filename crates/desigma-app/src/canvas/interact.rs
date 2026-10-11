@@ -120,7 +120,7 @@ pub fn process(app: &mut App, ui: &mut Ui, rect: ERect, resp: &Response) {
     let hovered = resp.hovered();
 
     // Wheel pan / pinch & ctrl+wheel zoom.
-    if hovered && app.canvas.text.is_none() || hovered && matches!(app.canvas.inter, Interaction::None) {
+    if hovered && (app.canvas.text.is_none() || matches!(app.canvas.inter, Interaction::None)) {
         let (scroll, zoom_delta, mods) = ui.input(|i| (i.smooth_scroll_delta, i.zoom_delta(), i.modifiers));
         if (zoom_delta - 1.0).abs() > 1e-4 {
             if let Some(p) = inp.pos {

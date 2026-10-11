@@ -17,9 +17,9 @@ impl Edit {
 
     /// Records the original state of `id` (first touch wins).
     pub fn touch(&mut self, doc: &Document, id: NodeId) {
-        if !self.before.contains_key(&id) {
+        if let std::collections::btree_map::Entry::Vacant(slot) = self.before.entry(id) {
             if let Some(n) = doc.get(id) {
-                self.before.insert(id, n.clone());
+                slot.insert(n.clone());
             }
         }
     }

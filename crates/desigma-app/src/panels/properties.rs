@@ -997,6 +997,7 @@ fn effect_rows(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[NodeId], effe
         match e {
             Effect::DropShadow { color, offset, radius, spread, .. } | Effect::InnerShadow { color, offset, radius, spread, .. } => {
                 let (ox, oy, r, s, c) = (offset.x, offset.y, *radius, *spread, *color);
+                #[allow(clippy::type_complexity)] // deferred per-effect updater closure
                 let mut upd: Option<Box<dyn Fn(&mut Effect)>> = None;
                 if let Some(v) = field::num_field(ui, pane.col(0, 0.0), ("fx-x", i), Prefix::Text("X"), Some(ox), "") {
                     upd = Some(Box::new(move |e| set_shadow(e, |_, o, _, _| o.x = v)));
@@ -1036,11 +1037,8 @@ fn effect_rows(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[NodeId], effe
             Effect::LayerBlur { radius, .. } | Effect::BackgroundBlur { radius, .. } => {
                 if let Some(v) = field::num_field(ui, pane.col(0, 0.0), ("fx-blur", i), Prefix::Text("B"), Some(*radius), "") {
                     app.edit_nodes(sel, |n| {
-                        if let Some(e) = n.effects.get_mut(i) {
-                            match e {
-                                Effect::LayerBlur { radius, .. } | Effect::BackgroundBlur { radius, .. } => *radius = v.max(0.0),
-                                _ => {}
-                            }
+                        if let Some(Effect::LayerBlur { radius, .. } | Effect::BackgroundBlur { radius, .. }) = n.effects.get_mut(i) {
+                            *radius = v.max(0.0);
                         }
                     });
                 }

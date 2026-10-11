@@ -1333,7 +1333,7 @@ mod tests {
         assert!(!f.d.get(icon_i).unwrap().visible);
         let c = delete_prop(&mut f.d, f.comp, "Icon on");
         apply(&mut f.d, c);
-        assert!(f.d.get(i).unwrap().component.values.get("Icon on").is_none());
+        assert!(!f.d.get(i).unwrap().component.values.contains_key("Icon on"));
         assert!(f.d.get(icon_i).unwrap().visible);
         let _ = inv;
     }

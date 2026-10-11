@@ -98,8 +98,7 @@ fn store_state(ctx: &egui::Context, id: Id, mut st: MenuState) {
 
 /// Opens the menu `id` with the given highlight path (used by `--menu main/File`).
 pub fn preset_path(ctx: &egui::Context, id: Id, path: &[usize]) {
-    let mut st = MenuState::default();
-    st.hl = path.iter().map(|i| Some(*i)).collect();
+    let mut st = MenuState { hl: path.iter().map(|i| Some(*i)).collect(), ..Default::default() };
     if !st.hl.is_empty() {
         st.hl.push(None);
     }

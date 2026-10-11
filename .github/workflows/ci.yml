@@ -20,7 +20,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-latest, windows-latest, macos-14]
     steps:
       - uses: actions/checkout@v4
 
@@ -46,8 +46,6 @@ jobs:
   lint:
     name: Clippy
     runs-on: ubuntu-latest
-    # Reported but not yet blocking; flip to blocking once the tree is lint-clean.
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
 
@@ -66,6 +64,22 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Clippy
-        run: cargo clippy --workspace --all-targets --locked
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
         env:
           RUSTFLAGS: ""
+
+  fmt:
+    name: Rustfmt
+    runs-on: ubuntu-latest
+    # Advisory: the tree predates rustfmt.toml and a full reformat would touch
+    # most files. Flip to blocking after a one-off `cargo fmt --all` commit.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Rustfmt
+        run: cargo fmt --all --check
