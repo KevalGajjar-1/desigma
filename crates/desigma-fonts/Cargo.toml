@@ -1,0 +1,19 @@
+[package]
+name = "desigma-fonts"
+description = "Bundled and on-demand open-source fonts for desigma (Inter bundled, Fontsource fetch + disk cache)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = ["net"]
+# Blocking HTTP fetch of fonts from the Fontsource API.
+net = ["dep:ureq"]
+
+[dependencies]
+desigma-doc.workspace = true
+dirs = "5"
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+ureq = { version = "2", optional = true }
