@@ -235,6 +235,10 @@ impl Renderer<'_> {
             let full = (0.0, 0.0, layer.width() as f32, layer.height() as f32);
             effects::blur_rect(&mut layer, if has_kids && !clips { full } else { bb }, sigma);
         }
+        if let Some(mode) = paint::custom_blend(n.blend) {
+            paint::blend_layer(target, &layer, opacity, mode);
+            return;
+        }
         let pp = sk::PixmapPaint { opacity, blend_mode: blend_mode(n.blend), ..Default::default() };
         target.draw_pixmap(0, 0, layer.as_ref(), &pp, sk::Transform::identity(), None);
     }
