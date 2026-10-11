@@ -184,7 +184,9 @@ pub fn show(app: &mut App, ui: &mut Ui, rect: ERect) {
     }
     tiles::paint(app, ui, rect);
     let resp = ui.interact(rect, ui.id().with("canvas"), Sense::click_and_drag());
-    if !proto::process(app, ui, rect, &resp) {
+    // While the colour picker waits for an eyedropper click the canvas must not react.
+    let eyedropping = app.props.picker.as_ref().is_some_and(|p| p.eyedrop);
+    if !eyedropping && !proto::process(app, ui, rect, &resp) {
         interact::process(app, ui, rect, &resp);
     }
     grids::paint(app, ui, rect);

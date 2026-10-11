@@ -32,9 +32,15 @@ pub enum PickTarget {
 pub struct Picker {
     pub target: PickTarget,
     pub tx: Tx,
-    pub color: Color32,
     pub anchor: Rect,
     pub ids: Vec<NodeId>,
+    /// The paint being edited (solid colour with opacity as alpha, or a gradient).
+    pub paint: Paint,
+    pub state: crate::widgets::picker::State,
+    /// Swatch sources gathered when the picker opened.
+    pub sources: Vec<(String, Vec<Color32>)>,
+    /// Waiting for a click on the canvas to sample a colour.
+    pub eyedrop: bool,
 }
 
 #[derive(Default)]
@@ -1086,12 +1092,52 @@ fn convert_effect(e: &Effect, kind: usize) -> Effect {
 }
 
 // ---------------------------------------------------------------- color picker
+fn node_paint(app: &App, target: PickTarget, ids: &[NodeId]) -> Option<Paint> {
+    let n = app.doc.get(*ids.first()?)?;
+    match target {
+        PickTarget::Fill(i) => n.fills.get(i).cloned(),
+        PickTarget::Stroke(i) => n.stroke.paints.get(i).cloned(),
+        _ => None,
+    }
+}
+
+/// Colours for the picker's swatch grid: this page, the whole document and colour styles.
+fn swatch_sources(app: &App) -> Vec<(String, Vec<Color32>)> {
+    let conv = |cs: Vec<Color>| cs.into_iter().map(|c| to_c32(c, 1.0)).collect::<Vec<_>>();
+    let page = conv(crate::styles::selection_colors(&app.doc, &[app.page]));
+    let doc = conv(crate::styles::selection_colors(&app.doc, &app.doc.pages.clone()));
+    let styles: Vec<Color32> = crate::styles::style_entries(&app.doc, false)
+        .iter()
+        .filter_map(|e| match app.doc.styles.get(&e.key) {
+            Some(Style::Fill(ps)) => ps.first().map(|p| widgets::picker::preview_color(p)),
+            _ => None,
+        })
+        .collect();
+    let mut out = vec![("On this page".to_string(), page), ("Document colors".to_string(), doc)];
+    if !styles.is_empty() {
+        out.push(("Color styles".to_string(), styles));
+    }
+    out
+}
+
 pub(super) fn open_picker(app: &mut App, target: PickTarget, color: Color32, anchor: Rect, ids: Vec<NodeId>) {
-    app.props.picker = Some(Picker { target, tx: Tx::new(), color, anchor, ids });
+    let paint = node_paint(app, target, &ids).unwrap_or_else(|| {
+        let [r, g, b, a] = color.to_srgba_unmultiplied();
+        Paint { opacity: a as f32 / 255.0, ..Paint::solid(Color::rgba(r, g, b, 255)) }
+    });
+    let state = widgets::picker::State::new(&paint);
+    let sources = swatch_sources(app);
+    app.props.picker = Some(Picker { target, tx: Tx::new(), anchor, ids, paint, state, sources, eyedrop: false });
+}
+
+/// Solid colour (alpha included) the picker currently holds, for the solid-only targets.
+fn picker_color(p: &Picker) -> Color {
+    let [r, g, b, a] = widgets::picker::primary_rgba(&p.paint);
+    Color::rgba(r, g, b, a)
 }
 
 fn apply_picker(doc: &mut Document, p: &mut Picker) {
-    let c = from_c32(p.color);
+    let c = picker_color(p);
     if let PickTarget::SelColor(old) = p.target {
         if let Some(old) = Color::from_hex(&format!("{old:06X}")) {
             crate::styles::replace_color(doc, &mut p.tx.ed, &p.ids, old, Color { a: 1.0, ..c });
@@ -1103,14 +1149,14 @@ fn apply_picker(doc: &mut Document, p: &mut Picker) {
         match p.target {
             PickTarget::Fill(i) => {
                 if let Some(pt) = n.fills.get_mut(i) {
-                    pt.kind = PaintKind::Solid(Color { a: 1.0, ..c });
-                    pt.opacity = c.a;
+                    let visible = pt.visible;
+                    *pt = Paint { visible, ..p.paint.clone() };
                 }
             }
             PickTarget::Stroke(i) => {
                 if let Some(pt) = n.stroke.paints.get_mut(i) {
-                    pt.kind = PaintKind::Solid(Color { a: 1.0, ..c });
-                    pt.opacity = c.a;
+                    let visible = pt.visible;
+                    *pt = Paint { visible, ..p.paint.clone() };
                 }
             }
             PickTarget::SelColor(_) => {}
@@ -1138,27 +1184,108 @@ fn apply_picker(doc: &mut Document, p: &mut Picker) {
     }
 }
 
+/// Reads the page colour under `pos` (screen space) by rendering a 1x1 pixel of the page.
+fn sample_canvas(app: &App, pos: Pos2) -> Option<[u8; 3]> {
+    use desigma_render::tiny_skia::Pixmap;
+    let p = app.view.to_page(app.canvas_rect.min, pos);
+    let vp = desigma_render::Viewport { offset: DVec2::new(p.x - 0.5, p.y - 0.5), zoom: 1.0, dpr: 1.0 };
+    let mut pm = Pixmap::new(1, 1)?;
+    desigma_render::render_page(&app.doc, app.page, &vp, &mut pm);
+    let px = pm.pixel(0, 0)?.demultiply();
+    Some([px.red(), px.green(), px.blue()])
+}
+
+/// Creates a colour style from the picker's paint and links it to the edited layers.
+fn create_style(app: &mut App, pk: &mut Picker) {
+    let stroke = matches!(pk.target, PickTarget::Stroke(_));
+    let mut n = 1;
+    while app.doc.styles.contains_key(&format!("Color style {n}")) {
+        n += 1;
+    }
+    let key = format!("Color style {n}");
+    app.doc.styles.insert(key.clone(), Style::Fill(vec![Paint { visible: true, ..pk.paint.clone() }]));
+    app.doc.style_meta.insert(
+        key.clone(),
+        StyleMeta { name: key.clone(), key: None, description: String::new(), property: if stroke { StyleProperty::Stroke } else { StyleProperty::Fill } },
+    );
+    for id in &pk.ids {
+        if let Some(node) = pk.tx.ed.node(&mut app.doc, *id) {
+            node.style_refs.insert(if stroke { "stroke" } else { "fill" }.into(), key.clone());
+        }
+    }
+    app.show_toast(format!("Created \"{key}\""), false);
+}
+
 pub(super) fn picker_popup(app: &mut App, ui: &mut Ui, region: Rect) {
+    use widgets::picker;
     let Some(mut pk) = app.props.picker.take() else { return };
     let ctx = ui.ctx().clone();
-    let pos = Pos2::new(region.left() - 232.0, (pk.anchor.top() - 20.0).max(region.top() - 40.0));
-    let mut changed = false;
-    let area = egui::Area::new(egui::Id::new("color-picker")).order(egui::Order::Foreground).fixed_pos(pos).show(&ctx, |ui| {
-        let (rect, _) = ui.allocate_exact_size(Vec2::new(224.0, 250.0), Sense::hover());
-        widgets::elevation_shadow(ui.painter(), rect, theme::MENU_RADIUS);
-        ui.painter().rect_filled(rect, theme::cr(theme::MENU_RADIUS), theme::BG_MENU);
-        ui.painter().rect_stroke(rect, theme::cr(theme::MENU_RADIUS), Stroke::new(1.0, theme::BORDER_MENU), StrokeKind::Inside);
-        let inner = rect.shrink(8.0);
-        ui.scope_builder(egui::UiBuilder::new().max_rect(inner), |ui| {
-            ui.spacing_mut().slider_width = 180.0;
-            changed = egui::color_picker::color_picker_color32(ui, &mut pk.color, egui::color_picker::Alpha::OnlyBlend);
-        });
-        rect
+    let paint_types = matches!(pk.target, PickTarget::Fill(_) | PickTarget::Stroke(_));
+    let styles: Vec<picker::StyleItem> = if paint_types {
+        crate::styles::style_entries(&app.doc, false)
+            .into_iter()
+            .filter_map(|e| match app.doc.styles.get(&e.key) {
+                Some(Style::Fill(ps)) => {
+                    ps.first().map(|p| picker::StyleItem { name: app.doc.style_name(&e.key).to_string(), key: e.key.clone(), paint: p.clone() })
+                }
+                _ => None,
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let env = picker::Env { paint_types, sources: &pk.sources, styles: &styles, can_add_style: paint_types };
+    let h = picker::panel_height(&env, picker::mode_of(&pk.paint.kind), pk.state.tab, pk.state.source);
+    let screen = ctx.content_rect();
+    let x = (region.left() - picker::W).max(screen.left() + 8.0);
+    let y = (pk.anchor.top() - 8.0).min(screen.bottom() - h - 8.0).max(screen.top() + 8.0);
+    let mut out = picker::Out::default();
+    let mut panel = Rect::NOTHING;
+    egui::Area::new(egui::Id::new("color-picker")).order(egui::Order::Foreground).fixed_pos(Pos2::new(x, y)).show(&ctx, |ui| {
+        let (r, o) = picker::show(ui, Pos2::new(x, y), &mut pk.state, &mut pk.paint, &env);
+        panel = r;
+        out = o;
     });
+    let mut changed = out.changed;
+    if out.eyedrop {
+        pk.eyedrop = true;
+    }
+    if out.want_image {
+        if let Some(path) = rfd::FileDialog::new().add_filter("Images", &crate::canvas::interact::IMAGE_EXTENSIONS[..4]).pick_file() {
+            match std::fs::read(&path).map_err(|_| "Cannot read image".to_string()).and_then(crate::canvas::interact::prepare_image) {
+                Ok((bytes, _, _)) => {
+                    let key = format!("img-{}", app.doc.images.len() + 1);
+                    app.doc.images.insert(key.clone(), bytes);
+                    pk.paint.kind = PaintKind::Image { image_ref: key, scale_mode: ImageScaleMode::Fill };
+                    pk.paint.opacity = 1.0;
+                    changed = true;
+                }
+                Err(e) => app.show_toast(e, true),
+            }
+        }
+    }
+    // Eyedropper: the next canvas click samples the colour under the pointer.
+    if pk.eyedrop {
+        ctx.set_cursor_icon(egui::CursorIcon::Crosshair);
+        let (clicked, ptr, esc) = ctx.input(|i| (i.pointer.primary_pressed(), i.pointer.interact_pos(), i.key_pressed(egui::Key::Escape)));
+        if esc {
+            pk.eyedrop = false;
+        } else if let (true, Some(p)) = (clicked, ptr) {
+            if app.canvas_rect.contains(p) && !panel.contains(p) {
+                if let Some([r, g, b]) = sample_canvas(app, p) {
+                    let a = widgets::picker::active_rgba(&pk.paint, pk.state.sel)[3];
+                    widgets::picker::set_active(&mut pk.paint, pk.state.sel, [r, g, b, a]);
+                    changed = true;
+                }
+                pk.eyedrop = false;
+            }
+        }
+    }
+    gradient_handles(app, &ctx, &mut pk, &mut changed);
     if changed {
         if pk.target == PickTarget::TextFill && app.canvas.text.is_some() {
             // Colour of the characters being edited: goes through the text session.
-            let c = from_c32(pk.color);
+            let c = picker_color(&pk);
             let col = Color { a: 1.0, ..c };
             crate::canvas::textsession::style_selection_as(app, |st| super::typography::set_solid(st, col, Some(c.a)), crate::textedit::EditKind::Style);
         } else {
@@ -1167,13 +1294,146 @@ pub(super) fn picker_popup(app: &mut App, ui: &mut Ui, region: Rect) {
             app.changed();
         }
     }
+    if out.add_style {
+        create_style(app, &mut pk);
+        app.changed();
+        out.close = true;
+    }
+    let mut remove = false;
+    if out.remove {
+        pk.tx.ed.revert(&mut app.doc);
+        remove = true;
+    }
     let (pressed, ptr, esc) = ctx.input(|i| (i.pointer.any_pressed(), i.pointer.interact_pos(), i.key_pressed(egui::Key::Escape)));
-    let outside = pressed && ptr.map(|p| !area.inner.contains(p) && !pk.anchor.contains(p)).unwrap_or(false);
-    if outside || esc {
+    let outside =
+        !pk.eyedrop && !pk.state.menu_open && pressed && ptr.map(|p| !panel.contains(p) && !pk.anchor.contains(p) && !handle_hit(&pk, app, p)).unwrap_or(false);
+    let esc = esc && !pk.eyedrop && !pk.state.menu_open;
+    if outside || esc || out.close || out.apply_style.is_some() || remove {
+        let ids = pk.ids.clone();
+        let target = pk.target;
         let tx = pk.tx;
-        app.run_tx(tx);
+        if remove {
+            // Drop the paint in the same undo step.
+            let mut tx = tx;
+            for id in &ids {
+                if let Some(n) = tx.ed.node(&mut app.doc, *id) {
+                    match target {
+                        PickTarget::Fill(i) if i < n.fills.len() => {
+                            n.fills.remove(i);
+                        }
+                        PickTarget::Stroke(i) if i < n.stroke.paints.len() => {
+                            n.stroke.paints.remove(i);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            app.run_tx(tx);
+        } else {
+            app.run_tx(tx);
+        }
+        if let Some(key) = out.apply_style {
+            app.apply_style(&ids, &key);
+        }
     } else {
         app.props.picker = Some(pk);
+    }
+}
+
+/// Handles of the gradient on the canvas are in screen space; clicks on them must not close the picker.
+fn handle_hit(pk: &Picker, app: &App, p: Pos2) -> bool {
+    handle_points(pk, app).iter().any(|(_, c)| c.distance(p) < 12.0)
+}
+
+/// Screen positions of the three gradient handles of the edited node.
+fn handle_points(pk: &Picker, app: &App) -> Vec<(usize, Pos2)> {
+    let Some(h) = widgets::picker::handles_of(&pk.paint.kind) else { return Vec::new() };
+    let Some(id) = pk.ids.first() else { return Vec::new() };
+    let Some(n) = app.doc.get(*id) else { return Vec::new() };
+    let w = app.doc.world_transform(*id);
+    h.iter()
+        .enumerate()
+        .map(|(i, v)| {
+            let page = w.apply(DVec2::new(v.x * n.size.x, v.y * n.size.y));
+            (i, app.view.to_screen(app.canvas_rect.min, page))
+        })
+        .collect()
+}
+
+/// On-canvas gradient editing: the start/end/width handles of the edited paint.
+fn gradient_handles(app: &mut App, ctx: &egui::Context, pk: &mut Picker, changed: &mut bool) {
+    let pts = handle_points(pk, app);
+    if pts.len() != 3 || !matches!(pk.target, PickTarget::Fill(_) | PickTarget::Stroke(_)) {
+        return;
+    }
+    let Some(id) = pk.ids.first().copied() else { return };
+    let (Some(n), Some(inv)) = (app.doc.get(id), app.doc.world_transform(id).invert()) else { return };
+    let size = n.size;
+    let origin = app.canvas_rect.min;
+    let view = app.view;
+    let canvas = app.canvas_rect;
+    let mode = widgets::picker::mode_of(&pk.paint.kind);
+    let mut moved: Option<(usize, DVec2)> = None;
+    egui::Area::new(egui::Id::new("gradient-handles")).order(egui::Order::Foreground).fixed_pos(canvas.min).interactable(true).show(ctx, |ui| {
+        let p = ui.painter().with_clip_rect(canvas);
+        let stroke = |w: f32, c: Color32| Stroke::new(w, c);
+        p.line_segment([pts[0].1, pts[1].1], stroke(3.0, Color32::from_black_alpha(0x66)));
+        p.line_segment([pts[0].1, pts[1].1], stroke(1.5, Color32::WHITE));
+        p.line_segment([pts[0].1, pts[2].1], stroke(1.0, Color32::from_white_alpha(0xB2)));
+        let stops = widgets::picker::stops_of(&pk.paint.kind).cloned().unwrap_or_default();
+        for (i, c) in &pts {
+            let r = Rect::from_center_size(*c, Vec2::splat(16.0));
+            let resp = ui.interact(r, ui.id().with(("gh", *i)), Sense::drag());
+            if resp.dragged() {
+                if let Some(pt) = resp.interact_pointer_pos() {
+                    let local = inv.apply(view.to_page(origin, pt));
+                    moved = Some((*i, DVec2::new(local.x / size.x.max(1e-3), local.y / size.y.max(1e-3))));
+                }
+            }
+            let fill = if *i == 0 {
+                stops.first().map(|s| to_c32(s.color, 1.0))
+            } else if *i == 1 {
+                stops.last().map(|s| to_c32(s.color, 1.0))
+            } else {
+                None
+            };
+            let rad = if *i == 2 { 4.0 } else { 6.5 };
+            p.circle_filled(*c, rad + 1.5, Color32::from_black_alpha(0x4D));
+            p.circle_filled(*c, rad, Color32::WHITE);
+            if let Some(f) = fill {
+                p.circle_filled(*c, rad - 2.0, f);
+            }
+        }
+        // Stop markers along the axis of a linear gradient.
+        if mode == widgets::picker::Mode::Linear {
+            for (si, s) in stops.iter().enumerate() {
+                let c = pts[0].1 + (pts[1].1 - pts[0].1) * s.pos.clamp(0.0, 1.0);
+                let sel = pk.state.sel == si;
+                p.rect_filled(Rect::from_center_size(c, Vec2::splat(10.0)), theme::cr(3), if sel { Color32::WHITE } else { Color32::from_white_alpha(0xCC) });
+                p.rect_filled(Rect::from_center_size(c, Vec2::splat(6.0)), theme::cr(2), to_c32(s.color, 1.0));
+            }
+        }
+    });
+    if let Some((i, v)) = moved {
+        let v = DVec2::new(v.x, v.y);
+        match &mut pk.paint.kind {
+            PaintKind::LinearGradient { handles, .. }
+            | PaintKind::RadialGradient { handles, .. }
+            | PaintKind::AngularGradient { handles, .. }
+            | PaintKind::DiamondGradient { handles, .. } => {
+                if i == 0 {
+                    // Moving the start/centre drags the whole gradient.
+                    let d = DVec2::new(v.x - handles[0].x, v.y - handles[0].y);
+                    for h in handles.iter_mut() {
+                        *h = DVec2::new(h.x + d.x, h.y + d.y);
+                    }
+                } else {
+                    handles[i] = v;
+                }
+                *changed = true;
+            }
+            _ => {}
+        }
     }
 }
 
