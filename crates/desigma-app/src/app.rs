@@ -1,0 +1,214 @@
+//! Application state shared by all panels and the canvas.
+
+use crate::canvas::tools::{Tool, GROUPS};
+use crate::canvas::CanvasState;
+use crate::clipboard::Clip;
+use crate::panels::layers::LayersState;
+use crate::panels::properties::PropsState;
+use crate::theme;
+use desigma_doc::{Document, History, NodeId, Vec2};
+use std::path::PathBuf;
+
+/// Page-space point shown at the top-left of the canvas, plus zoom.
+#[derive(Clone, Copy, Debug)]
+pub struct View {
+    pub offset: Vec2,
+    pub zoom: f32,
+}
+
+impl Default for View {
+    fn default() -> Self {
+        Self { offset: Vec2::ZERO, zoom: 1.0 }
+    }
+}
+
+impl View {
+    pub fn to_screen(&self, origin: egui::Pos2, p: Vec2) -> egui::Pos2 {
+        egui::pos2(origin.x + (p.x - self.offset.x) * self.zoom, origin.y + (p.y - self.offset.y) * self.zoom)
+    }
+    pub fn to_page(&self, origin: egui::Pos2, s: egui::Pos2) -> Vec2 {
+        Vec2::new((s.x - origin.x) / self.zoom + self.offset.x, (s.y - origin.y) / self.zoom + self.offset.y)
+    }
+    /// Zooms keeping the page point under `screen` fixed.
+    pub fn zoom_at(&mut self, origin: egui::Pos2, screen: egui::Pos2, new_zoom: f32) {
+        let z = new_zoom.clamp(theme::ZOOM_MIN, theme::ZOOM_MAX);
+        let page = self.to_page(origin, screen);
+        self.zoom = z;
+        self.offset = Vec2::new(page.x - (screen.x - origin.x) / z, page.y - (screen.y - origin.y) / z);
+    }
+    /// Fits `bounds` (page space) into a canvas of `size` px with padding.
+    pub fn fit(bounds: desigma_doc::Rect, size: egui::Vec2) -> View {
+        let pad = theme::FIT_PADDING;
+        let zw = (size.x - 2.0 * pad).max(10.0) / bounds.w.max(1.0);
+        let zh = (size.y - 2.0 * pad).max(10.0) / bounds.h.max(1.0);
+        let z = zw.min(zh).clamp(theme::ZOOM_MIN, theme::ZOOM_MAX);
+        let cx = bounds.x + bounds.w / 2.0;
+        let cy = bounds.y + bounds.h / 2.0;
+        View { zoom: z, offset: Vec2::new(cx - size.x / 2.0 / z, cy - size.y / 2.0 / z) }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RailItem {
+    File,
+    Assets,
+    Tools,
+    Variables,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RightTab {
+    Design,
+    Prototype,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum MenuKind {
+    Main,
+    FileMenu,
+    Zoom,
+    ToolGroup(usize),
+    FileName,
+}
+
+#[derive(Default)]
+pub struct UiState {
+    pub menu: Option<MenuKind>,
+    pub menu_anchor: Option<egui::Rect>,
+    pub left_collapsed: bool,
+    pub rail: Option<RailItem>,
+    pub right_tab: Option<RightTab>,
+    pub dev_mode: bool,
+}
+
+pub struct Toast {
+    pub text: String,
+    pub until: f64,
+    pub error: bool,
+}
+
+pub struct App {
+    pub doc: Document,
+    pub hist: History,
+    pub page: NodeId,
+    pub selection: Vec<NodeId>,
+    pub hover: Option<NodeId>,
+    pub hover_layer: Option<NodeId>,
+    pub tool: Tool,
+    /// Last picked tool index per toolbar group.
+    pub group_pick: [usize; GROUPS.len()],
+    pub view: View,
+    pub canvas_rect: egui::Rect,
+    pub canvas: CanvasState,
+    pub layers: LayersState,
+    pub props: PropsState,
+    pub ui: UiState,
+    pub clip: Option<Clip>,
+    pub paste_count: u32,
+    pub toast: Option<Toast>,
+    pub file_path: Option<PathBuf>,
+    pub now: f64,
+    pub keep_tool: bool,
+    pub first_fit_done: bool,
+}
+
+impl App {
+    pub fn new(doc: Document) -> Self {
+        let page = doc.pages.first().copied().unwrap_or(NodeId(0));
+        Self {
+            doc,
+            hist: History::default(),
+            page,
+            selection: vec![],
+            hover: None,
+            hover_layer: None,
+            tool: Tool::Move,
+            group_pick: [0; GROUPS.len()],
+            view: View::default(),
+            canvas_rect: egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0)),
+            canvas: CanvasState::default(),
+            layers: LayersState::default(),
+            props: PropsState::default(),
+            ui: UiState::default(),
+            clip: None,
+            paste_count: 0,
+            toast: None,
+            file_path: None,
+            now: 0.0,
+            keep_tool: false,
+            first_fit_done: false,
+        }
+    }
+
+    pub fn show_toast(&mut self, text: impl Into<String>, error: bool) {
+        self.toast = Some(Toast { text: text.into(), until: self.now + theme::TOAST_SECONDS, error });
+    }
+
+    /// Marks the document as modified so the canvas texture is re-rendered.
+    pub fn changed(&mut self) {
+        self.canvas.dirty = true;
+    }
+
+    pub fn is_selected(&self, id: NodeId) -> bool {
+        self.selection.contains(&id)
+    }
+
+    pub fn select_only(&mut self, id: NodeId) {
+        self.selection = vec![id];
+    }
+
+    pub fn clear_selection(&mut self) {
+        self.selection.clear();
+    }
+
+    /// Drops selection/hover entries that no longer exist or left the page.
+    pub fn sanitize(&mut self) {
+        let doc = &self.doc;
+        let page = self.page;
+        self.selection.retain(|id| doc.get(*id).is_some() && doc.page_of(*id) == Some(page));
+        if self.hover.map(|h| doc.get(h).is_none()).unwrap_or(false) {
+            self.hover = None;
+        }
+        if !doc.nodes.contains_key(&self.page) {
+            self.page = doc.pages.first().copied().unwrap_or(NodeId(0));
+        }
+    }
+
+    pub fn title(&self) -> String {
+        let name = if self.doc.name.is_empty() { "Untitled" } else { &self.doc.name };
+        format!("{name} - {}", theme::APP_TITLE)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn view_roundtrip_and_zoom_anchor() {
+        let mut v = View { offset: Vec2::new(100.0, 50.0), zoom: 2.0 };
+        let origin = egui::pos2(300.0, 10.0);
+        let screen = egui::pos2(500.0, 200.0);
+        let before = v.to_page(origin, screen);
+        v.zoom_at(origin, screen, 4.0);
+        let after = v.to_page(origin, screen);
+        assert!((before.x - after.x).abs() < 1e-3 && (before.y - after.y).abs() < 1e-3);
+        let s = v.to_screen(origin, before);
+        assert!((s.x - screen.x).abs() < 1e-3);
+    }
+
+    #[test]
+    fn fit_centers_bounds() {
+        let v = View::fit(desigma_doc::Rect::new(0.0, 0.0, 1000.0, 500.0), egui::vec2(800.0, 600.0));
+        assert!(v.zoom < 1.0);
+        let c = v.to_screen(egui::Pos2::ZERO, Vec2::new(500.0, 250.0));
+        assert!((c.x - 400.0).abs() < 1.0 && (c.y - 300.0).abs() < 1.0);
+    }
+
+    #[test]
+    fn zoom_is_clamped() {
+        let mut v = View::default();
+        v.zoom_at(egui::Pos2::ZERO, egui::Pos2::ZERO, 10_000.0);
+        assert_eq!(v.zoom, theme::ZOOM_MAX);
+    }
+}
