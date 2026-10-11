@@ -9,6 +9,10 @@ pub struct Options {
     pub size: Option<(u32, u32)>,
     /// Select the first layer with this name after loading (handy for screenshots).
     pub select: Option<String>,
+    /// Right panel tab to show: `design` or `prototype`.
+    pub tab: Option<String>,
+    /// Open the Present view on start.
+    pub present: bool,
     pub help: bool,
 }
 
@@ -29,6 +33,14 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Options, String> 
                 o.size = Some(parse_size(&v).ok_or_else(|| format!("invalid size '{v}' (expected WxH, e.g. 1600x1088)"))?);
             }
             "--select" => o.select = Some(it.next().ok_or("--select needs a layer name")?),
+            "--tab" => {
+                let t = it.next().ok_or("--tab needs design or prototype")?;
+                if !matches!(t.as_str(), "design" | "prototype") {
+                    return Err(format!("unknown tab '{t}' (expected design or prototype)"));
+                }
+                o.tab = Some(t);
+            }
+            "--present" => o.present = true,
             "-h" | "--help" => o.help = true,
             s if s.starts_with("--") => return Err(format!("unknown option {s}")),
             _ => {
@@ -66,9 +78,18 @@ mod tests {
         assert!(p(&["--size", "huge"]).is_err());
         assert!(p(&["--screenshot"]).is_err());
         assert!(p(&["--bogus"]).is_err());
+        assert!(p(&["--tab", "nope"]).is_err());
+        assert!(p(&["--tab"]).is_err());
         assert!(p(&["a", "b"]).is_err());
         assert_eq!(parse_size("1440X900"), Some((1440, 900)));
         assert_eq!(parse_size("10x10"), None);
+    }
+
+    #[test]
+    fn parses_tab_and_present() {
+        let o = p(&["--tab", "prototype", "--present"]).unwrap();
+        assert_eq!(o.tab.as_deref(), Some("prototype"));
+        assert!(o.present);
     }
 
     #[test]
