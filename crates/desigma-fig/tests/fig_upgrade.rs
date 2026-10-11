@@ -209,3 +209,34 @@ fn corrupted_override_data_never_panics() {
         let _ = import_fig(&b);
     }
 }
+
+#[test]
+fn instance_children_link_to_their_component_nodes_and_record_overrides() {
+    let d = doc();
+    let comp = find(&d, "Card");
+    let a = find(&d, "Card A");
+    assert_eq!(a.component.source, Some(comp.id), "instance root points at its component");
+    let label = child(&d, a, "Label");
+    assert_eq!(label.component.source, Some(child(&d, comp, "Label").id));
+    for f in [OverrideField::Characters, OverrideField::Opacity] {
+        assert!(label.component.overrides.contains(&f), "{f:?} in {:?}", label.component.overrides);
+    }
+    let bg = child(&d, a, "Bg");
+    assert_eq!(bg.component.source, Some(child(&d, comp, "Bg").id));
+    assert!(bg.component.overrides.contains(&OverrideField::Visible));
+    assert!(bg.component.overrides.contains(&OverrideField::CornerRadii));
+    assert!(!bg.component.overrides.contains(&OverrideField::Size), "derived sizes are not user overrides");
+    // Untouched copies carry sources but no overrides.
+    let b = find(&d, "Card B");
+    let bl = child(&d, b, "Label");
+    assert_eq!(bl.component.source, Some(child(&d, comp, "Label").id));
+    assert!(bl.component.overrides.is_empty());
+    // Two levels deep: the nested copy mirrors the wrapper's nested instance.
+    let wrapper = find(&d, "Wrapper");
+    let wi = find(&d, "WrapInst");
+    let nested_main = child(&d, wrapper, "CardIn");
+    let nested_copy = child(&d, wi, "CardIn");
+    assert_eq!(nested_copy.component.source, Some(nested_main.id));
+    assert_eq!(child(&d, nested_copy, "Label").component.source, Some(child(&d, nested_main, "Label").id));
+    assert!(child(&d, nested_copy, "Label").component.overrides.contains(&OverrideField::Characters));
+}

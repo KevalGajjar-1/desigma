@@ -258,6 +258,11 @@ struct Ctx {
     /// `.fig` instance overrides / derived data, keyed by instance.
     overrides: BTreeMap<NodeId, Overrides>,
     next_clone: u64,
+    /// Instance-swap property values naming a component by REST id:
+    /// (node, property name, REST component id, is a definition default).
+    pending_swaps: Vec<(NodeId, String, String, bool)>,
+    /// REST `overrides` entries: (instance, node id inside it, field names).
+    rest_overrides: Vec<(NodeId, String, Vec<String>)>,
 }
 
 /// Overrides carried on `.fig` instance JSON as `_overrides` / `_derived`:
@@ -349,6 +354,8 @@ pub(crate) fn import_rest_value(v: &Value, expand_instances: bool) -> Result<Doc
         component_keys: BTreeMap::new(),
         overrides: BTreeMap::new(),
         next_clone: 0,
+        pending_swaps: Vec::new(),
+        rest_overrides: Vec::new(),
     };
     if let Some(comps) = v.get("components").and_then(Value::as_object) {
         for (id, c) in comps {
@@ -409,6 +416,12 @@ impl Ctx {
         if is_instance {
             if let Some(cid) = fstr(v, "componentId") {
                 self.instances.push((id, cid.to_string()));
+            }
+            for e in farr(v, "overrides") {
+                if let Some(nid) = fstr(e, "id") {
+                    let fields: Vec<String> = farr(e, "overriddenFields").iter().filter_map(|f| f.as_str().map(String::from)).collect();
+                    self.rest_overrides.push((id, nid.to_string(), fields));
+                }
             }
             let ov = Overrides { set: parse_override_entries(v.get("_overrides")), derived: parse_override_entries(v.get("_derived")) };
             if !ov.set.is_empty() || !ov.derived.is_empty() {
@@ -609,7 +622,66 @@ impl Ctx {
                 }
             }
         }
+        self.parse_component_props(&mut n, v);
         (n, my_layout)
+    }
+
+    /// `componentPropertyDefinitions` / `componentProperties` /
+    /// `componentPropertyReferences` -> `props` / `values` / `bindings`.
+    fn parse_component_props(&mut self, n: &mut Node, v: &Value) {
+        let id = n.id;
+        if let Some(defs) = v.get("componentPropertyDefinitions").and_then(Value::as_object) {
+            for (key, d) in defs {
+                let name = prop_name(key);
+                let dv = d.get("defaultValue");
+                let text = || dv.and_then(Value::as_str).unwrap_or("").to_string();
+                let (kind, default) = match fstr(d, "type") {
+                    Some("BOOLEAN") => (PropKind::Boolean, PropValue::Bool(dv.and_then(Value::as_bool).unwrap_or(true))),
+                    Some("TEXT") => (PropKind::Text, PropValue::Text(text())),
+                    Some("VARIANT") => (
+                        PropKind::Variant { options: farr(d, "variantOptions").iter().filter_map(|o| o.as_str().map(String::from)).collect() },
+                        PropValue::Variant(text()),
+                    ),
+                    Some("INSTANCE_SWAP") => {
+                        self.pending_swaps.push((id, name.clone(), text(), true));
+                        (PropKind::InstanceSwap { preferred: Vec::new() }, PropValue::Instance(NodeId(0)))
+                    }
+                    _ => continue,
+                };
+                n.component.props.push(ComponentPropDef { name, kind, default });
+            }
+        }
+        if let Some(vals) = v.get("componentProperties").and_then(Value::as_object) {
+            for (key, d) in vals {
+                let name = prop_name(key);
+                let val = d.get("value");
+                let text = || val.and_then(Value::as_str).unwrap_or("").to_string();
+                let pv = match fstr(d, "type") {
+                    Some("BOOLEAN") => PropValue::Bool(val.and_then(Value::as_bool).unwrap_or(true)),
+                    Some("TEXT") => PropValue::Text(text()),
+                    Some("VARIANT") => PropValue::Variant(text()),
+                    Some("INSTANCE_SWAP") => {
+                        self.pending_swaps.push((id, name.clone(), text(), false));
+                        PropValue::Instance(NodeId(0))
+                    }
+                    _ => continue,
+                };
+                n.component.values.insert(name, pv);
+            }
+        }
+        if let Some(refs) = v.get("componentPropertyReferences").and_then(Value::as_object) {
+            for (k, p) in refs {
+                let field = match k.as_str() {
+                    "visible" => OverrideField::Visible,
+                    "characters" => OverrideField::Characters,
+                    "mainComponent" => OverrideField::MainComponent,
+                    _ => continue,
+                };
+                if let Some(p) = p.as_str() {
+                    n.component.bindings.insert(field, prop_name(p));
+                }
+            }
+        }
     }
 
     fn finish(&mut self, expand_instances: bool) {
@@ -622,7 +694,10 @@ impl Ctx {
             }
             targets.insert(inst, comp);
         }
+        self.link_sources(&targets);
+        self.resolve_swaps();
         if !expand_instances {
+            self.apply_rest_overrides();
             return;
         }
         // Clone ids are handed out sequentially above every imported id, in
@@ -637,6 +712,62 @@ impl Ctx {
         let rest: Vec<NodeId> = self.overrides.keys().copied().filter(|i| !done.contains(i)).collect();
         for inst in rest {
             self.apply_overrides(inst);
+        }
+        self.apply_rest_overrides();
+    }
+
+    /// Sets `ComponentLink::source` on the children REST already inlined under
+    /// instances (matching `I<instance>;<id>` ids to the main component's
+    /// nodes) and on every instance root.
+    fn link_sources(&mut self, targets: &BTreeMap<NodeId, NodeId>) {
+        for inst in targets.keys() {
+            let mut stack: Vec<NodeId> = self.doc.get(*inst).map(|n| n.children.clone()).unwrap_or_default();
+            while let Some(d) = stack.pop() {
+                let Some(n) = self.doc.get(d) else { continue };
+                let kids = n.children.clone();
+                let src = n.source_id.as_deref().and_then(counterpart_key).and_then(|k| self.ids.get(&k).copied()).filter(|s| *s != d);
+                if let (Some(s), Some(m)) = (src, self.doc.get_mut(d)) {
+                    m.component.source = Some(s);
+                }
+                stack.extend(kids);
+            }
+        }
+        for (inst, comp) in targets {
+            if let Some(n) = self.doc.get_mut(*inst) {
+                if n.component.source.is_none() {
+                    n.component.source = Some(*comp);
+                }
+            }
+        }
+    }
+
+    fn resolve_swaps(&mut self) {
+        for (node, name, rest_id, is_def) in std::mem::take(&mut self.pending_swaps) {
+            let target = self.ids.get(&rest_id).copied().unwrap_or(NodeId(0));
+            let Some(n) = self.doc.get_mut(node) else { continue };
+            if is_def {
+                if let Some(d) = n.component.props.iter_mut().find(|d| d.name == name) {
+                    d.default = PropValue::Instance(target);
+                }
+            } else if target.0 == 0 {
+                n.component.values.remove(&name);
+            } else {
+                n.component.values.insert(name, PropValue::Instance(target));
+            }
+        }
+    }
+
+    /// REST `overrides[].overriddenFields` -> `ComponentLink::overrides`.
+    fn apply_rest_overrides(&mut self) {
+        for (_inst, nid, fields) in std::mem::take(&mut self.rest_overrides) {
+            let Some(&id) = self.ids.get(&nid) else { continue };
+            let Some(n) = self.doc.get_mut(id) else { continue };
+            let is_text = matches!(n.kind, NodeKind::Text(_));
+            for f in &fields {
+                if let Some(of) = override_field(f, is_text) {
+                    n.component.overrides.insert(of);
+                }
+            }
         }
     }
 
@@ -697,6 +828,9 @@ impl Ctx {
         n.children.clear();
         n.parent = None;
         n.source_id = orig.source_id.as_ref().map(|s| format!("I{prefix};{s}"));
+        n.component.source = Some(src);
+        n.component.overrides.clear();
+        n.component.props.clear();
         let container = n.kind.is_container();
         if self.doc.insert(parent, n).is_err() {
             return;
@@ -787,6 +921,14 @@ impl Ctx {
         }
         if derived_only {
             return;
+        }
+        let is_text = matches!(n.kind, NodeKind::Text(_));
+        if let Some(obj) = set.as_object() {
+            for k in obj.keys() {
+                if let Some(of) = override_field(k, is_text) {
+                    n.component.overrides.insert(of);
+                }
+            }
         }
         if let Some(s) = fstr(set, "name") {
             n.name = s.to_string();
@@ -901,6 +1043,53 @@ fn style_meta(styles: Option<&Value>, doc: &Document) -> BTreeMap<String, StyleM
         );
     }
     out
+}
+
+/// Property name without Figma's `#<id>` suffix.
+fn prop_name(key: &str) -> String {
+    key.split('#').next().unwrap_or(key).to_string()
+}
+
+/// For an id inside an instance copy (`I<inst>;<a>;<b>`), the id of the node
+/// of the main component it mirrors (`<a>`, or `I<a>;<b>` when nested).
+fn counterpart_key(sid: &str) -> Option<String> {
+    let rest = sid.strip_prefix('I')?;
+    let mut segs = rest.split(';');
+    segs.next()?;
+    let tail: Vec<&str> = segs.collect();
+    match tail.len() {
+        0 => None,
+        1 => Some(tail[0].to_string()),
+        _ => Some(format!("I{}", tail.join(";"))),
+    }
+}
+
+/// Maps a REST field name (as in `overriddenFields` or an override entry) to
+/// the document-model override category.
+pub(crate) fn override_field(key: &str, is_text: bool) -> Option<OverrideField> {
+    Some(match key {
+        "name" => OverrideField::Name,
+        "visible" => OverrideField::Visible,
+        "locked" => OverrideField::Locked,
+        "opacity" => OverrideField::Opacity,
+        "blendMode" => OverrideField::Blend,
+        "size" => OverrideField::Size,
+        "relativeTransform" | "transform" => OverrideField::Transform,
+        "fills" if is_text => OverrideField::TextStyle,
+        "fills" => OverrideField::Fills,
+        "strokes" | "strokeWeight" | "strokeAlign" | "strokeCap" | "strokeJoin" | "strokeDashes" | "individualStrokeWeights" => OverrideField::Stroke,
+        "effects" => OverrideField::Effects,
+        "cornerRadius" | "rectangleCornerRadii" | "cornerSmoothing" => OverrideField::CornerRadii,
+        "characters" => OverrideField::Characters,
+        "style" | "characterStyleOverrides" | "styleOverrideTable" | "fontSize" | "fontName" | "fontFamily" | "textAutoResize" | "textTruncation" | "maxLines" => {
+            OverrideField::TextStyle
+        }
+        "layoutMode" | "itemSpacing" | "counterAxisSpacing" | "paddingLeft" | "paddingRight" | "paddingTop" | "paddingBottom" | "primaryAxisAlignItems"
+        | "counterAxisAlignItems" | "primaryAxisSizingMode" | "counterAxisSizingMode" | "layoutWrap" | "clipsContent" | "layoutGrids" | "layoutAlign"
+        | "layoutGrow" | "layoutPositioning" | "layoutSizingHorizontal" | "layoutSizingVertical" => OverrideField::Layout,
+        "componentId" | "mainComponent" | "overrides" => OverrideField::MainComponent,
+        _ => return None,
+    })
 }
 
 fn abs_origin(v: &Value) -> Option<Vec2> {
