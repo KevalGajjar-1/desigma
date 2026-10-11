@@ -30,6 +30,11 @@ pub struct LayersState {
     pub page_scroll: f32,
     pub renaming: Option<NodeId>,
     pub renaming_page: Option<NodeId>,
+    /// Right-clicked page and where its context menu opens.
+    pub page_menu: Option<(NodeId, Pos2)>,
+    pub page_drag: Option<NodeId>,
+    /// Insertion slot (0..=pages) while dragging a page.
+    pub page_drop: Option<usize>,
     pub rename_started: bool,
     pub rename_seen: bool,
     pub drag: Option<Vec<NodeId>>,

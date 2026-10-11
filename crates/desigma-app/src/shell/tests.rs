@@ -57,6 +57,14 @@ impl Sim {
         self.button(false);
         self.frame(vec![]);
     }
+    fn right_click(&mut self, p: Pos2) {
+        self.mv(p);
+        for pressed in [true, false] {
+            let ev = Event::PointerButton { pos: p, button: PointerButton::Secondary, pressed, modifiers: self.mods };
+            self.frame(vec![ev]);
+        }
+        self.frame(vec![]);
+    }
     fn drag(&mut self, a: Pos2, b: Pos2) {
         self.mv(a);
         self.button(true);
@@ -355,4 +363,47 @@ fn color_swatch_opens_picker_without_panic() {
     s.frame(vec![]);
     s.key(Key::Escape);
     assert!(s.app().props.picker.is_none());
+}
+
+#[test]
+fn page_context_menu_duplicates_and_deletes() {
+    let mut s = Sim::new();
+    let n = s.app().doc.pages.len();
+    // second page row, then the menu opens at the pointer
+    s.right_click(Pos2::new(150.0, 141.0));
+    assert!(s.app().layers.page_menu.is_some());
+    s.click(Pos2::new(180.0, 141.0 + 4.0 + 24.0 + 12.0)); // Duplicate
+    assert_eq!(s.app().doc.pages.len(), n + 1);
+    assert!(s.app().layers.page_menu.is_none());
+    s.right_click(Pos2::new(150.0, 118.0));
+    s.click(Pos2::new(180.0, 118.0 + 4.0 + 48.0 + 12.0)); // Delete
+    assert_eq!(s.app().doc.pages.len(), n);
+    s.cmd_key(Key::Z);
+    assert_eq!(s.app().doc.pages.len(), n + 1);
+}
+
+#[test]
+fn page_context_menu_rename() {
+    let mut s = Sim::new();
+    let pid = s.app().doc.pages[1];
+    s.right_click(Pos2::new(150.0, 141.0));
+    s.click(Pos2::new(180.0, 141.0 + 4.0 + 12.0)); // Rename
+    assert_eq!(s.app().layers.renaming_page, Some(pid));
+    s.frame(vec![]);
+    s.type_text("Renamed");
+    s.key(Key::Enter);
+    assert_eq!(s.app().doc.get(pid).unwrap().name, "Renamed");
+    s.cmd_key(Key::Z);
+    assert_eq!(s.app().doc.get(pid).unwrap().name, "Components");
+}
+
+#[test]
+fn dragging_a_page_row_reorders_it() {
+    let mut s = Sim::new();
+    let first = s.app().doc.pages[0];
+    // drag page 1 below page 2 (slot 2)
+    s.drag(Pos2::new(150.0, 118.0), Pos2::new(150.0, 118.0 + 28.0));
+    assert_eq!(s.app().doc.pages[1], first);
+    s.cmd_key(Key::Z);
+    assert_eq!(s.app().doc.pages[0], first);
 }

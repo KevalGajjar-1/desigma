@@ -4,6 +4,7 @@ use super::{clipped, layers, scrollbar, wheel_scroll};
 use crate::app::{App, MenuKind};
 use crate::icons::{self, Icon};
 use crate::theme;
+use crate::widgets::menu::{popup_menu, MenuItem, MenuResult};
 use crate::widgets::{self, field};
 use egui::{Align2, Pos2, Rect, Sense, Ui, Vec2};
 
@@ -115,10 +116,17 @@ fn pages_list(app: &mut App, ui: &mut Ui, list: Rect) {
                 }
                 continue;
             }
-            let r = ui.interact(row, ui.id().with(("page", pid.0)), Sense::click());
+            let r = ui.interact(row, ui.id().with(("page", pid.0)), Sense::click_and_drag());
+            if r.secondary_clicked() {
+                let at = ui.input(|i| i.pointer.interact_pos()).unwrap_or(row.left_bottom());
+                app.layers.page_menu = Some((*pid, at));
+            }
+            if r.drag_started() {
+                app.layers.page_drag = Some(*pid);
+            }
             if selected {
                 p.rect_filled(row, theme::cr(theme::RADIUS_MEDIUM), theme::BG_SELECTED);
-            } else if r.hovered() {
+            } else if r.hovered() && app.layers.page_drag.is_none() {
                 p.rect_filled(row, theme::cr(theme::RADIUS_MEDIUM), theme::BG_HOVER);
             }
             let font = if selected { theme::font_body_strong() } else { theme::font_body() };
@@ -133,4 +141,60 @@ fn pages_list(app: &mut App, ui: &mut Ui, list: Rect) {
         }
     });
     scrollbar(ui, list, scroll, content_h);
+    page_drag(app, ui, list, scroll);
+    page_menu(app, ui);
+}
+
+/// Drag-to-reorder: shows the insertion line and moves the page on release.
+fn page_drag(app: &mut App, ui: &mut Ui, list: Rect, scroll: f32) {
+    let Some(dragged) = app.layers.page_drag else { return };
+    let n = app.doc.pages.len();
+    let (ptr, released) = ui.input(|i| (i.pointer.interact_pos(), i.pointer.primary_released()));
+    if let Some(pos) = ptr {
+        let slot = ((pos.y - list.top() + scroll) / theme::PAGE_ROW_HEIGHT).round().clamp(0.0, n as f32) as usize;
+        app.layers.page_drop = Some(slot);
+        let y = list.top() + slot as f32 * theme::PAGE_ROW_HEIGHT - scroll;
+        let line = Rect::from_min_max(Pos2::new(list.left() + theme::PAGE_ROW_INSET, y - theme::LAYER_DROP_THICKNESS / 2.0), Pos2::new(list.right() - theme::PAGE_ROW_INSET, y + theme::LAYER_DROP_THICKNESS / 2.0));
+        ui.painter().with_clip_rect(list).rect_filled(line, 0.0, theme::DROP_INDICATOR);
+    }
+    if released {
+        if let (Some(slot), Some(from)) = (app.layers.page_drop, app.doc.pages.iter().position(|p| *p == dragged)) {
+            app.move_page(dragged, if slot > from { slot - 1 } else { slot });
+        }
+        app.layers.page_drag = None;
+        app.layers.page_drop = None;
+    }
+}
+
+/// Page row context menu: Rename, Duplicate, Delete.
+fn page_menu(app: &mut App, ui: &mut Ui) {
+    let Some((pid, at)) = app.layers.page_menu else { return };
+    if !app.doc.pages.contains(&pid) {
+        app.layers.page_menu = None;
+        return;
+    }
+    let items = [
+        MenuItem::new("Rename"),
+        MenuItem::new("Duplicate"),
+        MenuItem::new("Delete").disabled(app.doc.pages.len() <= 1),
+    ];
+    match popup_menu(ui.ctx(), egui::Id::new("page-menu"), at, theme::PAGE_MENU_WIDTH, &items, None) {
+        MenuResult::Picked(i) => {
+            app.layers.page_menu = None;
+            match i {
+                0 => {
+                    app.layers.renaming_page = Some(pid);
+                    app.layers.rename_started = false;
+                }
+                1 => {
+                    app.duplicate_page(pid);
+                }
+                _ => {
+                    app.delete_page(pid);
+                }
+            }
+        }
+        MenuResult::Closed => app.layers.page_menu = None,
+        MenuResult::Open => {}
+    }
 }

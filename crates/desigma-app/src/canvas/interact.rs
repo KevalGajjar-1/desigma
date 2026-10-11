@@ -1105,7 +1105,7 @@ mod tests {
             }
         }
         assert!(prepare_image(b"not an image".to_vec()).is_err());
-        assert!(prepare_image(b"GIF89a     ;".to_vec()).is_err());
+        assert!(prepare_image(b"GIF89a-not-supported".to_vec()).is_err());
     }
 
     #[test]

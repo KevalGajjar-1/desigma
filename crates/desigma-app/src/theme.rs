@@ -148,6 +148,7 @@ pub const PAGE_ROW_HEIGHT: f32 = 24.0;
 pub const PAGE_ROW_INSET: f32 = 8.0;
 pub const PAGE_ROW_TEXT_PAD: f32 = 8.0;
 pub const PAGES_MAX_VISIBLE_ROWS: usize = 5;
+pub const PAGE_MENU_WIDTH: f32 = 160.0;
 pub const LAYER_HEADER_HEIGHT: f32 = 40.0;
 pub const LAYER_ROW_HEIGHT: f32 = 32.0;
 pub const LAYER_INDENT: f32 = 16.0;

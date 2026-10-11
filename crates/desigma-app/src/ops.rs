@@ -501,14 +501,83 @@ impl App {
     }
 
     // ------------------------------------------------------------ pages
-    pub fn add_page(&mut self) {
-        let name = format!("Page {}", self.doc.pages.len() + 1);
-        let id = self.doc.add_page(name);
+    /// Pre-order copy of a subtree (root first), as `InsertPage` expects.
+    fn subtree_nodes(&self, id: NodeId) -> Vec<Node> {
+        let mut out = Vec::new();
+        self.doc.walk(id, |n, _| out.push(n.clone()));
+        out
+    }
+
+    fn unique_page_name(&self, base: &str) -> String {
+        let names: Vec<&str> = self.doc.pages.iter().filter_map(|p| self.doc.get(*p)).map(|n| n.name.as_str()).collect();
+        if !names.contains(&base) {
+            return base.to_string();
+        }
+        (2..).map(|i| format!("{base} {i}")).find(|c| !names.contains(&c.as_str())).unwrap_or_else(|| base.to_string())
+    }
+
+    /// Appends a new empty page (undoable) and switches to it.
+    pub fn add_page(&mut self) -> Option<NodeId> {
+        let id = self.doc.alloc_id();
+        let mut page = Node::new(id, NodeKind::Page { background: Color::from_hex(&format!("{:06X}", theme::DEFAULT_PAGE_BG)).unwrap_or(Color::WHITE) });
+        page.name = format!("Page {}", self.doc.pages.len() + 1);
+        let index = self.doc.pages.len();
+        let mut tx = Tx::new();
+        tx.cmd(&mut self.doc, Command::InsertPage { index, nodes: vec![page] }).ok()?;
+        self.run_tx(tx);
         self.switch_page(id);
+        Some(id)
+    }
+
+    /// Duplicates a page with all its layers right after it; returns the copy.
+    pub fn duplicate_page(&mut self, id: NodeId) -> Option<NodeId> {
+        let index = self.doc.pages.iter().position(|p| *p == id)? + 1;
+        let mut nodes = clipboard::clone_subtree(&mut self.doc, id);
+        let root = nodes.first_mut()?;
+        root.name = self.unique_page_name(&format!("{} copy", self.doc.get(id)?.name));
+        let new_id = root.id;
+        let mut tx = Tx::new();
+        tx.cmd(&mut self.doc, Command::InsertPage { index, nodes }).ok()?;
+        self.run_tx(tx);
+        self.switch_page(new_id);
+        Some(new_id)
+    }
+
+    /// Deletes a page; the last remaining page can never be deleted.
+    pub fn delete_page(&mut self, id: NodeId) -> bool {
+        if self.doc.pages.len() <= 1 || !self.doc.pages.contains(&id) {
+            return false;
+        }
+        let pos = self.doc.pages.iter().position(|p| *p == id).unwrap_or(0);
+        let mut tx = Tx::new();
+        if tx.cmd(&mut self.doc, Command::RemovePage { id }).is_err() {
+            return false;
+        }
+        self.run_tx(tx);
+        if self.page == id || !self.doc.nodes.contains_key(&self.page) {
+            let next = self.doc.pages[pos.min(self.doc.pages.len() - 1)];
+            self.switch_page(next);
+        }
+        true
+    }
+
+    /// Moves a page to `index` (position after removal) in the page list.
+    pub fn move_page(&mut self, id: NodeId, index: usize) {
+        let Some(from) = self.doc.pages.iter().position(|p| *p == id) else { return };
+        let index = index.min(self.doc.pages.len().saturating_sub(1));
+        if from == index {
+            return;
+        }
+        let nodes = self.subtree_nodes(id);
+        let mut tx = Tx::new();
+        if tx.cmd(&mut self.doc, Command::RemovePage { id }).is_ok() {
+            let _ = tx.cmd(&mut self.doc, Command::InsertPage { index, nodes });
+        }
+        self.run_tx(tx);
     }
 
     pub fn switch_page(&mut self, id: NodeId) {
-        if self.doc.nodes.contains_key(&id) {
+        if self.doc.pages.contains(&id) {
             self.page = id;
             self.selection.clear();
             self.canvas.reset_interaction();
@@ -728,5 +797,53 @@ mod tests {
         app.ungroup_selection();
         assert_eq!(app.doc.get(ids[0]).unwrap().parent, Some(app.page));
         assert_eq!(world_aabb(&app.doc, ids[1]).x, 100.0);
+    }
+
+    #[test]
+    fn pages_add_rename_duplicate_delete_are_undoable() {
+        let (mut app, ids) = app_with_rects();
+        let p1 = app.page;
+        let p2 = app.add_page().unwrap();
+        assert_eq!(app.doc.pages, vec![p1, p2]);
+        assert_eq!(app.page, p2);
+        app.rename(p2, "Second");
+        assert_eq!(app.doc.get(p2).unwrap().name, "Second");
+        app.undo();
+        assert_eq!(app.doc.get(p2).unwrap().name, "Page 2");
+        app.undo();
+        assert_eq!(app.doc.pages, vec![p1]);
+        app.redo();
+        assert_eq!(app.doc.pages, vec![p1, p2]);
+
+        let copy = app.duplicate_page(p1).unwrap();
+        assert_eq!(app.doc.pages, vec![p1, copy, p2]);
+        assert_eq!(app.doc.get(copy).unwrap().children.len(), ids.len());
+        assert!(app.doc.get(copy).unwrap().name.ends_with("copy"));
+        assert!(app.doc.get(copy).unwrap().children.iter().all(|c| !ids.contains(c)), "fresh ids");
+
+        assert!(app.delete_page(copy));
+        assert_eq!(app.doc.pages, vec![p1, p2]);
+        assert!(app.doc.nodes.contains_key(&app.page));
+        app.undo();
+        assert_eq!(app.doc.pages, vec![p1, copy, p2]);
+        assert_eq!(app.doc.get(copy).unwrap().children.len(), ids.len());
+    }
+
+    #[test]
+    fn last_page_cannot_be_deleted_and_pages_reorder() {
+        let (mut app, _ids) = app_with_rects();
+        let p1 = app.page;
+        assert!(!app.delete_page(p1));
+        assert_eq!(app.doc.pages.len(), 1);
+        let p2 = app.add_page().unwrap();
+        let p3 = app.add_page().unwrap();
+        app.move_page(p3, 0);
+        assert_eq!(app.doc.pages, vec![p3, p1, p2]);
+        app.undo();
+        assert_eq!(app.doc.pages, vec![p1, p2, p3]);
+        assert!(app.delete_page(p1));
+        assert!(!app.delete_page(p2) || app.doc.pages.len() == 1);
+        assert!(!app.doc.pages.is_empty());
+        assert!(app.doc.nodes.contains_key(&app.page));
     }
 }
