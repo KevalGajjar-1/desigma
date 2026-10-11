@@ -19,9 +19,8 @@ mod publish;
 mod store;
 mod versions;
 
-// The modules start empty; drop this allow once each one exports items.
-#[allow(unused_imports)]
 pub use publish::*;
+// The modules below start empty; drop each allow once the module exports items.
 #[allow(unused_imports)]
 pub use store::*;
 #[allow(unused_imports)]
