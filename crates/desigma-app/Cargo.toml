@@ -31,3 +31,4 @@ unicode-segmentation = "1"
 serde_json.workspace = true
 serde.workspace = true
 egui = "0.35"
+resvg = { version = "0.45", default-features = false }

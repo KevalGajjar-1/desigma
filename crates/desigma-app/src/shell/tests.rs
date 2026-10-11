@@ -11,6 +11,7 @@ struct Sim {
     pos: Pos2,
     mods: Modifiers,
     cursor: egui::CursorIcon,
+    shapes: Vec<egui::epaint::ClippedShape>,
 }
 
 impl Sim {
@@ -20,7 +21,7 @@ impl Sim {
     fn with(opts: Options) -> Self {
         let ctx = Context::default();
         let shell = Shell::build(&ctx, opts);
-        let mut s = Sim { ctx, shell, t: 0.0, pos: Pos2::new(700.0, 500.0), mods: Modifiers::NONE, cursor: egui::CursorIcon::Default };
+        let mut s = Sim { ctx, shell, t: 0.0, pos: Pos2::new(700.0, 500.0), mods: Modifiers::NONE, cursor: egui::CursorIcon::Default, shapes: Vec::new() };
         s.frame(vec![]);
         s.frame(vec![]);
         s
@@ -38,6 +39,7 @@ impl Sim {
         let shell = &mut self.shell;
         let out = ctx.run_ui(raw, |ui| shell.draw(ui));
         self.cursor = out.platform_output.cursor_icon;
+        self.shapes = out.shapes;
     }
     fn app(&self) -> &App {
         &self.shell.app
@@ -932,3 +934,4 @@ mod svg;
 mod variables;
 
 mod assets_thumbs;
+mod lint;

@@ -9,6 +9,8 @@ mod fonts;
 mod icons;
 mod io;
 mod layout;
+#[cfg(test)]
+mod lint;
 mod ops;
 mod panels;
 mod present;
