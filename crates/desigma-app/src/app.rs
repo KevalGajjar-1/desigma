@@ -3,6 +3,7 @@
 use crate::canvas::tools::{Tool, GROUPS};
 use crate::canvas::CanvasState;
 use crate::clipboard::Clip;
+use crate::fonts::FontLoader;
 use crate::panels::layers::LayersState;
 use crate::panels::properties::PropsState;
 use crate::theme;
@@ -110,6 +111,7 @@ pub struct App {
     pub now: f64,
     pub keep_tool: bool,
     pub first_fit_done: bool,
+    pub fonts: FontLoader,
 }
 
 impl App {
@@ -137,6 +139,20 @@ impl App {
             now: 0.0,
             keep_tool: false,
             first_fit_done: false,
+            fonts: FontLoader::default(),
+        }
+    }
+
+    /// Registers fonts finished loading in the background and re-renders.
+    pub fn poll_fonts(&mut self) {
+        let Some(done) = self.fonts.poll() else { return };
+        if done.loaded > 0 {
+            self.changed();
+        }
+        if let Some(first) = done.failed.first() {
+            let more = done.failed.len() - 1;
+            let suffix = if more > 0 { format!(" (+{more} more)") } else { String::new() };
+            self.show_toast(format!("Font unavailable: {first}{suffix}"), true);
         }
     }
 

@@ -4,6 +4,7 @@ mod cli;
 mod clipboard;
 mod demo;
 mod edit;
+mod fonts;
 mod icons;
 mod io;
 mod layout;

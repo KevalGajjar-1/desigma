@@ -561,6 +561,7 @@ impl App {
         self.file_path = path;
         self.canvas.reset_interaction();
         self.layers.reset();
+        self.fonts.load_for(&self.doc);
         self.changed();
         self.fit_all();
     }

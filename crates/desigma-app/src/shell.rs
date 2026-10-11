@@ -249,6 +249,10 @@ impl eframe::App for Shell {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        self.app.poll_fonts();
+        if self.app.fonts.is_loading() {
+            ui.ctx().request_repaint_after(std::time::Duration::from_millis(100));
+        }
         self.draw(ui);
     }
 }

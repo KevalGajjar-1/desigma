@@ -80,28 +80,12 @@ pub const FONT_SIZE_BODY: f32 = 11.0;
 pub const FONT_SIZE_LARGE: f32 = 13.0;
 pub const FONT_SIZE_LABEL_CANVAS: f32 = 11.0;
 pub const FAMILY_STRONG: &str = "desigma-strong";
-pub const FONT_FILES_REGULAR: &[&str] = &[
-    "C:\\Windows\\Fonts\\Inter-Regular.ttf",
-    "C:\\Windows\\Fonts\\Inter.ttf",
-    "C:\\Windows\\Fonts\\InterVariable.ttf",
-    "C:\\Windows\\Fonts\\segoeui.ttf",
-    "/usr/share/fonts/truetype/inter/Inter-Regular.ttf",
-    "/usr/share/fonts/opentype/inter/Inter-Regular.otf",
-    "/usr/share/fonts/inter/Inter-Regular.ttf",
-    "/Library/Fonts/Inter-Regular.ttf",
-    "/Library/Fonts/Inter.ttf",
-    "/System/Library/Fonts/SFNS.ttf",
-    "/System/Library/Fonts/Helvetica.ttc",
-];
-pub const FONT_FILES_STRONG: &[&str] = &[
-    "C:\\Windows\\Fonts\\Inter-SemiBold.ttf",
-    "C:\\Windows\\Fonts\\Inter-Bold.ttf",
-    "C:\\Windows\\Fonts\\seguisb.ttf",
-    "C:\\Windows\\Fonts\\segoeuib.ttf",
-    "/usr/share/fonts/truetype/inter/Inter-SemiBold.ttf",
-    "/usr/share/fonts/opentype/inter/Inter-SemiBold.otf",
-    "/Library/Fonts/Inter-SemiBold.ttf",
-];
+pub const UI_FONT_FAMILY: &str = "Inter";
+/// Variable-font instances of the bundled Inter (ui-spec font.weight_default / weight_strong).
+pub const UI_FONT_WEIGHT: f32 = 450.0;
+pub const UI_FONT_WEIGHT_STRONG: f32 = 550.0;
+/// Inter's optical-size axis at text sizes.
+pub const UI_FONT_OPSZ: f32 = 14.0;
 
 pub fn font_small() -> FontId {
     FontId::new(FONT_SIZE_SMALL, FontFamily::Proportional)
@@ -318,20 +302,24 @@ pub fn apply(ctx: &egui::Context) {
     ctx.set_global_style(style);
 }
 
-/// Installs Inter (or the closest system font) and a semibold family.
+/// Installs the bundled Inter variable font as two instances: regular and strong.
 pub fn install_fonts(ctx: &egui::Context) {
     let mut fonts = egui::FontDefinitions::default();
-    let load = |paths: &[&str]| paths.iter().find_map(|p| std::fs::read(p).ok());
-    if let Some(bytes) = load(FONT_FILES_REGULAR) {
-        fonts.font_data.insert("ui-regular".into(), std::sync::Arc::new(egui::FontData::from_owned(bytes)));
-        fonts.families.entry(FontFamily::Proportional).or_default().insert(0, "ui-regular".into());
-    }
-    let strong = load(FONT_FILES_STRONG);
-    let mut strong_family: Vec<String> = Vec::new();
-    if let Some(bytes) = strong {
-        fonts.font_data.insert("ui-strong".into(), std::sync::Arc::new(egui::FontData::from_owned(bytes)));
-        strong_family.push("ui-strong".into());
-    }
+    let inter = desigma_fonts::bundled()
+        .iter()
+        .find(|a| a.family == UI_FONT_FAMILY && !a.italic)
+        .expect("bundled Inter");
+    let instance = |weight: f32| {
+        let tweak = egui::FontTweak {
+            coords: egui::epaint::text::VariationCoords::new([("wght", weight), ("opsz", UI_FONT_OPSZ)]),
+            ..Default::default()
+        };
+        std::sync::Arc::new(egui::FontData::from_static(inter.data).tweak(tweak))
+    };
+    fonts.font_data.insert("ui-regular".into(), instance(UI_FONT_WEIGHT));
+    fonts.font_data.insert("ui-strong".into(), instance(UI_FONT_WEIGHT_STRONG));
+    fonts.families.entry(FontFamily::Proportional).or_default().insert(0, "ui-regular".into());
+    let mut strong_family = vec!["ui-strong".to_string()];
     strong_family.extend(fonts.families.get(&FontFamily::Proportional).cloned().unwrap_or_default());
     fonts.families.insert(FontFamily::Name(FAMILY_STRONG.into()), strong_family);
     ctx.set_fonts(fonts);
