@@ -263,6 +263,7 @@ impl Shell {
         let ctx = ui.ctx().clone();
         self.app.now = ctx.input(|i| i.time);
         self.drive_screenshot(&ctx);
+        self.app.scrub_sync(&ctx);
         self.handle_keys(&ctx);
         let dropped = ctx.input(|i| i.raw.dropped_files.clone());
         if let Some(path) = dropped.into_iter().find_map(|f| f.path) {

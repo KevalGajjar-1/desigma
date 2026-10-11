@@ -46,6 +46,11 @@ pub fn apply_resize(doc: &mut Document, ed: &mut Edit, id: NodeId, size: Vec2, t
 impl App {
     // ------------------------------------------------------------ plumbing
     pub fn run_tx(&mut self, tx: Tx) -> bool {
+        if self.scrub.is_some() {
+            // Scrubbing: edits stay live in the document; `scrub_end` records them as one step.
+            self.changed();
+            return true;
+        }
         match tx.commit(&mut self.doc, &mut self.hist) {
             Ok(changed) => {
                 self.changed();
@@ -69,6 +74,42 @@ impl App {
             layout::relayout_around(&mut self.doc, &mut tx.ed, *id);
         }
         self.run_tx(tx);
+    }
+
+    /// Starts/ends a scrub session following the flag set by the numeric fields.
+    pub fn scrub_sync(&mut self, ctx: &egui::Context) {
+        let id = egui::Id::new(crate::widgets::field::SCRUB_FLAG);
+        let mut active = ctx.data(|d| d.get_temp::<bool>(id)).unwrap_or(false);
+        if active && !ctx.input(|i| i.pointer.any_down()) {
+            active = false;
+            ctx.data_mut(|d| d.insert_temp(id, false));
+        }
+        match (active, self.scrub.is_some()) {
+            (true, false) => self.scrub = Some(self.doc.nodes.clone()),
+            (false, true) => self.scrub_end(),
+            _ => {}
+        }
+    }
+
+    /// Folds everything changed since the scrub began into one undo step.
+    pub fn scrub_end(&mut self) {
+        let Some(base) = self.scrub.take() else { return };
+        let changed: Vec<NodeId> = base.iter().filter(|(id, old)| self.doc.nodes.get(id).is_some_and(|cur| cur != *old)).map(|(id, _)| *id).collect();
+        let updates: Vec<Command> = changed.iter().filter_map(|id| self.doc.get(*id)).map(|n| Command::Update { node: Box::new(n.clone()) }).collect();
+        for id in &changed {
+            if let (Some(old), Some(cur)) = (base.get(id), self.doc.get_mut(*id)) {
+                *cur = old.clone();
+            }
+        }
+        if updates.is_empty() {
+            return;
+        }
+        let cmd = if updates.len() == 1 { updates.into_iter().next().unwrap() } else { Command::Batch(updates) };
+        if let Err(e) = self.hist.exec(&mut self.doc, cmd) {
+            self.show_toast(format!("Edit failed: {e}"), true);
+        }
+        self.changed();
+        self.sanitize();
     }
 
     pub fn undo(&mut self) {

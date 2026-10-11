@@ -10,6 +10,7 @@ struct Sim {
     t: f64,
     pos: Pos2,
     mods: Modifiers,
+    cursor: egui::CursorIcon,
 }
 
 impl Sim {
@@ -19,7 +20,7 @@ impl Sim {
     fn with(opts: Options) -> Self {
         let ctx = Context::default();
         let shell = Shell::build(&ctx, opts);
-        let mut s = Sim { ctx, shell, t: 0.0, pos: Pos2::new(700.0, 500.0), mods: Modifiers::NONE };
+        let mut s = Sim { ctx, shell, t: 0.0, pos: Pos2::new(700.0, 500.0), mods: Modifiers::NONE, cursor: egui::CursorIcon::Default };
         s.frame(vec![]);
         s.frame(vec![]);
         s
@@ -35,7 +36,8 @@ impl Sim {
         };
         let ctx = self.ctx.clone();
         let shell = &mut self.shell;
-        let _ = ctx.run_ui(raw, |ui| shell.draw(ui));
+        let out = ctx.run_ui(raw, |ui| shell.draw(ui));
+        self.cursor = out.platform_output.cursor_icon;
     }
     fn app(&self) -> &App {
         &self.shell.app
@@ -87,6 +89,9 @@ impl Sim {
     }
     fn type_text(&mut self, s: &str) {
         self.frame(vec![Event::Text(s.into())]);
+    }
+    fn field_rect(&self, key: &str) -> Rect {
+        self.ctx.data(|d| d.get_temp::<Rect>(egui::Id::new(("field-rect", format!("{key:?}"))))).unwrap_or_else(|| panic!("no field {key}"))
     }
     fn by_name(&self, name: &str) -> NodeId {
         self.app().doc.nodes.values().find(|n| n.name == name).map(|n| n.id).unwrap_or_else(|| panic!("no node {name}"))
@@ -406,4 +411,42 @@ fn dragging_a_page_row_reorders_it() {
     assert_eq!(s.app().doc.pages[1], first);
     s.cmd_key(Key::Z);
     assert_eq!(s.app().doc.pages[0], first);
+}
+
+fn prefix_point(s: &Sim, key: &str) -> Pos2 {
+    let r = s.field_rect(key);
+    Pos2::new(r.left() + 8.0, r.center().y)
+}
+
+#[test]
+fn scrubbing_x_label_changes_value_in_one_undo_step() {
+    let mut s = Sim::with(Options { select: Some("Card".into()), ..Default::default() });
+    let id = s.by_name("Card");
+    let x0 = s.app().doc.get(id).unwrap().transform.tx;
+    let a = prefix_point(&s, "x");
+    s.mv(a);
+    s.frame(vec![]);
+    assert_eq!(s.cursor, egui::CursorIcon::ResizeHorizontal);
+    s.drag(a, a + Vec2::new(20.0, 0.0));
+    let x1 = s.app().doc.get(id).unwrap().transform.tx;
+    assert!((x1 - x0 - 20.0).abs() <= 1.0, "scrubbed by {}", x1 - x0);
+    assert!(s.app().scrub.is_none());
+    s.cmd_key(Key::Z);
+    assert_eq!(s.app().doc.get(id).unwrap().transform.tx, x0, "a whole drag is a single undo step");
+    s.cmd_key(Key::Y);
+    assert_eq!(s.app().doc.get(id).unwrap().transform.tx, x1);
+}
+
+#[test]
+fn shift_multiplies_scrub_by_ten() {
+    let mut s = Sim::with(Options { select: Some("Card".into()), ..Default::default() });
+    let id = s.by_name("Card");
+    let y0 = s.app().doc.get(id).unwrap().transform.ty;
+    let a = prefix_point(&s, "y");
+    s.mods = Modifiers::SHIFT;
+    s.drag(a, a + Vec2::new(5.0, 0.0));
+    s.mods = Modifiers::NONE;
+    let y1 = s.app().doc.get(id).unwrap().transform.ty;
+    assert!((y1 - y0 - 50.0).abs() <= 10.0, "scrubbed by {}", y1 - y0);
+    assert!(y1 - y0 >= 40.0);
 }
