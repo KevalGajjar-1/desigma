@@ -184,7 +184,8 @@ impl App {
     pub fn scrub_end(&mut self) {
         let Some(base) = self.scrub.take() else { return };
         let changed: Vec<NodeId> = base.iter().filter(|(id, old)| self.doc.nodes.get(id).is_some_and(|cur| cur != *old)).map(|(id, _)| *id).collect();
-        let updates: Vec<Command> = changed.iter().filter_map(|id| self.doc.get(*id)).map(|n| Command::Update { node: Box::new(n.clone()) }).collect();
+        let mut updates: Vec<Command> = changed.iter().filter_map(|id| self.doc.get(*id)).map(|n| Command::Update { node: Box::new(n.clone()) }).collect();
+        crate::comp_ops::record_overrides(&self.doc, &base, &mut updates);
         for id in &changed {
             if let (Some(old), Some(cur)) = (base.get(id), self.doc.get_mut(*id)) {
                 *cur = old.clone();
@@ -194,6 +195,7 @@ impl App {
             return;
         }
         let cmd = if updates.len() == 1 { updates.into_iter().next().unwrap() } else { Command::Batch(updates) };
+        let cmd = crate::comp_ops::with_sync(&mut self.doc, cmd);
         if let Err(e) = self.hist.exec(&mut self.doc, cmd) {
             self.show_toast(format!("Edit failed: {e}"), true);
         }
@@ -264,6 +266,13 @@ impl App {
         let mut tx = Tx::new();
         let mut parents = Vec::new();
         for id in &tops {
+            // Layers inside an instance cannot be removed, only hidden (like Figma).
+            if self.doc.get(*id).is_some_and(|n| is_linked(n) && !is_top_instance(n)) {
+                if let Some(n) = tx.ed.node(&mut self.doc, *id) {
+                    n.visible = false;
+                }
+                continue;
+            }
             if let Some(p) = self.doc.get(*id).and_then(|n| n.parent) {
                 if !parents.contains(&p) {
                     parents.push(p);

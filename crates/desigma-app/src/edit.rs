@@ -92,7 +92,8 @@ impl Tx {
     }
 
     pub fn commit(mut self, doc: &mut Document, hist: &mut History) -> Result<bool, DocError> {
-        let updates = self.ed.updates(doc);
+        let mut updates = self.ed.updates(doc);
+        crate::comp_ops::record_overrides(doc, &self.ed.before, &mut updates);
         self.ed.revert(doc);
         while let Some(inv) = self.inverses.pop() {
             inv.apply(doc)?;
@@ -103,6 +104,8 @@ impl Tx {
             return Ok(false);
         }
         let cmd = if all.len() == 1 { all.pop().unwrap() } else { Command::Batch(all) };
+        // Edits to a main component also update its instances, in the same undo step.
+        let cmd = crate::comp_ops::with_sync(doc, cmd);
         hist.exec(doc, cmd)?;
         Ok(true)
     }
