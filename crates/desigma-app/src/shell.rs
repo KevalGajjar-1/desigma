@@ -51,6 +51,12 @@ impl Shell {
                 app.selection = vec![id];
             }
         }
+        if opts.tab.as_deref() == Some("prototype") {
+            app.ui.right_tab = Some(crate::app::RightTab::Prototype);
+        }
+        if opts.present {
+            app.start_present();
+        }
         let shot = opts.screenshot.map(|path| Shot {
             path,
             size: opts.size.unwrap_or((theme::DEFAULT_WINDOW.0 as u32, theme::DEFAULT_WINDOW.1 as u32)),
@@ -158,6 +164,10 @@ impl Shell {
                 (Key::Equals | Key::Plus, _, _) => Some(Action::ZoomIn),
                 (Key::Minus, _, _) => Some(Action::ZoomOut),
                 (Key::Backslash, _, _) => Some(Action::ToggleSidebar),
+                (Key::Enter, false, true) => {
+                    app.start_present();
+                    None
+                }
                 _ => None,
             };
             if let Some(a) = act {
@@ -188,6 +198,8 @@ impl Shell {
                     app.tool = Tool::Move;
                 } else if app.ui.menu.is_some() {
                     app.ui.menu = None;
+                } else if app.proto.editing.is_some() {
+                    app.proto.editing = None;
                 } else if app.tool != Tool::Move {
                     app.tool = Tool::Move;
                 } else {
@@ -299,6 +311,10 @@ impl Shell {
         self.app.now = ctx.input(|i| i.time);
         self.drive_screenshot(&ctx);
         self.app.scrub_sync(&ctx);
+        if self.app.proto.present.is_some() {
+            crate::present::show(&mut self.app, ui);
+            return;
+        }
         self.handle_keys(&ctx);
         let dropped = ctx.input(|i| i.raw.dropped_files.clone());
         if let Some(path) = dropped.into_iter().find_map(|f| f.path) {

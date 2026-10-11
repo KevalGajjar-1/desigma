@@ -42,8 +42,9 @@ pub fn show(app: &mut App, ui: &mut Ui, rect: Rect) {
     let cr = ui.interact(cb, ui.id().with("present-chev"), Sense::click());
     widgets::button_bg(&p, cb, &cr, false, theme::cr_each(0, theme::RADIUS_MEDIUM, theme::RADIUS_MEDIUM, 0));
     icons::paint(&p, Icon::ChevronDown, cb.center(), theme::CHEVRON_SMALL, theme::ICON_SECONDARY);
+    crate::widgets::record(ui, "present-button", pb);
     if pr.clicked() || cr.clicked() {
-        app.show_toast("Presentation mode is not available yet", false);
+        app.start_present();
     }
 
     // Share button.
@@ -100,7 +101,7 @@ pub fn show(app: &mut App, ui: &mut Ui, rect: Rect) {
     widgets::hline(&p, rect.left() + 1.0, right, content_top, theme::BORDER);
     let region = Rect::from_min_max(Pos2::new(rect.left() + 1.0, content_top + 1.0), rect.max);
     if active == RightTab::Prototype {
-        p.text(Pos2::new(region.center().x, region.top() + 48.0), Align2::CENTER_CENTER, "Prototype mode is not available yet", theme::font_body(), theme::TEXT_TERTIARY);
+        super::prototype::show(app, ui, region);
     } else if app.ui.dev_mode {
         super::inspect::show(app, ui, region);
     } else {

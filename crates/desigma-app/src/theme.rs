@@ -291,6 +291,22 @@ pub const TEXT_CARET_WIDTH: f32 = 1.0;
 pub const NUDGE: f32 = 1.0;
 pub const NUDGE_BIG: f32 = 10.0;
 
+// ---------------------------------------------------------------- prototype
+/// Noodles, hotspots and flow flags use the brand blue.
+pub const PROTO_BLUE: Color32 = BG_BRAND;
+pub const PROTO_NOODLE_WIDTH: f32 = 2.0;
+pub const PROTO_HOTSPOT_RADIUS: f32 = 6.0;
+pub const PROTO_HOTSPOT_RING: f32 = 2.0;
+pub const PROTO_HOTSPOT_HIT: f32 = 10.0;
+pub const PROTO_FLAG_HEIGHT: f32 = 20.0;
+pub const PROTO_FLAG_GAP: f32 = 4.0;
+pub const PROTO_ROW_HEIGHT: f32 = 44.0;
+pub const PROTO_POPOVER_WIDTH: f32 = 240.0;
+pub const PRESENT_BG: Color32 = rgb(0x1E1E1E);
+pub const PRESENT_BAR_HEIGHT: f32 = 48.0;
+pub const PRESENT_PADDING: f32 = 32.0;
+pub const PRESENT_MAX_SCALE: f32 = 4.0;
+
 // ---------------------------------------------------------------- app defaults
 pub const DEFAULT_WINDOW: (f32, f32) = (1600.0, 1088.0);
 pub const MIN_WINDOW: (f32, f32) = (900.0, 600.0);
