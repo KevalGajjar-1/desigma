@@ -1,0 +1,731 @@
+//! Document-level editing operations (selection commands, z-order, grouping,
+//! alignment, clipboard, pages, file IO). Everything goes through `Tx`.
+
+use crate::app::{App, View};
+use crate::clipboard;
+use crate::edit::{Edit, Tx};
+use crate::io;
+use crate::layout;
+use crate::theme;
+use crate::util::*;
+use desigma_doc::*;
+use std::path::PathBuf;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Align {
+    Left,
+    HCenter,
+    Right,
+    Top,
+    VCenter,
+    Bottom,
+}
+
+/// Sets size + transform of a node, applying constraints/auto-layout to its
+/// content and fixing ancestors. Shared by canvas resizing and the inspector.
+pub fn apply_resize(doc: &mut Document, ed: &mut Edit, id: NodeId, size: Vec2, transform: Affine, relayout: bool) {
+    let Some(old) = doc.get(id).map(|n| n.size) else { return };
+    if let Some(n) = ed.node(doc, id) {
+        n.size = size;
+        n.transform = transform;
+        if let NodeKind::Text(t) = &mut n.kind {
+            if t.auto_resize == TextAutoResize::WidthAndHeight {
+                t.auto_resize = TextAutoResize::None;
+            }
+        }
+    }
+    if doc.get(id).map(|n| n.kind.is_container()).unwrap_or(false) {
+        layout::apply_constraints(doc, ed, id, old, size);
+        layout::layout_node(doc, ed, id);
+    }
+    if relayout {
+        layout::relayout_up(doc, ed, id);
+    }
+}
+
+impl App {
+    // ------------------------------------------------------------ plumbing
+    pub fn run_tx(&mut self, tx: Tx) -> bool {
+        match tx.commit(&mut self.doc, &mut self.hist) {
+            Ok(changed) => {
+                self.changed();
+                self.sanitize();
+                changed
+            }
+            Err(e) => {
+                self.show_toast(format!("Edit failed: {e}"), true);
+                false
+            }
+        }
+    }
+
+    /// Applies `f` to each node and commits one undo step.
+    pub fn edit_nodes(&mut self, ids: &[NodeId], mut f: impl FnMut(&mut Node)) {
+        let mut tx = Tx::new();
+        for id in ids {
+            if let Some(n) = tx.ed.node(&mut self.doc, *id) {
+                f(n);
+            }
+            layout::relayout_around(&mut self.doc, &mut tx.ed, *id);
+        }
+        self.run_tx(tx);
+    }
+
+    pub fn undo(&mut self) {
+        match self.hist.undo(&mut self.doc) {
+            Ok(true) => {
+                self.changed();
+                self.sanitize();
+            }
+            Ok(false) => {}
+            Err(e) => self.show_toast(format!("Undo failed: {e}"), true),
+        }
+    }
+
+    pub fn redo(&mut self) {
+        match self.hist.redo(&mut self.doc) {
+            Ok(true) => {
+                self.changed();
+                self.sanitize();
+            }
+            Ok(false) => {}
+            Err(e) => self.show_toast(format!("Redo failed: {e}"), true),
+        }
+    }
+
+    /// Selected nodes that have no selected ancestor, in z/document order.
+    pub fn top_selection(&self) -> Vec<NodeId> {
+        self.selection
+            .iter()
+            .copied()
+            .filter(|id| !self.selection.iter().any(|o| o != id && self.doc.is_ancestor(*o, *id)))
+            .collect()
+    }
+
+    pub fn selection_bounds(&self) -> Option<Rect> {
+        union_all(self.selection.iter().map(|id| world_aabb(&self.doc, *id)))
+    }
+
+    pub fn unique_name(&self, base: &str) -> String {
+        let n = self.doc.nodes.values().filter(|n| n.name.starts_with(base)).count();
+        format!("{base} {}", n + 1)
+    }
+
+    fn container_for_insert(&self) -> NodeId {
+        if let [only] = self.selection.as_slice() {
+            if let Some(n) = self.doc.get(*only) {
+                if n.kind.is_container() && !matches!(n.kind, NodeKind::Instance { .. }) {
+                    return *only;
+                }
+                if let Some(p) = n.parent {
+                    return p;
+                }
+            }
+        }
+        self.page
+    }
+
+    // ------------------------------------------------------------ delete / duplicate
+    pub fn delete_selection(&mut self) {
+        let tops = self.top_selection();
+        if tops.is_empty() {
+            return;
+        }
+        let mut tx = Tx::new();
+        let mut parents = Vec::new();
+        for id in &tops {
+            if let Some(p) = self.doc.get(*id).and_then(|n| n.parent) {
+                if !parents.contains(&p) {
+                    parents.push(p);
+                }
+            }
+            if let Err(e) = tx.cmd(&mut self.doc, Command::Remove { id: *id }) {
+                self.show_toast(format!("Delete failed: {e}"), true);
+            }
+        }
+        for p in parents {
+            if self.doc.get(p).is_some() {
+                layout::relayout_around(&mut self.doc, &mut tx.ed, p);
+            }
+        }
+        self.run_tx(tx);
+        self.selection.clear();
+    }
+
+    pub fn duplicate_selection(&mut self) {
+        let tops = self.top_selection();
+        if tops.is_empty() {
+            return;
+        }
+        let mut tx = Tx::new();
+        let mut new_sel = Vec::new();
+        for id in tops {
+            let Some(parent) = self.doc.get(id).and_then(|n| n.parent) else { continue };
+            let index = self.doc.get(parent).and_then(|p| p.children.iter().position(|c| *c == id)).map(|i| i + 1).unwrap_or(usize::MAX);
+            let mut nodes = clipboard::clone_subtree(&mut self.doc, id);
+            let in_al = self.doc.get(parent).and_then(|p| p.kind.frame_props()).map(|f| f.auto_layout.is_some()).unwrap_or(false);
+            if let Some(root) = nodes.first_mut() {
+                if !in_al {
+                    root.transform.tx += theme::PASTE_OFFSET;
+                    root.transform.ty += theme::PASTE_OFFSET;
+                }
+                root.name = self.doc.get(id).map(|n| n.name.clone()).unwrap_or_default();
+                new_sel.push(root.id);
+            }
+            if tx.cmd(&mut self.doc, Command::Insert { parent, index, nodes }).is_ok() {
+                layout::relayout_around(&mut self.doc, &mut tx.ed, parent);
+            }
+        }
+        self.run_tx(tx);
+        self.selection = new_sel;
+    }
+
+    // ------------------------------------------------------------ clipboard
+    pub fn copy_selection(&mut self) -> Option<String> {
+        let tops = self.top_selection();
+        let clip = clipboard::capture(&self.doc, &tops)?;
+        let json = clipboard::to_json(&clip);
+        self.clip = Some(clip);
+        self.paste_count = 0;
+        json
+    }
+
+    pub fn cut_selection(&mut self) -> Option<String> {
+        let s = self.copy_selection();
+        self.delete_selection();
+        s
+    }
+
+    pub fn paste(&mut self, system_text: Option<&str>) {
+        let clip = system_text.and_then(clipboard::from_json).or_else(|| self.clip.clone());
+        let Some(clip) = clip else { return };
+        let parent = self.container_for_insert();
+        let lists = clipboard::instantiate(&mut self.doc, &clip);
+        let mut tx = Tx::new();
+        let mut new_sel = Vec::new();
+        let off = theme::PASTE_OFFSET * self.paste_count as f32;
+        for mut nodes in lists {
+            if let Some(root) = nodes.first_mut() {
+                root.transform.tx += off;
+                root.transform.ty += off;
+                new_sel.push(root.id);
+            }
+            let index = self.doc.get(parent).map(|p| p.children.len()).unwrap_or(0);
+            let _ = tx.cmd(&mut self.doc, Command::Insert { parent, index, nodes });
+        }
+        layout::relayout_around(&mut self.doc, &mut tx.ed, parent);
+        self.paste_count += 1;
+        self.run_tx(tx);
+        self.selection = new_sel;
+    }
+
+    // ------------------------------------------------------------ grouping
+    /// Wraps `ids` (all siblings, in desired child order) into a new group or
+    /// frame; returns the container id.
+    fn wrap_in_container(&mut self, tx: &mut Tx, ids: &[NodeId], frame: bool) -> Option<NodeId> {
+        let first = *ids.first()?;
+        let parent = self.doc.get(first)?.parent?;
+        let siblings = &self.doc.get(parent)?.children;
+        let max_index = ids.iter().filter_map(|i| siblings.iter().position(|c| c == i)).max()?;
+        let pinv = self.doc.world_transform(parent).invert()?;
+        let mut pts = Vec::new();
+        let mut rel: Vec<(NodeId, Affine)> = Vec::new();
+        for id in ids {
+            let w = self.doc.world_transform(*id);
+            let size = self.doc.get(*id)?.size;
+            pts.extend(rect_corners(&Rect::new(0.0, 0.0, size.x, size.y)).map(|p| pinv.apply(w.apply(p))));
+            rel.push((*id, pinv * w));
+        }
+        let bb = aabb_of(&pts);
+        let gid = self.doc.alloc_id();
+        let mut g = if frame { Node::frame(gid, bb) } else { Node::new(gid, NodeKind::Group) };
+        if frame {
+            g.fills.clear();
+            g.name = self.unique_name("Frame");
+        } else {
+            g.name = self.unique_name("Group");
+        }
+        g.transform = Affine::translate(bb.x, bb.y);
+        g.size = v2(bb.w, bb.h);
+        tx.cmd(&mut self.doc, Command::Insert { parent, index: max_index + 1, nodes: vec![g] }).ok()?;
+        for (i, (id, in_parent)) in rel.into_iter().enumerate() {
+            tx.cmd(&mut self.doc, Command::Reparent { id, parent: gid, index: i }).ok()?;
+            if let Some(n) = tx.ed.node(&mut self.doc, id) {
+                n.transform = Affine::translate(-bb.x, -bb.y) * in_parent;
+            }
+        }
+        layout::relayout_up(&mut self.doc, &mut tx.ed, gid);
+        Some(gid)
+    }
+
+    fn same_parent_tops(&self) -> Vec<NodeId> {
+        let mut tops = self.top_selection();
+        let Some(first) = tops.first().copied() else { return tops };
+        let parent = self.doc.get(first).and_then(|n| n.parent);
+        tops.retain(|t| self.doc.get(*t).and_then(|n| n.parent) == parent);
+        if let Some(p) = parent.and_then(|p| self.doc.get(p)) {
+            tops.sort_by_key(|t| p.children.iter().position(|c| c == t).unwrap_or(0));
+        }
+        tops
+    }
+
+    pub fn group_selection(&mut self, frame: bool) {
+        let ids = self.same_parent_tops();
+        if ids.is_empty() {
+            return;
+        }
+        let mut tx = Tx::new();
+        let g = self.wrap_in_container(&mut tx, &ids, frame);
+        self.run_tx(tx);
+        if let Some(g) = g {
+            self.selection = vec![g];
+        }
+    }
+
+    pub fn ungroup_selection(&mut self) {
+        let tops = self.top_selection();
+        let mut tx = Tx::new();
+        let mut new_sel = Vec::new();
+        for id in tops {
+            let Some(g) = self.doc.get(id).cloned() else { continue };
+            let is_group = matches!(g.kind, NodeKind::Group) || (matches!(g.kind, NodeKind::Frame(_)) && g.parent.is_some());
+            let Some(parent) = g.parent else { continue };
+            if !is_group || g.children.is_empty() {
+                continue;
+            }
+            let mut index = self.doc.get(parent).and_then(|p| p.children.iter().position(|c| *c == id)).unwrap_or(0);
+            for c in g.children.clone() {
+                let t = self.doc.get(c).map(|n| n.transform).unwrap_or_default();
+                if tx.cmd(&mut self.doc, Command::Reparent { id: c, parent, index }).is_ok() {
+                    if let Some(n) = tx.ed.node(&mut self.doc, c) {
+                        n.transform = g.transform * t;
+                    }
+                    new_sel.push(c);
+                    index += 1;
+                }
+            }
+            let _ = tx.cmd(&mut self.doc, Command::Remove { id });
+            layout::relayout_around(&mut self.doc, &mut tx.ed, parent);
+        }
+        self.run_tx(tx);
+        if !new_sel.is_empty() {
+            self.selection = new_sel;
+        }
+    }
+
+    /// Shift+A: wraps the selection in an auto-layout frame, or toggles
+    /// auto-layout on a selected frame.
+    pub fn toggle_auto_layout(&mut self) {
+        let tops = self.same_parent_tops();
+        if tops.is_empty() {
+            return;
+        }
+        let mut tx = Tx::new();
+        let target;
+        let single_frame = tops.len() == 1 && self.doc.get(tops[0]).map(|n| n.kind.frame_props().is_some() && n.parent.is_some()).unwrap_or(false);
+        if single_frame {
+            target = tops[0];
+        } else {
+            // Order children by position along the dominant axis.
+            let rects: Vec<(NodeId, Rect)> = tops.iter().map(|t| (*t, world_aabb(&self.doc, *t))).collect();
+            let bb = union_all(rects.iter().map(|r| r.1)).unwrap_or_default();
+            let horizontal = {
+                let xs = rects.iter().map(|r| r.1.x + r.1.w / 2.0);
+                let ys = rects.iter().map(|r| r.1.y + r.1.h / 2.0);
+                let spread = |it: &mut dyn Iterator<Item = f32>| {
+                    let v: Vec<f32> = it.collect();
+                    v.iter().cloned().fold(f32::MIN, f32::max) - v.iter().cloned().fold(f32::MAX, f32::min)
+                };
+                spread(&mut xs.clone()) >= spread(&mut ys.clone()) || bb.w >= bb.h
+            };
+            let mut ordered = rects.clone();
+            ordered.sort_by(|a, b| {
+                let (ka, kb) = if horizontal { (a.1.x, b.1.x) } else { (a.1.y, b.1.y) };
+                ka.partial_cmp(&kb).unwrap_or(std::cmp::Ordering::Equal)
+            });
+            let ids: Vec<NodeId> = ordered.iter().map(|r| r.0).collect();
+            let Some(g) = self.wrap_in_container(&mut tx, &ids, true) else { return };
+            if let Some(n) = tx.ed.node(&mut self.doc, g) {
+                if let Some(fp) = n.kind.frame_props_mut() {
+                    fp.auto_layout = Some(AutoLayout {
+                        direction: if horizontal { LayoutDirection::Horizontal } else { LayoutDirection::Vertical },
+                        item_spacing: theme::AUTO_LAYOUT_SPACING,
+                        padding: [theme::AUTO_LAYOUT_PADDING; 4],
+                        primary_sizing: Sizing::Hug,
+                        counter_sizing: Sizing::Hug,
+                        ..Default::default()
+                    });
+                }
+            }
+            layout::relayout_around(&mut self.doc, &mut tx.ed, g);
+            self.run_tx(tx);
+            self.selection = vec![g];
+            return;
+        }
+        if let Some(n) = tx.ed.node(&mut self.doc, target) {
+            if let Some(fp) = n.kind.frame_props_mut() {
+                fp.auto_layout = match fp.auto_layout {
+                    Some(_) => None,
+                    None => Some(AutoLayout {
+                        item_spacing: theme::AUTO_LAYOUT_SPACING,
+                        padding: [theme::AUTO_LAYOUT_PADDING; 4],
+                        primary_sizing: Sizing::Hug,
+                        counter_sizing: Sizing::Hug,
+                        ..Default::default()
+                    }),
+                };
+            }
+        }
+        layout::relayout_around(&mut self.doc, &mut tx.ed, target);
+        self.run_tx(tx);
+    }
+
+    // ------------------------------------------------------------ transforms
+    pub fn nudge(&mut self, dx: f32, dy: f32) {
+        let tops = self.top_selection();
+        let mut tx = Tx::new();
+        for id in &tops {
+            let d = delta_to_parent(&self.doc, *id, v2(dx, dy));
+            if let Some(n) = tx.ed.node(&mut self.doc, *id) {
+                n.transform.tx += d.x;
+                n.transform.ty += d.y;
+            }
+            layout::relayout_up(&mut self.doc, &mut tx.ed, *id);
+        }
+        self.run_tx(tx);
+    }
+
+    pub fn align(&mut self, a: Align) {
+        let tops = self.top_selection();
+        if tops.is_empty() {
+            return;
+        }
+        let target = if tops.len() == 1 {
+            match self.doc.get(tops[0]).and_then(|n| n.parent) {
+                Some(p) if !matches!(self.doc.get(p).map(|n| &n.kind), Some(NodeKind::Page { .. })) => world_aabb(&self.doc, p),
+                _ => world_aabb(&self.doc, tops[0]),
+            }
+        } else {
+            union_all(tops.iter().map(|t| world_aabb(&self.doc, *t))).unwrap_or_default()
+        };
+        let mut tx = Tx::new();
+        for id in &tops {
+            let r = world_aabb(&self.doc, *id);
+            let d = match a {
+                Align::Left => v2(target.x - r.x, 0.0),
+                Align::HCenter => v2(target.x + target.w / 2.0 - (r.x + r.w / 2.0), 0.0),
+                Align::Right => v2(target.x + target.w - (r.x + r.w), 0.0),
+                Align::Top => v2(0.0, target.y - r.y),
+                Align::VCenter => v2(0.0, target.y + target.h / 2.0 - (r.y + r.h / 2.0)),
+                Align::Bottom => v2(0.0, target.y + target.h - (r.y + r.h)),
+            };
+            let d = delta_to_parent(&self.doc, *id, d);
+            if let Some(n) = tx.ed.node(&mut self.doc, *id) {
+                n.transform.tx += d.x;
+                n.transform.ty += d.y;
+            }
+            layout::relayout_up(&mut self.doc, &mut tx.ed, *id);
+        }
+        self.run_tx(tx);
+    }
+
+    /// Moves the selection one step (or to the extreme) in z-order.
+    pub fn reorder(&mut self, forward: bool, extreme: bool) {
+        let tops = self.same_parent_tops();
+        let Some(parent) = tops.first().and_then(|t| self.doc.get(*t)).and_then(|n| n.parent) else { return };
+        let len = self.doc.get(parent).map(|p| p.children.len()).unwrap_or(0);
+        let mut tx = Tx::new();
+        let order: Vec<NodeId> = if forward { tops.iter().rev().copied().collect() } else { tops.clone() };
+        for (k, id) in order.iter().enumerate() {
+            let cur = self.doc.get(parent).and_then(|p| p.children.iter().position(|c| c == id)).unwrap_or(0);
+            let target = match (forward, extreme) {
+                (true, true) => len.saturating_sub(1),
+                (false, true) => k,
+                (true, false) => (cur + 1).min(len.saturating_sub(1)),
+                (false, false) => cur.saturating_sub(1),
+            };
+            if target != cur {
+                let _ = tx.cmd(&mut self.doc, Command::Reparent { id: *id, parent, index: target });
+            }
+        }
+        layout::relayout_around(&mut self.doc, &mut tx.ed, parent);
+        self.run_tx(tx);
+    }
+
+    /// Reparents `ids` into `new_parent` at `index` (index counted after the
+    /// dragged nodes are removed), preserving their page position.
+    pub fn move_to_parent(&mut self, ids: &[NodeId], new_parent: NodeId, index: usize) {
+        let Some(npw) = self.doc.world_transform(new_parent).invert() else { return };
+        let mut tx = Tx::new();
+        let mut old_parents = Vec::new();
+        for (i, id) in ids.iter().enumerate() {
+            if *id == new_parent || self.doc.is_ancestor(*id, new_parent) {
+                continue;
+            }
+            let world = self.doc.world_transform(*id);
+            if let Some(p) = self.doc.get(*id).and_then(|n| n.parent) {
+                old_parents.push(p);
+            }
+            if let Err(e) = tx.cmd(&mut self.doc, Command::Reparent { id: *id, parent: new_parent, index: index + i }) {
+                self.show_toast(format!("Cannot move layer: {e}"), true);
+                continue;
+            }
+            if let Some(n) = tx.ed.node(&mut self.doc, *id) {
+                n.transform = npw * world;
+            }
+        }
+        for p in old_parents {
+            if self.doc.get(p).is_some() {
+                layout::relayout_around(&mut self.doc, &mut tx.ed, p);
+            }
+        }
+        layout::relayout_around(&mut self.doc, &mut tx.ed, new_parent);
+        self.run_tx(tx);
+    }
+
+    // ------------------------------------------------------------ naming / flags
+    pub fn rename(&mut self, id: NodeId, name: &str) {
+        let name = name.trim().to_string();
+        if name.is_empty() {
+            return;
+        }
+        self.edit_nodes(&[id], |n| n.name = name.clone());
+    }
+
+    pub fn toggle_visible(&mut self, id: NodeId) {
+        self.edit_nodes(&[id], |n| n.visible = !n.visible);
+    }
+
+    pub fn toggle_lock(&mut self, id: NodeId) {
+        self.edit_nodes(&[id], |n| n.locked = !n.locked);
+    }
+
+    // ------------------------------------------------------------ pages
+    pub fn add_page(&mut self) {
+        let name = format!("Page {}", self.doc.pages.len() + 1);
+        let id = self.doc.add_page(name);
+        self.switch_page(id);
+    }
+
+    pub fn switch_page(&mut self, id: NodeId) {
+        if self.doc.nodes.contains_key(&id) {
+            self.page = id;
+            self.selection.clear();
+            self.canvas.reset_interaction();
+            self.changed();
+            self.fit_all();
+        }
+    }
+
+    // ------------------------------------------------------------ view
+    pub fn page_bounds(&self) -> Option<Rect> {
+        let kids = &self.doc.get(self.page)?.children;
+        union_all(kids.iter().filter(|c| self.doc.get(**c).map(|n| n.visible).unwrap_or(false)).map(|c| world_aabb(&self.doc, *c)))
+    }
+
+    pub fn fit_all(&mut self) {
+        let b = self.page_bounds().unwrap_or(Rect::new(0.0, 0.0, 800.0, 600.0));
+        self.view = View::fit(b, self.canvas_rect.size());
+        self.changed();
+    }
+
+    pub fn fit_selection(&mut self) {
+        match self.selection_bounds() {
+            Some(b) => {
+                self.view = View::fit(b, self.canvas_rect.size());
+                self.changed();
+            }
+            None => self.fit_all(),
+        }
+    }
+
+    pub fn zoom_to(&mut self, zoom: f32) {
+        let c = self.canvas_rect.center();
+        self.view.zoom_at(self.canvas_rect.min, c, zoom);
+        self.changed();
+    }
+
+    pub fn zoom_by(&mut self, factor: f32) {
+        self.zoom_to(self.view.zoom * factor);
+    }
+
+    // ------------------------------------------------------------ files
+    pub fn replace_document(&mut self, doc: Document, path: Option<PathBuf>) {
+        let mut doc = doc;
+        io::ensure_page(&mut doc);
+        self.page = doc.pages[0];
+        self.doc = doc;
+        self.hist = History::default();
+        self.selection.clear();
+        self.hover = None;
+        self.file_path = path;
+        self.canvas.reset_interaction();
+        self.layers.reset();
+        self.changed();
+        self.fit_all();
+    }
+
+    pub fn open_dialog(&mut self) {
+        if let Some(p) = io::pick_open() {
+            self.open_path(p);
+        }
+    }
+
+    pub fn open_path(&mut self, p: PathBuf) {
+        match io::load_path(&p) {
+            Ok(doc) => {
+                let name = doc.name.clone();
+                self.replace_document(doc, Some(p));
+                self.show_toast(format!("Opened {name}"), false);
+            }
+            Err(e) => self.show_toast(e, true),
+        }
+    }
+
+    pub fn save(&mut self, as_new: bool) {
+        let target = match (&self.file_path, as_new) {
+            (Some(p), false) if p.extension().map(|e| e == io::NATIVE_EXT).unwrap_or(false) => Some(p.clone()),
+            _ => io::pick_save(&self.doc.name),
+        };
+        let Some(path) = target else { return };
+        match io::save_path(&self.doc, &path) {
+            Ok(p) => {
+                self.show_toast(format!("Saved {}", p.display()), false);
+                self.file_path = Some(p);
+            }
+            Err(e) => self.show_toast(e, true),
+        }
+    }
+
+    pub fn new_document(&mut self) {
+        let mut d = Document::new("Untitled");
+        d.add_page("Page 1");
+        self.replace_document(d, None);
+    }
+
+    pub fn export_selection(&mut self) {
+        let Some(id) = self.selection.first().copied() else {
+            self.show_toast("Select a layer to export", true);
+            return;
+        };
+        let name = self.doc.get(id).map(|n| n.name.clone()).unwrap_or_default();
+        let Some(path) = io::pick_export(&name) else { return };
+        match desigma_render::render_node(&self.doc, id, 1.0) {
+            Some(pm) => match pm.save_png(&path) {
+                Ok(()) => self.show_toast(format!("Exported {}", path.display()), false),
+                Err(e) => self.show_toast(format!("Export failed: {e}"), true),
+            },
+            None => self.show_toast("Nothing to export", true),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn app_with_rects() -> (App, Vec<NodeId>) {
+        let mut d = Document::new("t");
+        let page = d.add_page("p");
+        let mut ids = vec![];
+        for i in 0..3 {
+            let id = d.alloc_id();
+            let r = d.insert(page, Node::rectangle(id, Rect::new(i as f32 * 100.0, 20.0 * i as f32, 50.0, 50.0))).unwrap();
+            ids.push(r);
+        }
+        (App::new(d), ids)
+    }
+
+    #[test]
+    fn group_and_undo() {
+        let (mut app, ids) = app_with_rects();
+        app.selection = vec![ids[0], ids[1]];
+        app.group_selection(false);
+        let g = app.selection[0];
+        let gn = app.doc.get(g).unwrap();
+        assert!(matches!(gn.kind, NodeKind::Group));
+        assert_eq!(gn.children.len(), 2);
+        assert_eq!(gn.size, v2(150.0, 70.0));
+        // world position preserved
+        assert_eq!(world_aabb(&app.doc, ids[1]).x, 100.0);
+        app.undo();
+        assert_eq!(app.doc.get(ids[0]).unwrap().parent, Some(app.page));
+        assert_eq!(app.doc.get(app.page).unwrap().children.len(), 3);
+    }
+
+    #[test]
+    fn delete_duplicate_paste() {
+        let (mut app, ids) = app_with_rects();
+        app.selection = vec![ids[0]];
+        app.duplicate_selection();
+        assert_eq!(app.doc.get(app.page).unwrap().children.len(), 4);
+        assert_ne!(app.selection[0], ids[0]);
+        app.delete_selection();
+        assert_eq!(app.doc.get(app.page).unwrap().children.len(), 3);
+        app.selection = vec![ids[2]];
+        let json = app.copy_selection().unwrap();
+        app.paste(Some(&json));
+        assert_eq!(app.doc.get(app.page).unwrap().children.len(), 4);
+        app.undo();
+        assert_eq!(app.doc.get(app.page).unwrap().children.len(), 3);
+    }
+
+    #[test]
+    fn align_left_multi() {
+        let (mut app, ids) = app_with_rects();
+        app.selection = ids.clone();
+        app.align(Align::Left);
+        for id in ids {
+            assert_eq!(world_aabb(&app.doc, id).x, 0.0);
+        }
+    }
+
+    #[test]
+    fn nudge_and_reorder() {
+        let (mut app, ids) = app_with_rects();
+        app.selection = vec![ids[0]];
+        app.nudge(10.0, 0.0);
+        assert_eq!(app.doc.get(ids[0]).unwrap().transform.tx, 10.0);
+        app.reorder(true, true);
+        assert_eq!(app.doc.get(app.page).unwrap().children.last(), Some(&ids[0]));
+        app.reorder(false, true);
+        assert_eq!(app.doc.get(app.page).unwrap().children.first(), Some(&ids[0]));
+    }
+
+    #[test]
+    fn auto_layout_wrap_orders_by_x() {
+        let (mut app, ids) = app_with_rects();
+        app.selection = vec![ids[2], ids[0]];
+        app.toggle_auto_layout();
+        let g = app.selection[0];
+        let gn = app.doc.get(g).unwrap();
+        assert!(gn.kind.frame_props().unwrap().auto_layout.is_some());
+        assert_eq!(gn.children, vec![ids[0], ids[2]]);
+        // 10 padding + 50 + 10 spacing + 50 + 10 padding
+        assert_eq!(gn.size.x, 130.0);
+    }
+
+    #[test]
+    fn move_to_parent_keeps_world_position() {
+        let (mut app, ids) = app_with_rects();
+        let fid = app.doc.alloc_id();
+        let frame = app.doc.insert(app.page, Node::frame(fid, Rect::new(500.0, 500.0, 300.0, 300.0))).unwrap();
+        let before = world_aabb(&app.doc, ids[1]);
+        app.move_to_parent(&[ids[1]], frame, 0);
+        assert_eq!(app.doc.get(ids[1]).unwrap().parent, Some(frame));
+        let after = world_aabb(&app.doc, ids[1]);
+        assert_eq!((before.x, before.y), (after.x, after.y));
+        app.undo();
+        assert_eq!(app.doc.get(ids[1]).unwrap().parent, Some(app.page));
+    }
+
+    #[test]
+    fn ungroup_restores_children() {
+        let (mut app, ids) = app_with_rects();
+        app.selection = vec![ids[0], ids[1]];
+        app.group_selection(false);
+        app.ungroup_selection();
+        assert_eq!(app.doc.get(ids[0]).unwrap().parent, Some(app.page));
+        assert_eq!(world_aabb(&app.doc, ids[1]).x, 100.0);
+    }
+}
