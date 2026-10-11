@@ -9,12 +9,14 @@ mod geom;
 mod history;
 mod node;
 mod paint;
+mod prototype;
 
 pub use components::*;
 pub use geom::*;
 pub use history::*;
 pub use node::*;
 pub use paint::*;
+pub use prototype::*;
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -45,6 +47,9 @@ pub struct Document {
     /// Display metadata for entries of `styles`, same keys.
     #[serde(default)]
     pub style_meta: BTreeMap<String, StyleMeta>,
+    /// Prototype flows (starting points), in display order.
+    #[serde(default)]
+    pub flows: Vec<Flow>,
     /// Embedded images keyed by content hash (Figma `imageRef`).
     pub images: BTreeMap<String, Vec<u8>>,
     next_id: u64,

@@ -45,6 +45,9 @@ pub struct Node {
     /// Component/instance bookkeeping; empty for ordinary nodes.
     #[serde(default, skip_serializing_if = "ComponentLink::is_empty")]
     pub component: ComponentLink,
+    /// Prototype interactions and scroll behaviour; empty for most nodes.
+    #[serde(default, skip_serializing_if = "PrototypeProps::is_empty")]
+    pub prototype: PrototypeProps,
 }
 
 /// A node property that an instance can override independently of its main
@@ -152,6 +155,7 @@ impl Node {
             fill_geometry: None,
             stroke_geometry: None,
             component: ComponentLink::default(),
+            prototype: PrototypeProps::default(),
         }
     }
 

@@ -59,6 +59,7 @@ impl Ctx {
                 pages: doc.pages.clone(),
                 styles: Default::default(),
                 style_meta: Default::default(),
+                flows: Default::default(),
                 images: Default::default(),
                 next_id: doc.next_id,
             },
