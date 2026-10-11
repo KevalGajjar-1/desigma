@@ -295,7 +295,79 @@ fn main() {
         p.runs.push(TextRun { start: 0, end: 8, style: TextStyle { font_size: 16.0, font_weight: 700, fills: vec![Paint::solid(Color::rgb(0xE0, 0x20, 0x20))], ..Default::default() } });
     }
 
-    let mut pm = Pixmap::new(720 * 2, 740 * 2).unwrap();
+    // looping angular gradient: first and last stop match, so the sweep has no seam
+    let ring = b.add(None, |id| Node::rectangle(id, Rect::new(670.0, 130.0, 80.0, 70.0)));
+    b.node(ring).fills = vec![Paint {
+        kind: PaintKind::AngularGradient {
+            handles: hc,
+            stops: vec![
+                GradientStop { pos: 0.0, color: c0 },
+                GradientStop { pos: 0.5, color: c1 },
+                GradientStop { pos: 1.0, color: c0 },
+            ],
+        },
+        opacity: 1.0,
+        visible: true,
+        blend: BlendMode::Normal,
+    }];
+    b.label(670.0, 204.0, "angular, looped");
+
+    // Row 7: corner smoothing, truncation, rounded polygons
+    for (i, smoothing) in [0.0f32, 0.6, 1.0].into_iter().enumerate() {
+        let x = 30.0 + i as f32 * 100.0;
+        let r = b.add(None, |id| Node::rectangle(id, Rect::new(x, 770.0, 80.0, 80.0)));
+        b.node(r).corner_radii = [28.0; 4];
+        b.node(r).corner_smoothing = smoothing;
+        b.node(r).fills = vec![Paint::solid(Color::rgb(0x18, 0xA0, 0xFB))];
+        b.label(x, 856.0, &format!("smoothing {smoothing}"));
+    }
+    let long = "Truncated text keeps the first lines and ends the last visible one with an ellipsis like Figma does.";
+    let tstyle = TextStyle { font_size: 13.0, line_height: LineHeight::Pixels(18.0), fills: vec![Paint::solid(Color::rgb(0x22, 0x22, 0x22))], ..Default::default() };
+    for (i, (h, lines)) in [(54.0f32, Some(2u32)), (40.0, None)].into_iter().enumerate() {
+        let x = 350.0 + i as f32 * 170.0;
+        let t = b.add(None, |id| Node::text(id, Rect::new(x, 770.0, 150.0, h), long, tstyle.clone()));
+        if let NodeKind::Text(p) = &mut b.node(t).kind {
+            p.auto_resize = TextAutoResize::Truncate;
+            p.max_lines = lines;
+        }
+        b.label(x, 856.0, if lines.is_some() { "truncate, max 2 lines" } else { "truncate, box height" });
+    }
+    for (i, (kind, name)) in [(NodeKind::Polygon { count: 6 }, "polygon radius"), (NodeKind::Star { count: 5, inner_ratio: 0.5 }, "star radius")]
+        .into_iter()
+        .enumerate()
+    {
+        let x = 30.0 + i as f32 * 100.0;
+        b.add(None, |id| {
+            let mut n = Node::new(id, kind);
+            n.transform = Affine::translate(x, 880.0);
+            n.size = Vec2::new(80.0, 80.0);
+            n.corner_radii = [10.0, 0.0, 0.0, 0.0];
+            n.fills = vec![Paint::solid(Color::rgb(0x7B, 0x61, 0xFF))];
+            n
+        });
+        b.label(x, 966.0, name);
+    }
+    // blend and background blur inside an opacity group
+    let burn_a = b.add(None, |id| Node::rectangle(id, Rect::new(260.0, 880.0, 80.0, 70.0)));
+    b.node(burn_a).fills = vec![Paint::solid(Color::rgb(0xFF, 0xC8, 0x80))];
+    let burn_b = b.add(None, |id| Node::ellipse(id, Rect::new(280.0, 890.0, 60.0, 60.0)));
+    b.node(burn_b).fills = vec![Paint::solid(Color::rgb(0xA0, 0xA0, 0xFF))];
+    b.node(burn_b).blend = BlendMode::LinearBurn;
+    b.label(260.0, 966.0, "linear burn");
+
+    let grp = b.add(None, |id| Node::new(id, NodeKind::Group));
+    b.node(grp).opacity = 0.9;
+    for i in 0..8 {
+        let r = b.add(Some(grp), |id| Node::rectangle(id, Rect::new(380.0 + i as f32 * 12.0, 880.0, 6.0, 70.0)));
+        b.node(r).fills = vec![Paint::solid(Color::rgb(0x11, 0x11, 0x11))];
+    }
+    let pane2 = b.add(Some(grp), |id| Node::rectangle(id, Rect::new(400.0, 895.0, 50.0, 40.0)));
+    b.node(pane2).corner_radii = [8.0; 4];
+    b.node(pane2).fills = vec![Paint::solid(Color::rgba(255, 255, 255, 60))];
+    b.node(pane2).effects = vec![Effect::BackgroundBlur { radius: 10.0, visible: true }];
+    b.label(380.0, 966.0, "bg blur in opacity group");
+
+    let mut pm = Pixmap::new(780 * 2, 1000 * 2).unwrap();
     let vp = Viewport { offset: Vec2::ZERO, zoom: 1.0, dpr: 2.0 };
     let t0 = std::time::Instant::now();
     render_page(&b.doc, b.page, &vp, &mut pm);

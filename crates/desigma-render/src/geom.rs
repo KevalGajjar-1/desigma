@@ -18,11 +18,14 @@ pub struct Shape {
     pub fillable: bool,
     /// Plain rectangle (used by per-side stroke weights).
     pub is_rect: bool,
+    /// Precomputed stroke outline (`Node::stroke_geometry`): filled with the
+    /// stroke paints instead of stroking `paths`.
+    pub stroke_paths: Option<Vec<(sk::Path, sk::FillRule)>>,
 }
 
 impl Shape {
     fn single(path: sk::Path, rule: sk::FillRule, closed: bool) -> Self {
-        Self { paths: vec![(path, rule)], closed, fillable: true, is_rect: false }
+        Self { paths: vec![(path, rule)], closed, fillable: true, is_rect: false, stroke_paths: None }
     }
 }
 
@@ -98,6 +101,132 @@ pub fn rounded_rect(w: f32, h: f32, radii: [f32; 4]) -> Option<sk::Path> {
     pb.finish()
 }
 
+/// Per-corner constants of Figma's corner smoothing (the construction from
+/// Figma's "Desperately seeking squircles" article, as implemented by
+/// figma-squircle). Template space: the corner starts at the origin on the
+/// edge, the edge direction is +x and the turn is toward +y.
+struct SmoothCorner {
+    a: f32,
+    b: f32,
+    c: f32,
+    d: f32,
+    /// How far from the corner point the curve starts along each edge.
+    p: f32,
+    arc_len: f32,
+    arc_measure: f32,
+    r: f32,
+}
+
+impl SmoothCorner {
+    fn new(r: f32, smoothing: f32, budget: f32) -> Self {
+        if r <= 0.0 {
+            return Self { a: 0.0, b: 0.0, c: 0.0, d: 0.0, p: 0.0, arc_len: 0.0, arc_measure: 0.0, r: 0.0 };
+        }
+        // p = (1 + smoothing) * r, limited by the room left on the side; when
+        // it is limited the smoothing is reduced rather than the radius.
+        let s = smoothing.clamp(0.0, 1.0).min((budget / r - 1.0).max(0.0));
+        let p = ((1.0 + s) * r).min(budget);
+        let arc_measure = (90.0 * (1.0 - s)).to_radians();
+        let arc_len = (arc_measure / 2.0).sin() * r * std::f32::consts::SQRT_2;
+        let alpha = (PI / 2.0 - arc_measure) / 2.0;
+        let p3_p4 = r * (alpha / 2.0).tan();
+        let beta = (PI / 4.0) * s;
+        let c = p3_p4 * beta.cos();
+        let d = c * beta.tan();
+        let b = (p - arc_len - c - d) / 3.0;
+        Self { a: 2.0 * b, b, c, d, p, arc_len, arc_measure, r }
+    }
+
+    /// Appends the corner (cubic, arc, cubic) starting at `start`, with edge
+    /// direction `u` and turn direction `v`.
+    fn emit(&self, pb: &mut sk::PathBuilder, start: (f32, f32), u: (f32, f32), v: (f32, f32)) {
+        if self.p <= 0.0 {
+            return;
+        }
+        let m = |x: f32, y: f32| (start.0 + u.0 * x + v.0 * y, start.1 + u.1 * x + v.1 * y);
+        let Self { a, b, c, d, arc_len, arc_measure, r, .. } = *self;
+        let cubic = |pb: &mut sk::PathBuilder, p1: (f32, f32), p2: (f32, f32), p3: (f32, f32)| {
+            let (p1, p2, p3) = (m(p1.0, p1.1), m(p2.0, p2.1), m(p3.0, p3.1));
+            pb.cubic_to(p1.0, p1.1, p2.0, p2.1, p3.0, p3.1);
+        };
+        cubic(pb, (a, 0.0), (a + b, 0.0), (a + b + c, d));
+        let p1 = (a + b + c, d);
+        let p2 = (p1.0 + arc_len, p1.1 + arc_len);
+        if arc_measure > 1e-4 {
+            // circular arc between p1 and p2, clockwise (y down)
+            let phi0 = PI / 4.0 - arc_measure / 2.0 - PI / 2.0;
+            let (cx, cy) = (p1.0 - r * phi0.cos(), p1.1 - r * phi0.sin());
+            let n = ((arc_measure / (PI / 2.0)).ceil() as usize).max(1);
+            let step = arc_measure / n as f32;
+            let k = 4.0 / 3.0 * (step / 4.0).tan();
+            let mut ang = phi0;
+            for _ in 0..n {
+                let nb = ang + step;
+                let (sa, ca) = ang.sin_cos();
+                let (sb, cb) = nb.sin_cos();
+                cubic(
+                    pb,
+                    (cx + r * (ca - k * sa), cy + r * (sa + k * ca)),
+                    (cx + r * (cb + k * sb), cy + r * (sb - k * cb)),
+                    (cx + r * cb, cy + r * sb),
+                );
+                ang = nb;
+            }
+        }
+        cubic(pb, (p2.0 + d, p2.1 + c), (p2.0 + d, p2.1 + b + c), (p2.0 + d, p2.1 + a + b + c));
+    }
+}
+
+/// Rounded rectangle with Figma corner smoothing (0..1). With smoothing 0 this
+/// is exactly [`rounded_rect`].
+pub fn smooth_rounded_rect(w: f32, h: f32, radii: [f32; 4], smoothing: f32) -> Option<sk::Path> {
+    if w <= 0.0 || h <= 0.0 {
+        return None;
+    }
+    if smoothing <= 0.0 || radii.iter().all(|v| *v <= 0.0) {
+        return rounded_rect(w, h, radii);
+    }
+    let lim = w.min(h) / 2.0;
+    let r = radii.map(|v| v.max(0.0).min(lim));
+    // corner order: tl, tr, br, bl; neighbours with the side length shared with them
+    let neighbours = [[(1, w), (3, h)], [(0, w), (2, h)], [(1, h), (3, w)], [(2, w), (0, h)]];
+    let mut order = [0usize, 1, 2, 3];
+    order.sort_by(|x, y| r[*y].partial_cmp(&r[*x]).unwrap_or(std::cmp::Ordering::Equal));
+    let mut used = [f32::NAN; 4];
+    let mut corners: [Option<SmoothCorner>; 4] = [None, None, None, None];
+    for i in order {
+        let budget = neighbours[i]
+            .iter()
+            .map(|&(j, side)| {
+                if r[j] <= 0.0 {
+                    side
+                } else if (r[i] - r[j]).abs() < 1e-6 {
+                    side / 2.0
+                } else if !used[j].is_nan() {
+                    side - used[j]
+                } else {
+                    side * r[i] / (r[i] + r[j])
+                }
+            })
+            .fold(f32::MAX, f32::min);
+        let c = SmoothCorner::new(r[i], smoothing, budget);
+        used[i] = c.p;
+        corners[i] = Some(c);
+    }
+    let [tl, tr, br, bl] = corners.map(|c| c.unwrap());
+    let mut pb = sk::PathBuilder::new();
+    pb.move_to(w - tr.p, 0.0);
+    tr.emit(&mut pb, (w - tr.p, 0.0), (1.0, 0.0), (0.0, 1.0));
+    pb.line_to(w, h - br.p);
+    br.emit(&mut pb, (w, h - br.p), (0.0, 1.0), (-1.0, 0.0));
+    pb.line_to(bl.p, h);
+    bl.emit(&mut pb, (bl.p, h), (-1.0, 0.0), (0.0, -1.0));
+    pb.line_to(0.0, tl.p);
+    tl.emit(&mut pb, (0.0, tl.p), (0.0, -1.0), (1.0, 0.0));
+    pb.close();
+    pb.finish()
+}
+
 fn ellipse_path(w: f32, h: f32, arc: &d::ArcData) -> Option<sk::Path> {
     if w <= 0.0 || h <= 0.0 {
         return None;
@@ -141,8 +270,10 @@ fn ellipse_path(w: f32, h: f32, arc: &d::ArcData) -> Option<sk::Path> {
     pb.finish()
 }
 
-/// Polygon/star outline normalised to fill the node bounds.
-fn poly_path(w: f32, h: f32, pts: &[(f32, f32)]) -> Option<sk::Path> {
+/// Polygon/star outline normalised to fill the node bounds; every vertex is
+/// rounded with `radius` (node units, reduced where the adjacent edges are too
+/// short to hold it).
+fn poly_path(w: f32, h: f32, pts: &[(f32, f32)], radius: f32) -> Option<sk::Path> {
     if pts.len() < 3 || w <= 0.0 || h <= 0.0 {
         return None;
     }
@@ -154,14 +285,53 @@ fn poly_path(w: f32, h: f32, pts: &[(f32, f32)]) -> Option<sk::Path> {
         y1 = y1.max(*y);
     }
     let (sw, sh) = ((x1 - x0).max(1e-6), (y1 - y0).max(1e-6));
+    let pts: Vec<(f32, f32)> = pts.iter().map(|(x, y)| ((x - x0) / sw * w, (y - y0) / sh * h)).collect();
     let mut pb = sk::PathBuilder::new();
-    for (i, (x, y)) in pts.iter().enumerate() {
-        let (px, py) = ((x - x0) / sw * w, (y - y0) / sh * h);
-        if i == 0 {
-            pb.move_to(px, py);
-        } else {
-            pb.line_to(px, py);
+    if radius <= 0.0 {
+        for (i, (px, py)) in pts.iter().enumerate() {
+            if i == 0 {
+                pb.move_to(*px, *py);
+            } else {
+                pb.line_to(*px, *py);
+            }
         }
+        pb.close();
+        return pb.finish();
+    }
+    let n = pts.len();
+    let unit = |from: (f32, f32), to: (f32, f32)| {
+        let (dx, dy) = (to.0 - from.0, to.1 - from.1);
+        let l = (dx * dx + dy * dy).sqrt().max(1e-9);
+        ((dx / l, dy / l), l)
+    };
+    // How far each vertex's tangent points sit from it. An edge is shared by two
+    // vertices, so each may use at most half of it (equal-radius case) which keeps
+    // the rounded corners from overlapping.
+    let mut corners = Vec::with_capacity(n);
+    for i in 0..n {
+        let (prev, cur, next) = (pts[(i + n - 1) % n], pts[i], pts[(i + 1) % n]);
+        let (d1, l1) = unit(cur, prev);
+        let (d2, l2) = unit(cur, next);
+        let cos = (d1.0 * d2.0 + d1.1 * d2.1).clamp(-1.0, 1.0);
+        let phi = cos.acos(); // interior angle
+        let half_tan = (phi / 2.0).tan();
+        if !(1e-3..=PI - 1e-3).contains(&phi) || half_tan < 1e-6 {
+            corners.push((cur, cur, cur, d1, d2, 0.0));
+            continue;
+        }
+        let t = (radius / half_tan).min(l1 / 2.0).min(l2 / 2.0);
+        let r = t * half_tan;
+        // cubic handle for a circular arc spanning the exterior angle
+        let k = 4.0 / 3.0 * ((PI - phi) / 4.0).tan() * r;
+        corners.push(((cur.0 + d1.0 * t, cur.1 + d1.1 * t), (cur.0 + d2.0 * t, cur.1 + d2.1 * t), cur, d1, d2, k));
+    }
+    for (i, (a, b, _, d1, d2, k)) in corners.iter().enumerate() {
+        if i == 0 {
+            pb.move_to(a.0, a.1);
+        } else {
+            pb.line_to(a.0, a.1);
+        }
+        pb.cubic_to(a.0 - d1.0 * k, a.1 - d1.1 * k, b.0 - d2.0 * k, b.1 - d2.1 * k, b.0, b.1);
     }
     pb.close();
     pb.finish()
@@ -240,13 +410,28 @@ pub fn vector_paths(paths: &[d::Path]) -> Shape {
             out.push((path, fill_rule(p.fill_rule)));
         }
     }
-    Shape { paths: out, closed, fillable: true, is_rect: false }
+    Shape { paths: out, closed, fillable: true, is_rect: false, stroke_paths: None }
 }
 
 /// Geometry for a node, or `None` when it has no own geometry (groups, pages,
 /// text, unknown). `tol` is the flattening tolerance in local units used by
 /// boolean operations.
+///
+/// Precomputed `fill_geometry` / `stroke_geometry` (imported from Figma) take
+/// precedence over geometry derived from the node kind.
 pub fn node_shape(doc: &Document, n: &Node, tol: f32) -> Option<Shape> {
+    let given = n.fill_geometry.as_deref().map(vector_paths).filter(|s| !s.paths.is_empty());
+    let mut shape = match given {
+        Some(s) => Some(s),
+        None => derived_shape(doc, n, tol),
+    }?;
+    if let Some(sg) = n.stroke_geometry.as_deref().map(vector_paths).filter(|s| !s.paths.is_empty()) {
+        shape.stroke_paths = Some(sg.paths);
+    }
+    Some(shape)
+}
+
+fn derived_shape(doc: &Document, n: &Node, tol: f32) -> Option<Shape> {
     let (w, h) = (n.size.x, n.size.y);
     match &n.kind {
         NodeKind::Frame(_)
@@ -256,7 +441,7 @@ pub fn node_shape(doc: &Document, n: &Node, tol: f32) -> Option<Shape> {
         | NodeKind::Section
         | NodeKind::Rectangle => {
             let radii = if matches!(n.kind, NodeKind::Section) { [0.0; 4] } else { n.corner_radii };
-            let mut s = Shape::single(rounded_rect(w, h, radii)?, sk::FillRule::Winding, true);
+            let mut s = Shape::single(smooth_rounded_rect(w, h, radii, n.corner_smoothing)?, sk::FillRule::Winding, true);
             s.is_rect = true;
             Some(s)
         }
@@ -265,12 +450,16 @@ pub fn node_shape(doc: &Document, n: &Node, tol: f32) -> Option<Shape> {
             let mut pb = sk::PathBuilder::new();
             pb.move_to(0.0, 0.0);
             pb.line_to(w, 0.0);
-            Some(Shape { paths: vec![(pb.finish()?, sk::FillRule::Winding)], closed: false, fillable: false, is_rect: false })
+            Some(Shape { paths: vec![(pb.finish()?, sk::FillRule::Winding)], closed: false, fillable: false, is_rect: false, stroke_paths: None })
         }
-        NodeKind::Polygon { count } => Some(Shape::single(poly_path(w, h, &polygon_points(*count))?, sk::FillRule::Winding, true)),
-        NodeKind::Star { count, inner_ratio } => {
-            Some(Shape::single(poly_path(w, h, &star_points(*count, *inner_ratio))?, sk::FillRule::Winding, true))
+        NodeKind::Polygon { count } => {
+            Some(Shape::single(poly_path(w, h, &polygon_points(*count), n.corner_radii[0])?, sk::FillRule::Winding, true))
         }
+        NodeKind::Star { count, inner_ratio } => Some(Shape::single(
+            poly_path(w, h, &star_points(*count, *inner_ratio), n.corner_radii[0])?,
+            sk::FillRule::Winding,
+            true,
+        )),
         NodeKind::Vector { paths } => {
             let s = vector_paths(paths);
             if s.paths.is_empty() {

@@ -49,7 +49,7 @@ pub fn render_page(doc: &Document, page: NodeId, vp: &Viewport, target: &mut tin
     let s = vp.zoom * vp.dpr;
     let ts = sk::Transform::from_row(s, 0.0, 0.0, s, -vp.offset.x * s, -vp.offset.y * s);
     let r = Renderer { doc, env: PaintEnv { doc } };
-    r.draw_children(&p.children, ts, target, None);
+    r.draw_children(&p.children, ts, target, None, None);
 }
 
 /// Draws a single node subtree with its own top-left at (0,0); used for
@@ -63,9 +63,9 @@ pub fn render_node(doc: &Document, node: NodeId, scale: f32) -> Option<tiny_skia
     let ts = sk::Transform::from_scale(scale, scale);
     if let NodeKind::Page { background } = &n.kind {
         pm.fill(paint::sk_color(background, 1.0));
-        r.draw_children(&n.children, ts, &mut pm, None);
+        r.draw_children(&n.children, ts, &mut pm, None, None);
     } else {
-        r.draw_node(n, ts, &mut pm, None);
+        r.draw_node(n, ts, &mut pm, None, None);
     }
     Some(pm)
 }
@@ -75,6 +75,20 @@ pub fn render_node(doc: &Document, node: NodeId, scale: f32) -> Option<tiny_skia
 struct Renderer<'a> {
     doc: &'a Document,
     env: PaintEnv<'a>,
+}
+
+/// What is visible underneath the layer being drawn: `None` means the draw
+/// target itself is the backdrop.
+type Back<'a> = Option<&'a sk::Pixmap>;
+
+/// Composite of the parent backdrop (if any) and everything already in `target`.
+fn composite_backdrop(back: Back, target: &sk::Pixmap) -> sk::Pixmap {
+    let mut out = match back {
+        Some(b) => b.clone(),
+        None => return target.clone(),
+    };
+    out.draw_pixmap(0, 0, target.as_ref(), &sk::PixmapPaint::default(), sk::Transform::identity(), None);
+    out
 }
 
 fn ts_scale(ts: &sk::Transform) -> f32 {
@@ -112,7 +126,7 @@ fn black_paint(alpha: f32) -> sk::Paint<'static> {
 impl Renderer<'_> {
     // ----- tree -----------------------------------------------------------
 
-    fn draw_children(&self, children: &[NodeId], parent_ts: sk::Transform, target: &mut sk::Pixmap, clip: Option<&sk::Mask>) {
+    fn draw_children(&self, children: &[NodeId], parent_ts: sk::Transform, target: &mut sk::Pixmap, clip: Option<&sk::Mask>, back: Back) {
         for (i, cid) in children.iter().enumerate() {
             let Some(child) = self.doc.get(*cid) else { continue };
             let ts = parent_ts.pre_concat(to_sk_transform(&child.transform));
@@ -125,7 +139,9 @@ impl Renderer<'_> {
                 let (Some(mut layer), Some(mut mask_layer)) = (sk::Pixmap::new(w, h), sk::Pixmap::new(w, h)) else {
                     return;
                 };
-                self.draw_children(&children[i + 1..], parent_ts, &mut layer, clip);
+                let needs_back = children[i + 1..].iter().any(|c| self.doc.get(*c).is_some_and(|c| self.has_bg_blur(c)));
+                let backdrop = needs_back.then(|| composite_backdrop(back, target));
+                self.draw_children(&children[i + 1..], parent_ts, &mut layer, clip, backdrop.as_ref());
                 let mut mask_node = child.clone();
                 mask_node.blend = desigma_doc::BlendMode::Normal;
                 // Masks use the shape's alpha regardless of its paints.
@@ -136,13 +152,13 @@ impl Renderer<'_> {
                 {
                     mask_node.fills = vec![desigma_doc::Paint::solid(desigma_doc::Color::BLACK)];
                 }
-                self.draw_node(&mask_node, ts, &mut mask_layer, None);
+                self.draw_node(&mask_node, ts, &mut mask_layer, None, None);
                 let pp = sk::PixmapPaint { blend_mode: sk::BlendMode::DestinationIn, ..Default::default() };
                 layer.draw_pixmap(0, 0, mask_layer.as_ref(), &pp, sk::Transform::identity(), None);
                 target.draw_pixmap(0, 0, layer.as_ref(), &sk::PixmapPaint::default(), sk::Transform::identity(), None);
                 return;
             }
-            self.draw_node(child, ts, target, clip);
+            self.draw_node(child, ts, target, clip, back);
         }
     }
 
@@ -158,6 +174,15 @@ impl Renderer<'_> {
             return Vec::new();
         }
         n.stroke.paints.iter().filter(|p| p.visible).collect()
+    }
+
+    /// Whether `n` or any drawn descendant has a visible background blur.
+    fn has_bg_blur(&self, n: &Node) -> bool {
+        if !n.visible {
+            return false;
+        }
+        n.effects.iter().any(|e| matches!(e, Effect::BackgroundBlur { visible: true, radius } if *radius > 0.0))
+            || (Self::draws_children(n) && n.children.iter().any(|c| self.doc.get(*c).is_some_and(|c| self.has_bg_blur(c))))
     }
 
     fn draws_children(n: &Node) -> bool {
@@ -191,7 +216,7 @@ impl Renderer<'_> {
         transformed_bounds(ts, -m, -m, n.size.x + 2.0 * m, n.size.y + 2.0 * m)
     }
 
-    fn draw_node(&self, n: &Node, ts: sk::Transform, target: &mut sk::Pixmap, clip: Option<&sk::Mask>) {
+    fn draw_node(&self, n: &Node, ts: sk::Transform, target: &mut sk::Pixmap, clip: Option<&sk::Mask>, back: Back) {
         if !n.visible || matches!(n.kind, NodeKind::Unknown { .. } | NodeKind::Page { .. }) {
             return;
         }
@@ -225,15 +250,22 @@ impl Renderer<'_> {
         }
         let need_layer = special_blend || layer_blur > 0.0 || (opacity < 1.0 && (has_kids || paints > 1 || has_effects));
         if !need_layer {
-            self.draw_body(n, ts, target, clip, opacity);
+            self.draw_body(n, ts, target, clip, opacity, back);
             return;
         }
         let Some(mut layer) = sk::Pixmap::new(target.width(), target.height()) else { return };
-        self.draw_body(n, ts, &mut layer, clip, 1.0);
+        // background blur inside an isolated layer samples what is already
+        // painted underneath: the parent backdrop plus the current target
+        let backdrop = self.has_bg_blur(n).then(|| composite_backdrop(back, target));
+        self.draw_body(n, ts, &mut layer, clip, 1.0, backdrop.as_ref());
         if layer_blur > 0.0 {
             let sigma = layer_blur * ts_scale(&ts) / 2.0;
             let full = (0.0, 0.0, layer.width() as f32, layer.height() as f32);
             effects::blur_rect(&mut layer, if has_kids && !clips { full } else { bb }, sigma);
+        }
+        if let Some(mode) = paint::custom_blend(n.blend) {
+            paint::blend_layer(target, &layer, opacity, mode);
+            return;
         }
         let pp = sk::PixmapPaint { opacity, blend_mode: blend_mode(n.blend), ..Default::default() };
         target.draw_pixmap(0, 0, layer.as_ref(), &pp, sk::Transform::identity(), None);
@@ -241,7 +273,7 @@ impl Renderer<'_> {
 
     // ----- node body ------------------------------------------------------
 
-    fn draw_body(&self, n: &Node, ts: sk::Transform, target: &mut sk::Pixmap, clip: Option<&sk::Mask>, alpha: f32) {
+    fn draw_body(&self, n: &Node, ts: sk::Transform, target: &mut sk::Pixmap, clip: Option<&sk::Mask>, alpha: f32, back: Back) {
         let scale = ts_scale(&ts);
         let shape = node_shape(self.doc, n, 0.15 / scale);
         let text_layout = match &n.kind {
@@ -261,7 +293,7 @@ impl Renderer<'_> {
                     effects::drop_shadow(target, clip, bb, scale, color, *offset, *radius, *spread, *show_behind, alpha, &sil)
                 }
                 Effect::BackgroundBlur { radius, visible: true } if *radius > 0.0 => {
-                    effects::background_blur(target, clip, inner_bb, scale, *radius, &sil)
+                    effects::background_blur(target, back, clip, inner_bb, scale, *radius, &sil)
                 }
                 _ => {}
             }
@@ -300,9 +332,9 @@ impl Renderer<'_> {
                 if let Some(c) = clip {
                     mask_mul(&mut m, c);
                 }
-                self.draw_children(&n.children, ts, target, Some(&m));
+                self.draw_children(&n.children, ts, target, Some(&m), back);
             } else {
-                self.draw_children(&n.children, ts, target, clip);
+                self.draw_children(&n.children, ts, target, clip, back);
             }
         }
     }
@@ -361,7 +393,11 @@ impl Renderer<'_> {
                     desigma_doc::StrokeAlign::Outside if sh.closed => n.stroke.weight * 2.0,
                     _ => n.stroke.weight,
                 };
-                if !strokes.is_empty() && outset > 0.0 {
+                if let (Some(sp), false) = (&sh.stroke_paths, strokes.is_empty()) {
+                    for (path, rule) in sp {
+                        pm.fill_path(path, &black_paint(1.0), *rule, ts2, None);
+                    }
+                } else if !strokes.is_empty() && outset > 0.0 {
                     let mut st = sk::Stroke { width: outset, line_join: sk::LineJoin::Miter, ..Default::default() };
                     st.miter_limit = 4.0;
                     for (path, _) in &sh.paths {
@@ -382,7 +418,7 @@ impl Renderer<'_> {
             }
         }
         if Self::draws_children(n) {
-            self.draw_children(&n.children, ts2, pm, None);
+            self.draw_children(&n.children, ts2, pm, None, None);
         }
     }
 
@@ -433,6 +469,13 @@ impl Renderer<'_> {
     fn draw_strokes(&self, n: &Node, sh: &Shape, ts: sk::Transform, target: &mut sk::Pixmap, clip: Option<&sk::Mask>, alpha: f32) {
         let paints = self.visible_strokes(n);
         if paints.is_empty() {
+            return;
+        }
+        // precomputed outline: already expanded by weight and alignment
+        if let Some(sp) = &sh.stroke_paths {
+            for p in paints {
+                fill_paths(&self.env, target, sp, ts, n.size, p, alpha, clip);
+            }
             return;
         }
         let (tw, th) = (target.width(), target.height());

@@ -170,5 +170,5 @@ pub fn boolean_shape(doc: &Document, node: &Node, op: d::BooleanOp, tol: f32) ->
         }
     }
     let path = pb.finish()?;
-    Some(Shape { paths: vec![(path, sk::FillRule::EvenOdd)], closed: true, fillable: true, is_rect: false })
+    Some(Shape { paths: vec![(path, sk::FillRule::EvenOdd)], closed: true, fillable: true, is_rect: false, stroke_paths: None })
 }

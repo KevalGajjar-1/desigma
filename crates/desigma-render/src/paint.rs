@@ -21,12 +21,13 @@ pub fn blend_mode(b: d::BlendMode) -> sk::BlendMode {
         B::Darken => sk::BlendMode::Darken,
         B::Multiply => sk::BlendMode::Multiply,
         B::ColorBurn => sk::BlendMode::ColorBurn,
-        // tiny-skia has no linear burn (a + b - 1); approximated until a custom pass exists.
-        B::LinearBurn => sk::BlendMode::ColorBurn,
+        // Linear burn / dodge have no exact tiny-skia equivalent: callers detect them
+        // with `custom_blend` and composite the layer with `blend_layer`. Until then
+        // the content is drawn normally.
+        B::LinearBurn | B::LinearDodge => sk::BlendMode::SourceOver,
         B::Lighten => sk::BlendMode::Lighten,
         B::Screen => sk::BlendMode::Screen,
         B::ColorDodge => sk::BlendMode::ColorDodge,
-        B::LinearDodge => sk::BlendMode::Plus,
         B::Overlay => sk::BlendMode::Overlay,
         B::SoftLight => sk::BlendMode::SoftLight,
         B::HardLight => sk::BlendMode::HardLight,
@@ -37,6 +38,67 @@ pub fn blend_mode(b: d::BlendMode) -> sk::BlendMode {
         B::Color => sk::BlendMode::Color,
         B::Luminosity => sk::BlendMode::Luminosity,
     }
+}
+
+/// Blend modes composited per pixel by [`blend_layer`] instead of by tiny-skia.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CustomBlend {
+    /// `max(0, cb + cs - 1)` per channel.
+    LinearBurn,
+    /// `min(1, cb + cs)` per channel (the separable blend function; unlike a
+    /// plain premultiplied add it stays exact for translucent sources).
+    LinearDodge,
+}
+
+pub fn custom_blend(b: d::BlendMode) -> Option<CustomBlend> {
+    match b {
+        d::BlendMode::LinearBurn => Some(CustomBlend::LinearBurn),
+        d::BlendMode::LinearDodge => Some(CustomBlend::LinearDodge),
+        _ => None,
+    }
+}
+
+/// Composites `layer` (premultiplied, drawn with normal blending) over
+/// `target` using the W3C compositing formula
+/// `co = cs(1-ab) + cb(1-as) + as*ab*B(Cb, Cs)` with a custom blend function B.
+pub fn blend_layer(target: &mut sk::Pixmap, layer: &sk::Pixmap, opacity: f32, mode: CustomBlend) {
+    let opacity = opacity.clamp(0.0, 1.0);
+    for (dst, src) in target.data_mut().chunks_exact_mut(4).zip(layer.data().chunks_exact(4)) {
+        if src[3] == 0 {
+            continue;
+        }
+        let sa = src[3] as f32 / 255.0 * opacity;
+        let ab = dst[3] as f32 / 255.0;
+        let mut out = [0u8; 4];
+        for k in 0..3 {
+            let cs_pre = src[k] as f32 / 255.0 * opacity;
+            let cb_pre = dst[k] as f32 / 255.0;
+            let cs = if sa > 0.0 { (cs_pre / sa).min(1.0) } else { 0.0 };
+            let cb = if ab > 0.0 { (cb_pre / ab).min(1.0) } else { 0.0 };
+            let b = match mode {
+                CustomBlend::LinearBurn => (cb + cs - 1.0).max(0.0),
+                CustomBlend::LinearDodge => (cb + cs).min(1.0),
+            };
+            let co = cs_pre * (1.0 - ab) + cb_pre * (1.0 - sa) + sa * ab * b;
+            out[k] = (co * 255.0 + 0.5).clamp(0.0, 255.0) as u8;
+        }
+        let ao = sa + ab - sa * ab;
+        out[3] = (ao * 255.0 + 0.5).clamp(0.0, 255.0) as u8;
+        // keep premultiplied invariants (colour <= alpha)
+        let a = out[3];
+        for c in out.iter_mut().take(3) {
+            *c = (*c).min(a);
+        }
+        dst.copy_from_slice(&out);
+    }
+}
+
+/// Runs `draw` against a scratch copy of `target`'s size and composites the
+/// result with a custom blend mode.
+fn draw_custom(target: &mut sk::Pixmap, mode: CustomBlend, draw: impl FnOnce(&mut sk::Pixmap)) {
+    let Some(mut layer) = sk::Pixmap::new(target.width(), target.height()) else { return };
+    draw(&mut layer);
+    blend_layer(target, &layer, 1.0, mode);
 }
 
 /// Environment needed to resolve paints.
@@ -330,6 +392,11 @@ pub fn fill_paths(
     alpha: f32,
     clip: Option<&sk::Mask>,
 ) {
+    if let Some(mode) = custom_blend(paint.blend) {
+        let normal = d::Paint { blend: d::BlendMode::Normal, ..paint.clone() };
+        draw_custom(target, mode, |l| fill_paths(env, l, paths, ts, size, &normal, alpha, clip));
+        return;
+    }
     let dims = (target.width(), target.height());
     with_paint(env, paint, size, &ts, alpha, 0.0, dims, |sp| {
         for (path, rule) in paths {
@@ -351,6 +418,11 @@ pub fn stroke_paths(
     alpha: f32,
     clip: Option<&sk::Mask>,
 ) {
+    if let Some(mode) = custom_blend(paint.blend) {
+        let normal = d::Paint { blend: d::BlendMode::Normal, ..paint.clone() };
+        draw_custom(target, mode, |l| stroke_paths(env, l, paths, stroke, ts, size, &normal, alpha, clip));
+        return;
+    }
     let dims = (target.width(), target.height());
     with_paint(env, paint, size, &ts, alpha, stroke.width, dims, |sp| {
         for (path, _) in paths {
