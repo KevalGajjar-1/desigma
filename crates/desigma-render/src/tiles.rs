@@ -307,7 +307,7 @@ impl TileCache {
         // add a frame-sized spike.
         let started = Instant::now();
         let chunk = pool().current_num_threads().max(1);
-        let ring_chunk = (chunk / 2).max(1);
+        let ring_chunk = (chunk / 4).max(1);
         let mut rendered = 0usize;
         while rendered < todo.len() {
             if rendered >= budget.max_tiles {

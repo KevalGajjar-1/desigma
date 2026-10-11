@@ -129,6 +129,12 @@ fn median(mut v: Vec<f64>) -> f64 {
     v[v.len() / 2]
 }
 
+fn stats(v: &[f64]) -> String {
+    let mut s = v.to_vec();
+    s.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    format!("median {:.2} ms, p95 {:.2} ms, max {:.1} ms", s[s.len() / 2], s[s.len() * 95 / 100], s[s.len() - 1])
+}
+
 fn main() {
     let (mut doc, page, leaves) = big_doc();
     println!("nodes: {}   viewport {W}x{H}   threads: {}", doc.nodes.len(), std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1));
@@ -186,20 +192,32 @@ fn main() {
             std::hint::black_box(f.tiles.len());
             times.push(ms(s.elapsed()));
         }
-        let max = times.iter().cloned().fold(0.0, f64::max);
-        println!("zoom {z:>4}: pan frame median {:.2} ms, max {:.1} ms", median(times), max);
+        println!("zoom {z:>4}: pan frame (prefetch ring on)  {}", stats(&times));
+        // worst case: no prefetch, every new column of tiles is rendered on demand
+        cache.prefetch_ring = 0;
+        let mut times = Vec::new();
+        for _ in 0..60 {
+            vp2.offset.x += 40.0 / z;
+            let s = Instant::now();
+            let f = cache.render_tiles(&doc, page, &vp2, (W, H), rev, TileBudget::time(Duration::from_millis(6)));
+            std::hint::black_box(f.tiles.len());
+            times.push(ms(s.elapsed()));
+        }
+        println!("zoom {z:>4}: pan frame (no prefetch)       {}", stats(&times));
+        cache.prefetch_ring = 1;
+        while cache.render_tiles(&doc, page, &vp2, (W, H), rev, TileBudget::unlimited()).prefetch_pending > 0 {}
         let s = Instant::now();
         let f = cache.render_tiles(&doc, page, &vp2, (W, H), rev, TileBudget::time(big));
         std::hint::black_box(f.tiles.len());
         println!("zoom {z:>4}: idle frame (all cached) {:.3} ms", ms(s.elapsed()));
     }
 
-    println!("\n== TileCache steady-state costs, zoom 1 ==");
-    {
-        let vp = view(1.0);
+    println!("\n== TileCache steady-state costs ==");
+    for z in [0.25f32, 1.0, 4.0] {
+        let vp = view(z);
         cache.clear();
         rev += 1;
-        cache.render_tiles(&doc, page, &vp, (W, H), rev, TileBudget::time(big));
+        while cache.render_tiles(&doc, page, &vp, (W, H), rev, TileBudget::unlimited()).prefetch_pending > 0 {}
         let t: Vec<f64> = (0..10)
             .map(|_| {
                 rev += 1;
@@ -208,8 +226,8 @@ fn main() {
                 ms(s.elapsed())
             })
             .collect();
-        println!("revision bump, nothing changed (index rebuild + doc diff): median {:.2} ms", median(t));
-        let t: Vec<f64> = (0..12)
+        println!("zoom {z:>4}: revision bump, nothing changed (index rebuild + doc diff): median {:.2} ms", median(t));
+        let t: Vec<f64> = (0..8)
             .map(|_| {
                 cache.invalidate_all();
                 let s = Instant::now();
@@ -218,7 +236,7 @@ fn main() {
                 ms(s.elapsed())
             })
             .collect();
-        println!("re-render every viewport tile (warm, parallel): median {:.1} ms  (runs: {:.0?})", median(t.clone()), t);
+        println!("zoom {z:>4}: re-render every visible tile (warm, parallel): median {:.1} ms", median(t));
         let mut one = Vec::new();
         for _ in 0..3 {
             cache.invalidate_all();
@@ -231,14 +249,14 @@ fn main() {
                 one.push(ms(s.elapsed()));
             }
         }
-        println!("single tile on one thread: median {:.2} ms, max {:.1} ms", median(one.clone()), one.iter().cloned().fold(0.0, f64::max));
+        println!("zoom {z:>4}: single tile on one thread: median {:.2} ms, max {:.1} ms", median(one.clone()), one.iter().cloned().fold(0.0, f64::max));
     }
 
     println!("\n== drag one node, zoom 1 ==");
     let vp = view(1.0);
     cache.clear();
     rev += 1;
-    cache.render_tiles(&doc, page, &vp, (W, H), rev, TileBudget::time(big));
+    while cache.render_tiles(&doc, page, &vp, (W, H), rev, TileBudget::unlimited()).prefetch_pending > 0 {}
     // a leaf of the frame at (900, 700), inside the viewport
     let victim = leaves[100 + 3];
     let mut times = Vec::new();
@@ -250,8 +268,33 @@ fn main() {
         std::hint::black_box(f.tiles.len());
         times.push(ms(s.elapsed()));
     }
-    let max = times.iter().cloned().fold(0.0, f64::max);
-    println!("drag frame (diff doc + re-render dirty tiles) median {:.2} ms, max {:.1} ms", median(times), max);
+    println!("drag frame (diff doc + re-render dirty tiles): {}", stats(&times));
+
+    println!("\n== drag one node, zoom 4 ==");
+    let vp4 = view(4.0);
+    cache.clear();
+    rev += 1;
+    while cache.render_tiles(&doc, page, &vp4, (W, H), rev, TileBudget::unlimited()).prefetch_pending > 0 {}
+    // a shadowed rectangle inside the zoom-4 viewport (page x 1112..1488, y 860..1140)
+    let victim = leaves[100..200]
+        .iter()
+        .copied()
+        .find(|id| {
+            let n = doc.get(*id).unwrap();
+            let (x, y) = (900.0 + n.transform.tx, 700.0 + n.transform.ty);
+            !n.effects.is_empty() && (1130.0..1400.0).contains(&x) && (880.0..1100.0).contains(&y)
+        })
+        .unwrap_or(victim);
+    let mut times = Vec::new();
+    for _ in 0..40 {
+        doc.get_mut(victim).unwrap().transform.ty += 1.0;
+        rev += 1;
+        let s = Instant::now();
+        let f = cache.render_tiles(&doc, page, &vp4, (W, H), rev, TileBudget::time(Duration::from_millis(6)));
+        std::hint::black_box(f.tiles.len());
+        times.push(ms(s.elapsed()));
+    }
+    println!("drag frame: {}", stats(&times));
 
     println!("\n== baseline drag: whole-viewport render_page per frame, zoom 1 ==");
     let mut times = Vec::new();

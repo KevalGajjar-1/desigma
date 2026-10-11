@@ -154,7 +154,7 @@ pub fn paint(app: &mut App, ui: &Ui, rect: ERect) {
         ctx.request_repaint();
     }
     // drop textures of evicted tiles now and then
-    if tv.frame_no % 60 == 0 {
+    if tv.frame_no.is_multiple_of(60) {
         let cache = &tv.cache;
         tv.textures.retain(|k, _| cache.contains(k));
     }

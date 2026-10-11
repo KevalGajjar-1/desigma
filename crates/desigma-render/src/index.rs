@@ -9,7 +9,30 @@
 use crate::geom::{to_sk_transform, transformed_bounds};
 use desigma_doc::{Document, Effect, Node, NodeId, NodeKind};
 use std::collections::HashMap;
+use std::hash::{BuildHasherDefault, Hasher};
 use tiny_skia as sk;
+
+/// Multiplicative hasher for dense integer ids (SipHash is needlessly slow
+/// for the per-node maps rebuilt on every revision).
+#[derive(Default, Clone, Copy)]
+pub(crate) struct IdHasher(u64);
+
+impl Hasher for IdHasher {
+    fn write(&mut self, bytes: &[u8]) {
+        for b in bytes {
+            self.write_u64(*b as u64);
+        }
+    }
+    fn write_u64(&mut self, n: u64) {
+        self.0 = (self.0.rotate_left(5) ^ n).wrapping_mul(0x517c_c1b7_2722_0a95);
+    }
+    fn finish(&self) -> u64 {
+        // fold the high bits down: hashbrown uses both ends
+        self.0 ^ (self.0 >> 32)
+    }
+}
+
+pub(crate) type IdMap<V> = HashMap<NodeId, V, BuildHasherDefault<IdHasher>>;
 
 /// Axis-aligned box in page space: (x0, y0, x1, y1).
 pub(crate) type B = (f32, f32, f32, f32);
@@ -95,7 +118,7 @@ pub struct SceneIndex {
     page: Option<NodeId>,
     rev: u64,
     built: bool,
-    pub(crate) entries: HashMap<NodeId, Entry>,
+    pub(crate) entries: IdMap<Entry>,
     /// Nodes with blur-like effects: (subtree bounds, reach in page units).
     pub(crate) blurry: Vec<(B, f32)>,
     /// Bounds of nodes with a background blur (they read what is beneath).
@@ -109,7 +132,7 @@ impl SceneIndex {
 
     /// Rebuilds if `rev` or `page` differ from the cached build. Returns the
     /// previous entries when a rebuild happened.
-    pub(crate) fn ensure_prev(&mut self, doc: &Document, page: NodeId, rev: u64) -> Option<HashMap<NodeId, Entry>> {
+    pub(crate) fn ensure_prev(&mut self, doc: &Document, page: NodeId, rev: u64) -> Option<IdMap<Entry>> {
         if self.built && self.page == Some(page) && self.rev == rev {
             return None;
         }
@@ -203,7 +226,7 @@ impl SceneIndex {
 /// the live document to find what changed.
 #[derive(Default)]
 pub(crate) struct Differ {
-    snap: HashMap<NodeId, Node>,
+    snap: IdMap<Node>,
 }
 
 /// Result of comparing a revision against the previous one.
@@ -231,7 +254,7 @@ impl Differ {
 
     /// Compares the live page (indexed in `new`, previously indexed in `old`)
     /// with the snapshot and refreshes the snapshot.
-    pub fn diff(&mut self, doc: &Document, page: NodeId, old: &HashMap<NodeId, Entry>, new: &SceneIndex) -> Changes {
+    pub fn diff(&mut self, doc: &Document, page: NodeId, old: &IdMap<Entry>, new: &SceneIndex) -> Changes {
         let first = self.snap.is_empty();
         let mut rects: Vec<B> = Vec::new();
         // nodes whose change can spread to ancestors (blur layers, masks, boolean ops)
