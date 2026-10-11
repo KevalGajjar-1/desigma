@@ -4,16 +4,60 @@
     "family": "Inter",
     "weight_default": 450,
     "weight_strong": 550,
-    "body_small": { "size": 9, "line": 14, "tracking": 0.045, "weight": 450, "strong_weight": 500, "strong_tracking": 0.27 },
-    "body_medium": { "size": 11, "line": 16, "tracking": 0.055 },
-    "body_large": { "size": 13, "line": 22, "tracking": -0.032 },
-    "heading_small": { "size": 13, "line": 22, "weight": 550, "tracking": -0.032 },
-    "heading_medium": { "size": 15, "line": 25, "weight": 550, "tracking": -0.075 },
-    "heading_large": { "size": 24, "line": 32, "weight": 550, "tracking": -0.408 },
+    "body_small": {
+      "size": 9,
+      "line": 14,
+      "tracking": 0.045,
+      "weight": 450,
+      "strong_weight": 500,
+      "strong_tracking": 0.27
+    },
+    "body_medium": {
+      "size": 11,
+      "line": 16,
+      "tracking": 0.055
+    },
+    "body_large": {
+      "size": 13,
+      "line": 22,
+      "tracking": -0.032
+    },
+    "heading_small": {
+      "size": 13,
+      "line": 22,
+      "weight": 550,
+      "tracking": -0.032
+    },
+    "heading_medium": {
+      "size": 15,
+      "line": 25,
+      "weight": 550,
+      "tracking": -0.075
+    },
+    "heading_large": {
+      "size": 24,
+      "line": 32,
+      "weight": 550,
+      "tracking": -0.408
+    },
     "mono": "Roboto Mono"
   },
-  "radius": { "small": 2, "medium": 5, "large": 13, "full": 9999 },
-  "spacer": [0, 4, 8, 12, 16, 24, 32, 40],
+  "radius": {
+    "small": 2,
+    "medium": 5,
+    "large": 13,
+    "full": 9999
+  },
+  "spacer": [
+    0,
+    4,
+    8,
+    12,
+    16,
+    24,
+    32,
+    40
+  ],
   "color": {
     "bg": "#2c2c2c",
     "bg_secondary": "#383838",
@@ -59,75 +103,602 @@
     "text_on_dark_canvas": "#ffffffe5"
   },
   "elevation": {
-    "100": [[0, 1, 3, 0, "#00000066"], [0, 0, 0.5, 0, "#00000080"], ["inset", 0, 0, 0.5, 0, "#ffffff4d"], ["inset", 0, 0.5, 0, 0, "#ffffff1a"]],
-    "200": [[0, 1, 3, 0, "#00000080"], [0, 3, 8, 0, "#00000059"], ["inset", 0, 0, 0.5, 0, "#ffffff4d"], ["inset", 0, 0.5, 0, 0, "#ffffff14"]],
-    "300": [[0, 1, 3, 0, "#00000080"], [0, 5, 12, 0, "#00000059"], ["inset", 0, 0, 0.5, 0, "#ffffff4d"], ["inset", 0, 0.5, 0, 0, "#ffffff14"]],
-    "400": [[0, 2, 5, 0, "#00000059"], [0, 10, 16, 0, "#00000059"], ["inset", 0, 0, 0.5, 0, "#ffffff59"], ["inset", 0, 0.5, 0, 0, "#ffffff14"]],
-    "500": [[0, 3, 5, 0, "#00000059"], [0, 10, 24, 0, "#00000073"], ["inset", 0, 0, 0.5, 0, "#ffffff59"], ["inset", 0, 0.5, 0, 0, "#ffffff14"]]
+    "100": [
+      [
+        0,
+        1,
+        3,
+        0,
+        "#00000066"
+      ],
+      [
+        0,
+        0,
+        0.5,
+        0,
+        "#00000080"
+      ],
+      [
+        "inset",
+        0,
+        0,
+        0.5,
+        0,
+        "#ffffff4d"
+      ],
+      [
+        "inset",
+        0,
+        0.5,
+        0,
+        0,
+        "#ffffff1a"
+      ]
+    ],
+    "200": [
+      [
+        0,
+        1,
+        3,
+        0,
+        "#00000080"
+      ],
+      [
+        0,
+        3,
+        8,
+        0,
+        "#00000059"
+      ],
+      [
+        "inset",
+        0,
+        0,
+        0.5,
+        0,
+        "#ffffff4d"
+      ],
+      [
+        "inset",
+        0,
+        0.5,
+        0,
+        0,
+        "#ffffff14"
+      ]
+    ],
+    "300": [
+      [
+        0,
+        1,
+        3,
+        0,
+        "#00000080"
+      ],
+      [
+        0,
+        5,
+        12,
+        0,
+        "#00000059"
+      ],
+      [
+        "inset",
+        0,
+        0,
+        0.5,
+        0,
+        "#ffffff4d"
+      ],
+      [
+        "inset",
+        0,
+        0.5,
+        0,
+        0,
+        "#ffffff14"
+      ]
+    ],
+    "400": [
+      [
+        0,
+        2,
+        5,
+        0,
+        "#00000059"
+      ],
+      [
+        0,
+        10,
+        16,
+        0,
+        "#00000059"
+      ],
+      [
+        "inset",
+        0,
+        0,
+        0.5,
+        0,
+        "#ffffff59"
+      ],
+      [
+        "inset",
+        0,
+        0.5,
+        0,
+        0,
+        "#ffffff14"
+      ]
+    ],
+    "500": [
+      [
+        0,
+        3,
+        5,
+        0,
+        "#00000059"
+      ],
+      [
+        0,
+        10,
+        24,
+        0,
+        "#00000073"
+      ],
+      [
+        "inset",
+        0,
+        0,
+        0.5,
+        0,
+        "#ffffff59"
+      ],
+      [
+        "inset",
+        0,
+        0.5,
+        0,
+        0,
+        "#ffffff14"
+      ]
+    ]
   },
   "layout": {
     "rail": {
-      "width": 56, "border_right": 1, "bg": "bg",
-      "menu_button": { "x": 12, "y": 8, "size": 32, "radius": 5 },
-      "items": { "x": 0, "first_y": 56, "size": 56, "labels": ["File", "Assets", "Tools"], "label_font": "body_small", "group_gap": 16 },
+      "width": 56,
+      "border_right": 1,
+      "bg": "bg",
+      "menu_button": {
+        "x": 12,
+        "y": 8,
+        "size": 32,
+        "radius": 5
+      },
+      "items": {
+        "x": 0,
+        "first_y": 56,
+        "size": 56,
+        "labels": [
+          "File",
+          "Assets",
+          "Tools"
+        ],
+        "label_font": "body_small",
+        "group_gap": 16
+      },
       "bottom_items": "help/account pinned to bottom"
     },
     "left_panel": {
-      "x": 57, "width": 240, "border_right": 1, "bg": "bg",
+      "x": 57,
+      "width": 240,
+      "border_right": 1,
+      "bg": "bg",
       "header_height": 65,
-      "pages_header": { "y": 73, "title_x_pad": 16, "title_font": "body_medium strong", "action_button": { "size": 24, "radius": 5, "right_pad": 8 } },
-      "page_row": { "x_inset": 8, "height": 24, "radius": 5, "text_x_pad": 8, "font": "body_medium/24" },
-      "layers_header": { "height": 40, "action_button": { "size": 24, "radius": 5 } },
-      "layer_row": { "height": 32, "chevron": { "x_pad": 8, "size": 24 }, "icon_size": 16, "icon_gap": -4, "indent": 16, "font": "body_medium", "icon_color": "icon_tertiary", "component_text": "text_component", "selected_bg": "bg_selected", "hover_outline": "border" }
-    },
-    "canvas": { "x": 298 },
-    "right_panel": {
-      "width": 240, "border_left": 1, "bg": "bg", "anchor": "right",
-      "header": {
-        "avatar": { "x_from_panel": 9, "y": 12, "w": 50, "h": 24, "radius": 50 },
-        "present_button": { "x_from_right": 116, "y": 8, "w": 32, "h": 32, "radius": [5, 0, 0, 5], "chevron_w": 16 },
-        "share_button": { "x_from_right": 63, "y": 8, "w": 55, "h": 32, "radius": 5, "bg": "bg_brand", "font": "body_medium weight 450" }
+      "pages_header": {
+        "y": 73,
+        "title_x_pad": 16,
+        "title_font": "body_medium strong",
+        "action_button": {
+          "size": 24,
+          "radius": 5,
+          "right_pad": 8
+        }
       },
-      "tabs": { "y": 48, "h": 24, "radius": 5, "x_from_panel": 9, "active": { "bg": "bg_secondary", "font_weight": 550, "color": "text" }, "inactive": { "color": "text_secondary", "font_weight": 450 }, "zoom_dropdown": { "x_from_right": 63, "w": 55 } },
+      "page_row": {
+        "x_inset": 8,
+        "height": 24,
+        "radius": 5,
+        "text_x_pad": 8,
+        "font": "body_medium/24"
+      },
+      "layers_header": {
+        "height": 40,
+        "action_button": {
+          "size": 24,
+          "radius": 5
+        }
+      },
+      "layer_row": {
+        "height": 32,
+        "chevron": {
+          "x_pad": 8,
+          "size": 24
+        },
+        "icon_size": 16,
+        "icon_gap": -4,
+        "indent": 16,
+        "font": "body_medium",
+        "icon_color": "icon_tertiary",
+        "component_text": "text_component",
+        "selected_bg": "bg_selected",
+        "hover_outline": "border"
+      }
+    },
+    "canvas": {
+      "x": 298
+    },
+    "right_panel": {
+      "width": 240,
+      "border_left": 1,
+      "bg": "bg",
+      "anchor": "right",
+      "header": {
+        "avatar": {
+          "x_from_panel": 9,
+          "y": 12,
+          "w": 50,
+          "h": 24,
+          "radius": 50
+        },
+        "present_button": {
+          "x_from_right": 116,
+          "y": 8,
+          "w": 32,
+          "h": 32,
+          "radius": [
+            5,
+            0,
+            0,
+            5
+          ],
+          "chevron_w": 16
+        },
+        "share_button": {
+          "x_from_right": 63,
+          "y": 8,
+          "w": 55,
+          "h": 32,
+          "radius": 5,
+          "bg": "bg_brand",
+          "font": "body_medium weight 450"
+        }
+      },
+      "tabs": {
+        "y": 48,
+        "h": 24,
+        "radius": 5,
+        "x_from_panel": 9,
+        "active": {
+          "bg": "bg_secondary",
+          "font_weight": 550,
+          "color": "text"
+        },
+        "inactive": {
+          "color": "text_secondary",
+          "font_weight": 450
+        },
+        "zoom_dropdown": {
+          "x_from_right": 63,
+          "w": 55
+        }
+      },
       "content_top": 81,
-      "section": { "title_font": "body_medium strong", "title_height": 40, "padding_x": 16, "action_button": { "size": 24, "radius": 5, "right_pad": 8 } },
-      "input": { "height": 24, "radius": 5, "font": "body_medium", "bg": "bg_secondary", "hover_border": "border" },
+      "section": {
+        "title_font": "body_medium strong",
+        "title_height": 40,
+        "padding_x": 16,
+        "action_button": {
+          "size": 24,
+          "radius": 5,
+          "right_pad": 8
+        }
+      },
+      "input": {
+        "height": 24,
+        "radius": 5,
+        "font": "body_medium",
+        "bg": "bg_secondary",
+        "hover_border": "border"
+      },
       "_selection_note": "x values below are relative to the panel's left edge (the 1px border is at x=0). Measured from the Dray Insight file with an instance selected.",
       "selection_header": {
         "y": 93,
-        "name_field": { "x": 9, "w": 136, "h": 24, "font": "body_large", "radius": 5, "bg": "bg" },
-        "action_buttons": { "x": [153, 181, 209], "size": 24, "radius": 5 }
+        "name_field": {
+          "x": 9,
+          "w": 136,
+          "h": 24,
+          "font": "body_large",
+          "radius": 5,
+          "bg": "bg"
+        },
+        "action_buttons": {
+          "x": [
+            153,
+            181,
+            209
+          ],
+          "size": 24,
+          "radius": 5
+        }
       },
       "property_section": {
-        "title_row": { "x": 1, "w": 240, "h": 40, "text_x": 17, "text_y_offset": 12, "font": "body_medium strong" },
-        "empty_section": { "row_h": 32, "pitch": 41, "title_color": "text_secondary", "plus_button": { "x": 209, "size": 24 } },
+        "title_row": {
+          "x": 1,
+          "w": 240,
+          "h": 40,
+          "text_x": 17,
+          "text_y_offset": 12,
+          "font": "body_medium strong"
+        },
+        "empty_section": {
+          "row_h": 32,
+          "pitch": 41,
+          "title_color": "text_secondary",
+          "plus_button": {
+            "x": 209,
+            "size": 24
+          }
+        },
         "separator": "1px border between sections (pitch = height + 1)",
-        "sublabel": { "font": "body_medium", "color": "text_secondary", "h": 16 },
+        "sublabel": {
+          "font": "body_medium",
+          "color": "text_secondary",
+          "h": 16
+        },
         "content_x": 17,
         "content_w": 184,
         "trailing_button_x": 209
       },
       "fields": {
-        "two_col": { "x": [17, 113], "w": 88, "h": 24, "gap": 8, "bg": "bg_secondary", "radius": 5, "font": "body_medium weight 450", "prefix_label_w": 23 },
+        "two_col": {
+          "x": [
+            17,
+            113
+          ],
+          "w": 88,
+          "h": 24,
+          "gap": 8,
+          "bg": "bg_secondary",
+          "radius": 5,
+          "font": "body_medium weight 450",
+          "prefix_label_w": 23
+        },
         "row_pitch_with_label": 48,
-        "segmented": { "button_w": 29, "h": 24, "x_start": 17, "group_gap": 8, "bg": "bg_secondary", "first_radius": [5, 0, 0, 5], "last_radius": [0, 5, 5, 0] },
-        "dimension_value": { "w": 48, "radius": 2 }
+        "segmented": {
+          "button_w": 29,
+          "h": 24,
+          "x_start": 17,
+          "group_gap": 8,
+          "bg": "bg_secondary",
+          "first_radius": [
+            5,
+            0,
+            0,
+            5
+          ],
+          "last_radius": [
+            0,
+            5,
+            5,
+            0
+          ]
+        },
+        "dimension_value": {
+          "w": 48,
+          "radius": 2
+        }
       },
-      "section_order_with_selection": ["Properties (component)", "Position", "Auto layout", "Appearance", "Fill", "Stroke", "Effects", "Selection colors", "Layout guide", "Export"],
-      "section_y_example": { "Position": 166, "Auto layout": 375, "Appearance": 676, "Fill": 779, "Stroke": 820, "Effects": 861 }
+      "section_order_with_selection": [
+        "Properties (component)",
+        "Position",
+        "Auto layout",
+        "Appearance",
+        "Fill",
+        "Stroke",
+        "Effects",
+        "Selection colors",
+        "Layout guide",
+        "Export"
+      ],
+      "section_y_example": {
+        "Position": 166,
+        "Auto layout": 375,
+        "Appearance": 676,
+        "Fill": 779,
+        "Stroke": 820,
+        "Effects": 861
+      }
     },
     "canvas_selection": {
       "frame_outline": "#0d99ff",
       "component_or_instance_outline": "#9747ff",
-      "size_badge": { "bg": "same as outline color", "text": "#ffffff", "font": "body_small strong", "radius": 2, "offset_below": 4, "format": "{w} × {h}" }
+      "size_badge": {
+        "bg": "same as outline color",
+        "text": "#ffffff",
+        "font": "body_small strong",
+        "radius": 2,
+        "offset_below": 4,
+        "format": "{w} × {h}"
+      }
     },
     "toolbelt": {
-      "height": 48, "bottom_margin": 12, "radius": 13, "bg": "bg_toolbar", "padding": 8, "width_example": 512,
-      "shadow": [[0, 3, 8, 0, "#00000059"], [0, 1, 3, 0, "#00000080"], ["inset", 0, 1, 0, 0, "#ffffff14"]],
-      "tool_button": { "size": 32, "radius": 5, "selected_bg": "bg_toolbar_selected", "icon": "icon_toolbar" },
-      "chevron_button": { "w": 16, "h": 32, "gap_before": 1 },
+      "height": 48,
+      "bottom_margin": 12,
+      "radius": 13,
+      "bg": "bg_toolbar",
+      "padding": 8,
+      "width_example": 512,
+      "shadow": [
+        [
+          0,
+          3,
+          8,
+          0,
+          "#00000059"
+        ],
+        [
+          0,
+          1,
+          3,
+          0,
+          "#00000080"
+        ],
+        [
+          "inset",
+          0,
+          1,
+          0,
+          0,
+          "#ffffff14"
+        ]
+      ],
+      "tool_button": {
+        "size": 32,
+        "radius": 5,
+        "selected_bg": "bg_toolbar_selected",
+        "icon": "icon_toolbar"
+      },
+      "chevron_button": {
+        "w": 16,
+        "h": 32,
+        "gap_before": 1
+      },
       "group_gap": 8,
-      "mode_switcher": { "bg": "bg_toolbar_mode_switcher", "right_side": true }
+      "mode_switcher": {
+        "bg": "bg_toolbar_mode_switcher",
+        "right_side": true
+      }
     }
+  },
+  "menus": {
+    "_note": "Measured from Figma UI3 dark at 800x600 dpr 1: toolbar shape dropdown and main (logo) menu.",
+    "panel": {
+      "bg": "bg_menu",
+      "radius": 13,
+      "padding_y": 8,
+      "shadow": "elevation.400"
+    },
+    "row": {
+      "height": 24,
+      "padding_x": 8,
+      "font": "body_medium weight 450",
+      "text": "#ffffff",
+      "text_dim": "#ffffffe5"
+    },
+    "highlight": {
+      "bg": "bg_menu_selected",
+      "inset_x": 8,
+      "radius": 5,
+      "text": "#ffffff",
+      "shortcut": "#ffffffcc"
+    },
+    "check_column": {
+      "x": 12,
+      "size": 16
+    },
+    "icon_column": {
+      "x": 32,
+      "box": 24
+    },
+    "label_x_with_icon": 60,
+    "label_x_plain": 16,
+    "shortcut": {
+      "align": "right",
+      "right_pad": 16,
+      "color": "text_secondary"
+    },
+    "submenu_chevron": {
+      "size": 24,
+      "right_pad": 8,
+      "color": "icon_secondary"
+    },
+    "separator": {
+      "height": 1,
+      "color": "border_menu",
+      "margin_y": 8,
+      "full_width": true
+    },
+    "examples": {
+      "toolbar_shape_menu": {
+        "width": 232,
+        "anchor": "above the tool button, left aligned to its chevron group",
+        "rows": [
+          "Rectangle R",
+          "Line L",
+          "Arrow Shift+L",
+          "Ellipse O",
+          "Polygon",
+          "Star",
+          "Image/video… Ctrl+Shift+K"
+        ],
+        "checked_row_is_highlighted": true
+      },
+      "main_menu": {
+        "x": 12,
+        "y": 44,
+        "width": 210,
+        "sections": [
+          [
+            "Back to files"
+          ],
+          [
+            "Actions… Ctrl+K"
+          ],
+          [
+            "File >",
+            "Edit >",
+            "View >",
+            "Object >",
+            "Text >",
+            "Arrange >",
+            "Vector >"
+          ],
+          [
+            "Plugins >",
+            "Widgets >",
+            "Preferences >",
+            "Libraries"
+          ],
+          [
+            "Open in desktop app",
+            "AI balance >",
+            "Help and account >"
+          ]
+        ]
+      }
+    }
+  },
+  "right_panel_no_selection": {
+    "_note": "Nothing selected (page level), 800x600 capture.",
+    "sections": [
+      "Page",
+      "Styles",
+      "Export"
+    ],
+    "page_row": {
+      "swatch": 12,
+      "hex_field": {
+        "x": 17,
+        "w": 120,
+        "h": 24
+      },
+      "opacity_field": {
+        "w": 48
+      },
+      "visibility_toggle_x": 209
+    },
+    "page_title_action": "icon button at x=209 (page settings)",
+    "styles_groups": "group label 'Color styles' in text_secondary, rows 32px with 16px swatch circle + name"
   }
 }
