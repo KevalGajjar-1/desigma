@@ -1,8 +1,65 @@
-//! In-app clipboard: nodes (with subtrees) serialized as JSON, plus subtree cloning.
+//! In-app clipboard: nodes (with subtrees) serialized as JSON, plus subtree cloning,
+//! and SVG markup pasted as text.
 
-use desigma_doc::{Document, Node, NodeId};
+use crate::app::App;
+use crate::edit::Tx;
+use crate::layout;
+use desigma_doc::{Affine, Command, Document, Node, NodeId, Vec2};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+
+/// Pastes `text` if it is SVG markup (`<svg` or `<?xml` prolog): the layers
+/// appear centered in the viewport, as one undo step, selected. Returns whether
+/// the text was SVG (even if it failed to import, then a toast says why), so
+/// the caller can fall back to the in-app clipboard otherwise.
+pub fn paste_svg(app: &mut App, text: &str) -> bool {
+    if !desigma_svg::looks_like_svg(text) {
+        return false;
+    }
+    let view = app.canvas_rect;
+    let center = app.view.to_page(view.min, view.center());
+    let parent = app.container_for_insert();
+    if let Err(e) = place_svg(app, text, "svg", center, parent) {
+        app.show_toast(e, true);
+    }
+    true
+}
+
+/// Places a dropped `.svg` file's markup centered on screen position `at`
+/// (the drop point; the viewport center when it is outside the canvas), into
+/// the frame under that point. `nth` staggers several files dropped together.
+pub fn drop_svg(app: &mut App, svg: &str, name: &str, at: Option<egui::Pos2>, nth: usize) {
+    let view = app.canvas_rect;
+    let screen = at.filter(|p| view.contains(*p)).unwrap_or(view.center());
+    let mut p = app.view.to_page(view.min, screen);
+    p.x += 24.0 * nth as f32;
+    p.y += 24.0 * nth as f32;
+    let parent = crate::canvas::create::container_at(&app.doc, app.page, p, &[]);
+    if let Err(e) = place_svg(app, svg, name, p, parent) {
+        app.show_toast(e, true);
+    }
+}
+
+/// Imports SVG markup as a Frame named `name` centered on page point `center`
+/// (rounded to whole pixels), appended to `parent`'s children as one undoable
+/// step, and selects it.
+pub fn place_svg(app: &mut App, svg: &str, name: &str, center: Vec2, parent: NodeId) -> Result<NodeId, String> {
+    let mut out = desigma_svg::svg_to_nodes(svg, name, &mut || app.doc.alloc_id()).map_err(|e| format!("Cannot import SVG: {e}"))?;
+    let inv = app.doc.world_transform(parent).invert().ok_or("Cannot place into a collapsed layer")?;
+    let c = inv.apply(center);
+    let size = out.nodes[0].size;
+    out.nodes[0].transform = Affine::translate((c.x - size.x / 2.0).round(), (c.y - size.y / 2.0).round());
+    app.doc.images.append(&mut out.images);
+    let root = out.nodes[0].id;
+    let index = app.doc.get(parent).map(|p| p.children.len()).unwrap_or(0);
+    let mut tx = Tx::new();
+    tx.cmd(&mut app.doc, Command::Insert { parent, index, nodes: out.nodes }).map_err(|e| e.to_string())?;
+    layout::relayout_around(&mut app.doc, &mut tx.ed, parent);
+    app.run_tx(tx);
+    app.selection = vec![root];
+    app.fonts.load_for(&app.doc);
+    Ok(root)
+}
 
 const MAGIC: u32 = 0xDE51_6A01;
 

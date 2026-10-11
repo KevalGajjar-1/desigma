@@ -862,6 +862,7 @@ fn layout_guide_section_edits_the_grids_of_a_frame() {
 mod components;
 mod menus;
 mod proto;
+mod svg;
 mod variables;
 
 mod assets_thumbs;

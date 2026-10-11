@@ -823,7 +823,7 @@ pub fn finish_pen(app: &mut App) {
 
 // ------------------------------------------------------------------ images
 /// Extensions offered by the image picker.
-pub const IMAGE_EXTENSIONS: [&str; 4] = ["png", "jpg", "jpeg", "webp"];
+pub const IMAGE_EXTENSIONS: [&str; 5] = ["png", "jpg", "jpeg", "webp", "svg"];
 
 /// Validates image bytes (PNG, JPEG or WebP) and returns the bytes to embed
 /// plus the pixel size. WebP is re-encoded as PNG so every renderer build can
@@ -850,6 +850,21 @@ fn place_image(app: &mut App, page: DV) {
         return;
     };
     let name = path.file_stem().and_then(|s| s.to_str()).unwrap_or("Image").to_string();
+    if path.extension().is_some_and(|e| e.eq_ignore_ascii_case("svg")) {
+        // Vector layers, centered on the click.
+        let parent = create::container_at(&app.doc, app.page, page, &[]);
+        match String::from_utf8(bytes) {
+            Ok(text) => {
+                if let Err(e) = crate::clipboard::place_svg(app, &text, &name, page, parent) {
+                    app.show_toast(e, true);
+                } else {
+                    app.tool = Tool::Move;
+                }
+            }
+            Err(_) => app.show_toast("The SVG is not valid UTF-8", true),
+        }
+        return;
+    }
     place_image_bytes(app, page, &name, bytes);
 }
 

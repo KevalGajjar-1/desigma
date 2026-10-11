@@ -1,6 +1,6 @@
 //! Opening and saving documents.
 
-use desigma_doc::Document;
+use desigma_doc::{Document, Vec2};
 use std::path::{Path, PathBuf};
 
 pub const NATIVE_EXT: &str = "desigma";
@@ -19,6 +19,14 @@ pub fn load_path(path: &Path) -> Result<Document, String> {
                 Ok(d) => d,
                 Err(fig_err) => Document::from_json(&text).map_err(|e| format!("Not a Figma REST file ({fig_err}) nor a desigma file ({e})"))?,
             }
+        }
+        "svg" => {
+            let text = std::fs::read_to_string(path).map_err(|e| format!("Cannot read {}: {e}", path.display()))?;
+            let name = path.file_stem().and_then(|s| s.to_str()).unwrap_or("svg");
+            let mut doc = Document::new(name);
+            let page = doc.add_page("Page 1");
+            desigma_svg::import_svg_named(&text, name, &mut doc, page, Vec2::ZERO).map_err(|e| format!("Cannot import SVG: {e}"))?;
+            doc
         }
         _ => {
             let text = std::fs::read_to_string(path).map_err(|e| format!("Cannot read {}: {e}", path.display()))?;
@@ -52,8 +60,9 @@ pub fn save_path(doc: &Document, path: &Path) -> Result<PathBuf, String> {
 
 pub fn pick_open() -> Option<PathBuf> {
     rfd::FileDialog::new()
-        .add_filter("Design files", &["fig", "json", "desigma"])
+        .add_filter("Design files", &["fig", "json", "desigma", "svg"])
         .add_filter("Figma file", &["fig"])
+        .add_filter("SVG", &["svg"])
         .add_filter("JSON", &["json"])
         .add_filter("desigma", &[NATIVE_EXT])
         .pick_file()
@@ -110,6 +119,20 @@ mod tests {
         assert!(load_path(&p).unwrap_err().contains("Invalid desigma file"));
         std::fs::remove_file(p).ok();
         assert!(load_path(Path::new("/definitely/missing.fig")).is_err());
+    }
+
+    #[test]
+    fn svg_loads_as_a_document_named_after_the_file() {
+        let p = tmp("icon.svg");
+        std::fs::write(&p, r##"<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><rect width="8" height="8" fill="#f00"/></svg>"##).unwrap();
+        let d = load_path(&p).unwrap();
+        std::fs::remove_file(&p).ok();
+        assert!(d.name.ends_with("icon"));
+        assert_eq!(d.pages.len(), 1);
+        let page = d.get(d.pages[0]).unwrap();
+        assert_eq!(page.name, "Page 1");
+        assert_eq!(page.children.len(), 1);
+        assert_eq!(d.get(page.children[0]).unwrap().name, d.name);
     }
 
     #[test]

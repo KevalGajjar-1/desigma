@@ -240,7 +240,7 @@ impl App {
         format!("{base} {}", n + 1)
     }
 
-    fn container_for_insert(&self) -> NodeId {
+    pub(crate) fn container_for_insert(&self) -> NodeId {
         if let [only] = self.selection.as_slice() {
             if let Some(n) = self.doc.get(*only) {
                 if n.kind.is_container() && !matches!(n.kind, NodeKind::Instance { .. }) {
@@ -333,6 +333,10 @@ impl App {
     }
 
     pub fn paste(&mut self, system_text: Option<&str>) {
+        // SVG markup on the system clipboard becomes layers.
+        if system_text.is_some_and(|t| clipboard::paste_svg(self, t)) {
+            return;
+        }
         let clip = system_text.and_then(clipboard::from_json).or_else(|| self.clip.clone());
         let Some(clip) = clip else { return };
         let parent = self.container_for_insert();
@@ -798,7 +802,9 @@ impl App {
         match io::load_path(&p) {
             Ok(doc) => {
                 let name = doc.name.clone();
-                self.replace_document(doc, Some(p));
+                // An SVG becomes a new unsaved document, never overwritten by Save.
+                let svg = p.extension().is_some_and(|e| e.eq_ignore_ascii_case("svg"));
+                self.replace_document(doc, (!svg).then_some(p));
                 self.show_toast(format!("Opened {name}"), false);
             }
             Err(e) => self.show_toast(e, true),

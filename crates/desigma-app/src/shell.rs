@@ -387,6 +387,40 @@ impl eframe::App for Shell {
 }
 
 impl Shell {
+    /// Files dropped on the window: `.svg` files are placed at the drop point,
+    /// anything else (the first file) is opened as a document.
+    fn handle_drops(&mut self, ctx: &Context) {
+        let (files, pos) = ctx.input(|i| (i.raw.dropped_files.clone(), i.pointer.hover_pos().or(i.pointer.latest_pos())));
+        let is_svg = |f: &egui::DroppedFile| {
+            let name = f.path.as_ref().and_then(|p| p.to_str()).unwrap_or(&f.name);
+            name.rsplit('.').next().is_some_and(|e| e.eq_ignore_ascii_case("svg"))
+        };
+        if let Some(path) = files.iter().filter(|f| !is_svg(f)).find_map(|f| f.path.clone()) {
+            self.app.open_path(path);
+            return;
+        }
+        for (nth, f) in files.iter().filter(|f| is_svg(f)).enumerate() {
+            let text = match (&f.path, &f.bytes) {
+                (Some(p), _) => std::fs::read_to_string(p).map_err(|e| format!("Cannot read {}: {e}", p.display())),
+                (None, Some(b)) => String::from_utf8(b.to_vec()).map_err(|_| "The SVG is not valid UTF-8".to_string()),
+                (None, None) => continue,
+            };
+            let stem = f
+                .path
+                .as_deref()
+                .and_then(|p| p.file_stem())
+                .and_then(|s| s.to_str())
+                .or_else(|| f.name.strip_suffix(".svg"))
+                .filter(|s| !s.is_empty())
+                .unwrap_or("svg")
+                .to_string();
+            match text {
+                Ok(t) => crate::clipboard::drop_svg(&mut self.app, &t, &stem, pos, nth),
+                Err(e) => self.app.show_toast(e, true),
+            }
+        }
+    }
+
     /// One full UI pass over the window.
     pub fn draw(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
@@ -398,10 +432,7 @@ impl Shell {
             return;
         }
         self.handle_keys(&ctx);
-        let dropped = ctx.input(|i| i.raw.dropped_files.clone());
-        if let Some(path) = dropped.into_iter().find_map(|f| f.path) {
-            self.app.open_path(path);
-        }
+        self.handle_drops(&ctx);
 
         let full = ui.max_rect();
         ui.painter().rect_filled(full, 0.0, theme::BG);
