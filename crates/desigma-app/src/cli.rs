@@ -17,6 +17,18 @@ pub struct Options {
     pub tab: Option<String>,
     /// Open the Present view on start.
     pub present: bool,
+    /// Initial zoom in percent (`--zoom 800`), centred on the selection or the page.
+    pub zoom: Option<f32>,
+    /// Show the rulers.
+    pub rulers: bool,
+    /// Force the pixel grid on (it appears from 800% zoom).
+    pub grid: bool,
+    /// Enter text editing on the first text layer with this name (select it with `--select-text`).
+    pub edit_text: Option<String>,
+    /// Character range selected while editing: `START-END` (in chars); default is everything.
+    pub select_text: Option<(usize, usize)>,
+    /// Add a layout grid to the selected frame: `grid`, `columns` or `rows`.
+    pub layout_grid: Option<String>,
     pub help: bool,
 }
 
@@ -24,6 +36,17 @@ pub fn parse_size(s: &str) -> Option<(u32, u32)> {
     let (w, h) = s.split_once(['x', 'X'])?;
     let (w, h) = (w.trim().parse::<u32>().ok()?, h.trim().parse::<u32>().ok()?);
     (w >= 200 && h >= 200 && w <= 8192 && h <= 8192).then_some((w, h))
+}
+
+/// Parses a zoom like `800`, `800%` or `12.5%` (percent, 1..=25600).
+pub fn parse_zoom(s: &str) -> Option<f32> {
+    let v: f32 = s.trim().trim_end_matches('%').trim().parse().ok()?;
+    (v.is_finite() && (1.0..=25600.0).contains(&v)).then_some(v)
+}
+
+fn parse_range(s: &str) -> Option<(usize, usize)> {
+    let (a, b) = s.split_once('-')?;
+    Some((a.trim().parse().ok()?, b.trim().parse().ok()?))
 }
 
 pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Options, String> {
@@ -47,6 +70,24 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Options, String> 
                 o.tab = Some(t);
             }
             "--present" => o.present = true,
+            "--rulers" => o.rulers = true,
+            "--grid" => o.grid = true,
+            "--zoom" => {
+                let v = it.next().ok_or("--zoom needs a percentage (e.g. 800)")?;
+                o.zoom = Some(parse_zoom(&v).ok_or_else(|| format!("invalid zoom '{v}' (expected 1..25600, e.g. 800 or 800%)"))?);
+            }
+            "--edit-text" => o.edit_text = Some(it.next().ok_or("--edit-text needs a text layer name")?),
+            "--select-text" => {
+                let v = it.next().ok_or("--select-text needs START-END")?;
+                o.select_text = Some(parse_range(&v).ok_or_else(|| format!("invalid range '{v}' (expected START-END in characters)"))?);
+            }
+            "--layout-grid" => {
+                let k = it.next().ok_or("--layout-grid needs grid, columns or rows")?;
+                if !matches!(k.as_str(), "grid" | "columns" | "rows") {
+                    return Err(format!("unknown layout grid '{k}' (expected grid, columns or rows)"));
+                }
+                o.layout_grid = Some(k);
+            }
             "-h" | "--help" => o.help = true,
             s if s.starts_with("--") => return Err(format!("unknown option {s}")),
             _ => {
@@ -60,7 +101,7 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Options, String> 
     Ok(o)
 }
 
-pub const USAGE: &str = "usage: desigma [FILE] [--screenshot OUT.png] [--size WxH] [--select LAYER|none] [--menu main|main/File|shape|palette]\n  FILE  .fig, .json (Figma REST or native) or .desigma";
+pub const USAGE: &str = "usage: desigma [FILE] [--screenshot OUT.png] [--size WxH] [--select LAYER|none] [--menu main|main/File|shape|palette]\n               [--zoom PERCENT] [--rulers] [--grid] [--layout-grid grid|columns|rows] [--edit-text LAYER [--select-text START-END]]\n  FILE  .fig, .json (Figma REST or native) or .desigma";
 
 #[cfg(test)]
 mod tests {
@@ -104,6 +145,20 @@ mod tests {
         let o = p(&["--tab", "prototype", "--present"]).unwrap();
         assert_eq!(o.tab.as_deref(), Some("prototype"));
         assert!(o.present);
+    }
+
+    #[test]
+    fn parses_canvas_aid_flags() {
+        let o = p(&["--zoom", "800%", "--rulers", "--grid", "--layout-grid", "columns", "--edit-text", "Title", "--select-text", "2-7"]).unwrap();
+        assert_eq!(o.zoom, Some(800.0));
+        assert!(o.rulers && o.grid);
+        assert_eq!(o.layout_grid.as_deref(), Some("columns"));
+        assert_eq!(o.edit_text.as_deref(), Some("Title"));
+        assert_eq!(o.select_text, Some((2, 7)));
+        assert_eq!(parse_zoom("50"), Some(50.0));
+        assert!(p(&["--zoom", "0"]).is_err() && p(&["--zoom", "x"]).is_err() && p(&["--zoom"]).is_err());
+        assert!(p(&["--layout-grid", "diagonal"]).is_err());
+        assert!(p(&["--select-text", "5"]).is_err());
     }
 
     #[test]

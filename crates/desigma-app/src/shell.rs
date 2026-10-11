@@ -58,6 +58,42 @@ impl Shell {
                 eprintln!("desigma: unknown menu '{spec}'");
             }
         }
+        app.ui.rulers = opts.rulers;
+        if opts.grid {
+            app.ui.pixel_grid = true;
+        }
+        app.startup_zoom = opts.zoom.map(|z| z / 100.0);
+        if let Some(kind) = &opts.layout_grid {
+            let target = app.selection.first().copied();
+            if let Some(id) = target {
+                let k = ["grid", "columns", "rows"].iter().position(|n| n == kind).unwrap_or(1);
+                // screenshot aid: a red 10% grid, columns with the usual 5 x 20px gutter
+                let grid = crate::panels::layoutguide::default_grid(k, desigma_doc::Color::rgba(255, 0, 0, 26));
+                app.edit_nodes(&[id], |n| {
+                    if let Some(f) = n.kind.frame_props_mut() {
+                        f.grids.push(grid.clone());
+                    }
+                });
+            }
+        }
+        if let Some(name) = &opts.edit_text {
+            let found = app.doc.nodes.values().find(|n| &n.name == name && matches!(n.kind, desigma_doc::NodeKind::Text(_))).map(|n| n.id);
+            if let Some(id) = found {
+                if let Some(pg) = app.doc.page_of(id) {
+                    app.page = pg;
+                }
+                canvas::interact::begin_text_edit(&mut app, id);
+                if let (Some((a, b)), Some(sess)) = (opts.select_text, app.canvas.text.as_mut()) {
+                    if let Some(desigma_doc::NodeKind::Text(t)) = app.doc.get(id).map(|n| &n.kind) {
+                        let byte = |c: usize| t.content.char_indices().nth(c).map(|(i, _)| i).unwrap_or(t.content.len());
+                        sess.anchor = byte(a);
+                        sess.caret = byte(b);
+                    }
+                }
+            } else {
+                eprintln!("desigma: no text layer named '{name}'");
+            }
+        }
         if opts.tab.as_deref() == Some("prototype") {
             app.ui.right_tab = Some(crate::app::RightTab::Prototype);
         }

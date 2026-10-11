@@ -15,7 +15,7 @@ pub fn stripes(count: u32, gutter: f32, offset: f32, extent: f32) -> Vec<(f32, f
     }
     let avail = extent - 2.0 * offset;
     let w = (avail - gutter * (count - 1) as f32) / count as f32;
-    if !(w > 0.0) || !w.is_finite() {
+    if w.is_nan() || w <= 0.0 || !w.is_finite() {
         return vec![];
     }
     (0..count).map(|i| (offset + i as f32 * (w + gutter), w)).collect()
@@ -23,7 +23,7 @@ pub fn stripes(count: u32, gutter: f32, offset: f32, extent: f32) -> Vec<(f32, f
 
 /// Positions of the lines of a square grid with cells of `size` inside `extent`.
 pub fn grid_lines(size: f32, extent: f32) -> Vec<f32> {
-    if !(size >= 1.0) || !extent.is_finite() {
+    if size.is_nan() || size < 1.0 || !extent.is_finite() {
         return vec![];
     }
     let n = (extent / size).floor() as usize;

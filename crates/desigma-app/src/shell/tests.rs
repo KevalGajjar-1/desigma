@@ -821,6 +821,35 @@ fn view_toggles_via_shortcuts() {
     s.frame(vec![]);
 }
 
+#[test]
+fn layout_guide_section_edits_the_grids_of_a_frame() {
+    let mut s = Sim::with(Options { select: Some("Card".into()), ..Default::default() });
+    let id = s.by_name("Card");
+    assert!(s.app().doc.get(id).unwrap().kind.frame_props().is_some(), "Card is a frame");
+    let grid = crate::panels::layoutguide::default_grid(1, Color::rgba(255, 0, 0, 26));
+    s.shell.app.edit_nodes(&[id], |n| {
+        if let Some(f) = n.kind.frame_props_mut() {
+            f.grids.push(grid.clone());
+        }
+    });
+    s.scroll_inspector_down();
+    // the section shows its columns fields; edit the count
+    let r = s.ctx.data(|d| d.get_temp::<Rect>(egui::Id::new(("field-rect", format!("{:?}", ("lg-count", 0usize)))))).expect("count field is shown");
+    s.click(Pos2::new(r.left() + 40.0, r.center().y));
+    s.type_text("12");
+    s.key(Key::Enter);
+    let n = s.app().doc.get(id).unwrap();
+    match &n.kind.frame_props().unwrap().grids[0] {
+        desigma_doc::LayoutGrid::Columns { count, .. } => assert_eq!(*count, 12),
+        g => panic!("{g:?}"),
+    }
+    s.cmd_key(Key::Z);
+    match &s.app().doc.get(id).unwrap().kind.frame_props().unwrap().grids[0] {
+        desigma_doc::LayoutGrid::Columns { count, .. } => assert_eq!(*count, 5, "undo restores"),
+        g => panic!("{g:?}"),
+    }
+}
+
 mod components;
 mod menus;
 mod proto;

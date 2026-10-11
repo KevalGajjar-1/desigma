@@ -4,6 +4,7 @@ pub mod context;
 pub mod export;
 pub mod inspect;
 pub mod layers;
+pub mod layoutguide;
 pub mod left;
 pub mod menus;
 pub mod properties;

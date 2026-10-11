@@ -135,6 +135,8 @@ pub struct App {
     /// Document snapshot while a numeric field is being scrubbed (see `widgets::field::SCRUB_FLAG`).
     pub scrub: Option<std::collections::BTreeMap<NodeId, desigma_doc::Node>>,
     /// Ruler guides per page (not part of the document model, so not saved with the file).
+    /// Zoom (as a factor) to apply on the first frame instead of fitting the page (`--zoom`).
+    pub startup_zoom: Option<f32>,
     pub page_guides: std::collections::BTreeMap<NodeId, Vec<crate::canvas::rulers::RulerGuide>>,
 }
 
@@ -167,6 +169,7 @@ impl App {
             first_fit_done: false,
             fonts: FontLoader::default(),
             scrub: None,
+            startup_zoom: None,
             page_guides: Default::default(),
         }
     }

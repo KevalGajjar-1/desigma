@@ -391,20 +391,22 @@ pub fn text_command(app: &mut App, cmd: TextCmd) {
             TextCmd::List(kind) => {
                 let Some(sess) = app.canvas.text.as_ref() else { return };
                 let range = sess.range();
-                let (caret_end, anchor_end) = (sess.caret >= sess.anchor, ());
-                let _ = anchor_end;
+                let caret_at_end = sess.caret >= sess.anchor;
+                let Some((before, _)) = props_of(app) else { return };
+                let para_start = richtext::paragraphs_in(&before.content, range.clone()).first().map(|p| p.start).unwrap_or(0);
                 let mut new_range = range.clone();
                 edit_props(app, Some((EditKind::Other, true)), |t, _, _| {
                     new_range = richtext::toggle_list(t, range.clone(), kind);
                 });
-                let (a, b) = if range.is_empty() { (new_range.end, new_range.end) } else { (new_range.start, new_range.end) };
+                let delta = props_of(app).map(|(t, _)| t.content.len() as isize - before.content.len() as isize).unwrap_or(0);
                 if range.is_empty() {
-                    // keep the caret after the prefix of its paragraph
-                    set_sel(app, b, a, false);
-                } else if caret_end {
-                    set_sel(app, b, a, false);
+                    // the prefix sits at the paragraph start: the caret keeps its place in the text
+                    let c = ((range.start as isize + delta).max(para_start as isize)) as usize;
+                    set_sel(app, c, c, false);
+                } else if caret_at_end {
+                    set_sel(app, new_range.end, new_range.start, false);
                 } else {
-                    set_sel(app, a, b, false);
+                    set_sel(app, new_range.start, new_range.end, false);
                 }
             }
             c => {

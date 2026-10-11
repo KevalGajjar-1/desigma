@@ -143,6 +143,7 @@ impl UndoLog {
         Some(s)
     }
 
+    #[cfg(test)]
     pub fn can_undo(&self) -> bool {
         !self.undo.is_empty()
     }

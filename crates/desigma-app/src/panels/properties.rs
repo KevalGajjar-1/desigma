@@ -25,6 +25,8 @@ pub enum PickTarget {
     SelColor(u32),
     /// The colour of text (the edited character range, or every run of the selected text layers).
     TextFill,
+    /// Colour of the i-th layout grid of a frame.
+    GridColor(usize),
 }
 
 pub struct Picker {
@@ -598,6 +600,13 @@ fn selection_ui(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[NodeId]) {
     }
     effect_rows(app, ui, pane, sel, &n0.effects);
 
+    // ---- Layout guide (frames)
+    if is_frame && !multi {
+        if let Some(fp) = n0.kind.frame_props() {
+            super::layoutguide::section(app, ui, pane, sel, &fp.grids);
+        }
+    }
+
     // ---- Selection colors / Styles
     selection_colors_section(app, ui, pane, sel);
     if !app.doc.styles.is_empty() {
@@ -1038,6 +1047,13 @@ fn apply_picker(doc: &mut Document, p: &mut Picker) {
                 }
             }
             PickTarget::SelColor(_) => {}
+            PickTarget::GridColor(i) => {
+                if let Some(fp) = n.kind.frame_props_mut() {
+                    if let Some(g) = fp.grids.get_mut(i) {
+                        *g = super::layoutguide::with_color(g, c);
+                    }
+                }
+            }
             PickTarget::TextFill => {
                 if let NodeKind::Text(t) = &mut n.kind {
                     let col = Color { a: 1.0, ..c };

@@ -747,6 +747,15 @@ impl App {
         }
     }
 
+    /// Zooms to `zoom` (a factor) centred on the selection, else on the page content.
+    pub fn zoom_on_content(&mut self, zoom: f32) {
+        let b = self.selection_bounds().or_else(|| self.page_bounds()).unwrap_or(Rect::new(0.0, 0.0, 800.0, 600.0));
+        let z = zoom.clamp(theme::ZOOM_MIN, theme::ZOOM_MAX);
+        let size = self.canvas_rect.size();
+        self.view = View { zoom: z, offset: Vec2::new(b.x + b.w / 2.0 - size.x / 2.0 / z, b.y + b.h / 2.0 - size.y / 2.0 / z) };
+        self.changed();
+    }
+
     pub fn zoom_to(&mut self, zoom: f32) {
         let c = self.canvas_rect.center();
         self.view.zoom_at(self.canvas_rect.min, c, zoom);

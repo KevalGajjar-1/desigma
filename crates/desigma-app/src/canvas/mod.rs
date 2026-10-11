@@ -174,7 +174,10 @@ pub fn show(app: &mut App, ui: &mut Ui, rect: ERect) {
     app.canvas_rect = rect;
     if !app.first_fit_done {
         app.first_fit_done = true;
-        app.fit_all();
+        match app.startup_zoom.take() {
+            Some(z) => app.zoom_on_content(z),
+            None => app.fit_all(),
+        }
     }
     tiles::paint(app, ui, rect);
     let resp = ui.interact(rect, ui.id().with("canvas"), Sense::click_and_drag());
