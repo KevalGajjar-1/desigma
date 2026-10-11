@@ -43,7 +43,17 @@ pub fn figma_like_schema() -> Schema {
     enum_def(&mut b, "TextCase", &["ORIGINAL", "UPPER", "LOWER", "TITLE"]);
     enum_def(&mut b, "TextDecoration", &["NONE", "UNDERLINE", "STRIKETHROUGH"]);
     enum_def(&mut b, "NumberUnits", &["RAW", "PIXELS", "PERCENT"]);
-    enum_def(&mut b, "BlendMode", &["PASS_THROUGH", "NORMAL", "DARKEN", "MULTIPLY"]);
+    enum_def(
+        &mut b,
+        "BlendMode",
+        &[
+            "PASS_THROUGH", "NORMAL", "DARKEN", "MULTIPLY", "LINEAR_BURN", "COLOR_BURN", "LIGHTEN", "SCREEN", "LINEAR_DODGE", "COLOR_DODGE", "OVERLAY",
+            "SOFT_LIGHT", "HARD_LIGHT", "DIFFERENCE", "EXCLUSION", "HUE", "SATURATION", "COLOR", "LUMINOSITY",
+        ],
+    );
+    enum_def(&mut b, "TextTruncation", &["DISABLED", "ENDING"]);
+    enum_def(&mut b, "StyleType", &["NONE", "FILL", "TEXT", "EFFECT", "EXPORT", "GRID"]);
+    enum_def(&mut b, "GridPattern", &["GRID", "COLUMNS", "ROWS"]);
     enum_def(&mut b, "ImageScaleMode", &["STRETCH", "FIT", "FILL", "TILE"]);
     enum_def(&mut b, "WindingRule", &["NONZERO", "ODD"]);
     enum_def(&mut b, "ConstraintType", &["MIN", "CENTER", "MAX", "STRETCH", "SCALE"]);
@@ -127,6 +137,22 @@ pub fn figma_like_schema() -> Schema {
     let t = def(&b, "WindingRule");
     b.field(fg, "windingRule", t, false, 1);
     b.field(fg, "commandsBlob", nat(Uint), false, 2);
+
+    let lg = b.define("LayoutGrid", DefKind::Message);
+    let t = def(&b, "GridPattern");
+    b.field(lg, "pattern", t, false, 1);
+    b.field(lg, "sectionSize", nat(Float), false, 2);
+    b.field(lg, "gutterSize", nat(Float), false, 3);
+    b.field(lg, "offset", nat(Float), false, 4);
+    b.field(lg, "count", nat(Uint), false, 5);
+    let ct = def(&b, "Color");
+    b.field(lg, "color", ct, false, 6);
+    b.field(lg, "visible", nat(Bool), false, 7);
+    let gp = b.define("GuidPath", DefKind::Message);
+    let gt = def(&b, "GUID");
+    b.field(gp, "guids", gt, true, 1);
+    let ssm = b.define("SharedStyleMasterData", DefKind::Message);
+    b.field(ssm, "styleKey", nat(String), false, 1);
 
     let so = b.define("StyleOverride", DefKind::Message);
     b.field(so, "styleID", nat(Uint), false, 1);
@@ -233,6 +259,22 @@ pub fn figma_like_schema() -> Schema {
     f(&mut b, "textDecoration", tdc, false);
     let sidt = def(&b, "StyleId");
     f(&mut b, "styleIdForFill", sidt, false);
+    for n in ["styleIdForStrokeFill", "styleIdForText", "styleIdForEffect", "styleIdForGrid"] {
+        f(&mut b, n, sidt, false);
+    }
+    f(&mut b, "strokeGeometry", fgt, true);
+    let lgt = def(&b, "LayoutGrid");
+    f(&mut b, "layoutGrids", lgt, true);
+    f(&mut b, "maxLines", nat(Uint), false);
+    let (ttr, sty, gpt, ssmt) = (def(&b, "TextTruncation"), def(&b, "StyleType"), def(&b, "GuidPath"), def(&b, "SharedStyleMasterData"));
+    f(&mut b, "textTruncation", ttr, false);
+    f(&mut b, "styleType", sty, false);
+    f(&mut b, "styleDescription", nat(String), false);
+    f(&mut b, "sharedStyleMasterData", ssmt, false);
+    f(&mut b, "guidPath", gpt, false);
+    // Overrides are NodeChange-shaped messages.
+    b.field(sd, "symbolOverrides", FieldType::Def(nc), true, 2);
+    f(&mut b, "derivedSymbolData", FieldType::Def(nc), true);
 
     let blob = b.define("Blob", DefKind::Message);
     b.field(blob, "bytes", nat(Byte), true, 1);
@@ -442,4 +484,208 @@ pub fn sample_fig(how: Compression, zipped: bool) -> Vec<u8> {
     let mut images = BTreeMap::new();
     images.insert(crate::kiwi::hex(&IMAGE_HASH), vec![0x89, b'P', b'N', b'G']);
     container::write_zip(&canvas, &images, Some(&serde_json::json!({"file_name": "Sample file"})))
+}
+
+// ---- upgrade fixture: geometry, styles, grids, text clamping, instance overrides
+
+/// Commands blob for a closed square: M(0,0) L(10,0) L(10,10) L(0,10) Z.
+pub fn square_blob() -> Vec<u8> {
+    let mut b = Vec::new();
+    for (op, pts) in [(1u8, [0.0f32, 0.0]), (2, [10.0, 0.0]), (2, [10.0, 10.0]), (2, [0.0, 10.0])] {
+        b.push(op);
+        for p in pts {
+            b.extend(p.to_le_bytes());
+        }
+    }
+    b.push(0);
+    b
+}
+
+fn path_of(guids: &[(u32, u32)]) -> V {
+    msg(vec![("guids", V::Array(guids.iter().map(|g| guid(g.0, g.1)).collect()))])
+}
+
+fn ov(path: &[(u32, u32)], mut fields: Vec<(&str, V)>) -> V {
+    let mut f = vec![("guidPath", path_of(path))];
+    f.append(&mut fields);
+    msg(f)
+}
+
+fn num(value: f32, units: &str) -> V {
+    st(vec![("value", fl(value)), ("units", en(units))])
+}
+
+fn text_data(s: &str) -> V {
+    msg(vec![("characters", V::String(s.into()))])
+}
+
+/// Message exercising the `.fig` upgrade features (see `tests/fig_upgrade.rs`).
+/// Blob 0 is the triangle, blob 1 the square.
+pub fn upgrade_message() -> V {
+    let geo = |rule: &str, blob: u32| V::Array(vec![msg(vec![("windingRule", en(rule)), ("commandsBlob", V::Uint(blob))])]);
+    let size = |w: f32, h: f32| ("size", vec2(w, h));
+    let doc = node((0, 0), (0, 0), "!", "DOCUMENT", "Document", vec![]);
+    let page = node((0, 1), (0, 0), "a", "CANVAS", "Up", vec![("backgroundColor", color(1.0, 1.0, 1.0, 1.0))]);
+    let internal = node((0, 2), (0, 0), "b", "CANVAS", "Internal Only Canvas", vec![("internalOnly", V::Bool(true))]);
+    let style_node = |l: u32, name: &str, ty: &str, desc: &str, key: Option<&str>| {
+        let mut f = vec![("styleType", en(ty)), ("styleDescription", V::String(desc.into())), size(1.0, 1.0)];
+        if let Some(k) = key {
+            f.push(("sharedStyleMasterData", msg(vec![("styleKey", V::String(k.into()))])));
+        }
+        node((2, l), (0, 2), &format!("{l}"), "RECTANGLE", name, f)
+    };
+    let styles = [
+        style_node(100, "Brand/Primary", "FILL", "Main brand fill", Some("key-primary")),
+        style_node(101, "Border/Strong", "FILL", "", None),
+        style_node(102, "Body", "TEXT", "Body copy", Some("key-body")),
+    ];
+    let sref = |l: u32| msg(vec![("guid", guid(2, l))]);
+
+    let grids = node(
+        (2, 1),
+        (0, 1),
+        "a",
+        "FRAME",
+        "Grids",
+        vec![
+            size(300.0, 200.0),
+            (
+                "layoutGrids",
+                V::Array(vec![
+                    msg(vec![("pattern", en("COLUMNS")), ("count", V::Uint(4)), ("gutterSize", fl(8.0)), ("offset", fl(2.0)), ("color", color(1.0, 0.0, 0.0, 0.1)), ("visible", V::Bool(true))]),
+                    msg(vec![("pattern", en("GRID")), ("sectionSize", fl(10.0)), ("color", color(0.0, 0.0, 1.0, 0.2))]),
+                    msg(vec![("pattern", en("ROWS")), ("count", V::Uint(3)), ("gutterSize", fl(4.0)), ("visible", V::Bool(false))]),
+                ]),
+            ),
+        ],
+    );
+    let boolean = node(
+        (2, 2),
+        (0, 1),
+        "b",
+        "BOOLEAN_OPERATION",
+        "Bool",
+        vec![
+            size(10.0, 10.0),
+            ("fillGeometry", geo("NONZERO", 0)),
+            ("strokeGeometry", geo("ODD", 1)),
+            ("blendMode", en("LINEAR_BURN")),
+            ("styleIdForFill", sref(100)),
+            ("styleIdForStrokeFill", sref(101)),
+            ("fillPaints", V::Array(vec![solid(1.0, 0.0, 0.0)])),
+            ("strokePaints", V::Array(vec![solid(0.0, 0.0, 0.0)])),
+        ],
+    );
+    let star = node((2, 3), (0, 1), "c", "STAR", "Star", vec![size(10.0, 10.0), ("count", V::Uint(5)), ("fillGeometry", geo("NONZERO", 0)), ("blendMode", en("LINEAR_DODGE"))]);
+    let text = |l: u32, pos: &str, name: &str, mut extra: Vec<(&str, V)>| {
+        let mut f = vec![size(80.0, 40.0), ("fontSize", fl(10.0)), ("textData", text_data(name))];
+        f.append(&mut extra);
+        node((2, l), (0, 1), pos, "TEXT", name, f)
+    };
+    let clamp = text(4, "d", "Clamp", vec![("textTruncation", en("ENDING")), ("maxLines", V::Uint(2)), ("lineHeight", num(100.0, "PERCENT")), ("styleIdForText", sref(102))]);
+    let lh_auto = text(5, "e", "LhAuto", vec![("lineHeight", num(1.0, "RAW"))]);
+    let lh_pct = text(6, "f", "LhPct", vec![("lineHeight", num(150.0, "PERCENT"))]);
+    let lh_none = text(7, "g", "LhNone", vec![]);
+    let lh_px = text(8, "h", "LhPx", vec![("lineHeight", num(18.0, "PIXELS"))]);
+    let plain = text(9, "i", "Plain", vec![]);
+
+    // Component with a label, background and a nested frame.
+    let card = node((2, 10), (0, 1), "j", "SYMBOL", "Card", vec![size(100.0, 50.0), ("transform", matrix(0.0, 300.0))]);
+    let label = node(
+        (2, 11),
+        (2, 10),
+        "a",
+        "TEXT",
+        "Label",
+        vec![size(60.0, 12.0), ("fontSize", fl(10.0)), ("textData", text_data("Old")), ("fillPaints", V::Array(vec![solid(0.0, 0.0, 0.0)]))],
+    );
+    let bg = node((2, 12), (2, 10), "b", "RECTANGLE", "Bg", vec![size(100.0, 50.0), ("fillPaints", V::Array(vec![solid(0.5, 0.5, 0.5)]))]);
+    let inner = node((2, 13), (2, 10), "c", "FRAME", "Inner", vec![size(20.0, 20.0)]);
+    let dot = node((2, 14), (2, 13), "a", "RECTANGLE", "Dot", vec![size(5.0, 5.0), ("fillPaints", V::Array(vec![solid(0.0, 1.0, 0.0)]))]);
+
+    // Wrapper component containing a nested instance of Card with its own override.
+    let wrapper = node((2, 20), (0, 1), "k", "SYMBOL", "Wrapper", vec![size(100.0, 50.0), ("transform", matrix(200.0, 300.0))]);
+    let card_in = node(
+        (2, 21),
+        (2, 20),
+        "a",
+        "INSTANCE",
+        "CardIn",
+        vec![
+            size(100.0, 50.0),
+            ("symbolData", msg(vec![("symbolID", guid(2, 10)), ("symbolOverrides", V::Array(vec![ov(&[(2, 11)], vec![("textData", text_data("Inner text"))])]))])),
+        ],
+    );
+    let wrap_inst = node(
+        (2, 30),
+        (0, 1),
+        "l",
+        "INSTANCE",
+        "WrapInst",
+        vec![
+            size(100.0, 50.0),
+            ("transform", matrix(400.0, 300.0)),
+            ("symbolData", msg(vec![("symbolID", guid(2, 20)), ("symbolOverrides", V::Array(vec![ov(&[(2, 21), (2, 11)], vec![("textData", text_data("Deep"))])]))])),
+        ],
+    );
+
+    let card_a = node(
+        (2, 40),
+        (0, 1),
+        "m",
+        "INSTANCE",
+        "Card A",
+        vec![
+            size(200.0, 80.0),
+            ("transform", matrix(0.0, 400.0)),
+            (
+                "symbolData",
+                msg(vec![
+                    ("symbolID", guid(2, 10)),
+                    (
+                        "symbolOverrides",
+                        V::Array(vec![
+                            ov(
+                                &[(2, 11)],
+                                vec![
+                                    ("textData", text_data("New \u{1F600}")),
+                                    ("fillPaints", V::Array(vec![solid(1.0, 0.0, 0.0)])),
+                                    ("letterSpacing", num(50.0, "PERCENT")),
+                                    ("opacity", fl(0.75)),
+                                ],
+                            ),
+                            ov(&[(2, 12)], vec![("visible", V::Bool(false)), ("blendMode", en("LINEAR_DODGE")), ("cornerRadius", fl(4.0))]),
+                            ov(&[(2, 13), (2, 14)], vec![("fillPaints", V::Array(vec![solid(0.0, 0.0, 1.0)])), size(7.0, 7.0)]),
+                            ov(&[(9, 99)], vec![("visible", V::Bool(false))]), // dangling path: ignored
+                        ]),
+                    ),
+                ]),
+            ),
+            (
+                "derivedSymbolData",
+                V::Array(vec![
+                    ov(&[(2, 12)], vec![size(200.0, 80.0), ("transform", matrix(5.0, 6.0)), ("fillGeometry", geo("NONZERO", 1)), ("name", V::String("ignored by derived".into()))]),
+                    ov(&[], vec![size(200.0, 80.0)]),
+                ]),
+            ),
+        ],
+    );
+    let card_b = node((2, 41), (0, 1), "n", "INSTANCE", "Card B", vec![size(100.0, 50.0), ("transform", matrix(300.0, 400.0)), ("symbolData", msg(vec![("symbolID", guid(2, 10))]))]);
+
+    let mut nodes = vec![doc, page, internal];
+    nodes.extend(styles);
+    nodes.extend([grids, boolean, star, clamp, lh_auto, lh_pct, lh_none, lh_px, plain]);
+    nodes.extend([card, label, bg, inner, dot, wrapper, card_in, wrap_inst, card_a, card_b]);
+    msg(vec![
+        ("nodeChanges", V::Array(nodes)),
+        ("blobs", V::Array(vec![msg(vec![("bytes", V::Bytes(triangle_blob()))]), msg(vec![("bytes", V::Bytes(square_blob()))])])),
+    ])
+}
+
+/// `.fig` bytes for [`upgrade_message`].
+pub fn upgrade_fig(how: Compression) -> Vec<u8> {
+    let schema = figma_like_schema();
+    let root = schema.find("Message").unwrap();
+    let body = schema.encode_message(root, &upgrade_message()).unwrap();
+    container::write_container(&schema.encode(), &body, how, 101)
 }
