@@ -915,5 +915,181 @@
         "font": "body_medium"
       }
     }
+  },
+  "color_picker": {
+    "_note": "Figma UI3 color picker, 800x600 dpr 1 (reference/screens/figma-800x600-color-picker.png: page background, solid only). The full fill picker (reference/screens/figma-fill-picker-user.png, from the owner) adds Custom|Libraries tabs, + and a paint-type icon row.",
+    "panel": {
+      "w": 240,
+      "h_solid": 472,
+      "bg": "bg",
+      "radius": 13,
+      "shadow": "elevation.400",
+      "anchor": "left of the inspector row that opened it, top aligned near the row, kept on screen"
+    },
+    "header": {
+      "h": 40,
+      "tab": {
+        "x": 8,
+        "y": 8,
+        "h": 24,
+        "radius": 5,
+        "font": "body_medium weight 550",
+        "active_bg": "bg_secondary",
+        "labels": [
+          "Custom",
+          "Libraries"
+        ]
+      },
+      "actions_right": [
+        "+ (add style)",
+        "close X"
+      ],
+      "action_size": 24,
+      "separator_below": true
+    },
+    "paint_types_row": {
+      "h": 40,
+      "icon_buttons": 24,
+      "first_x": 8,
+      "pitch": 28,
+      "kinds": [
+        "Solid",
+        "Linear",
+        "Radial",
+        "Angular",
+        "Diamond",
+        "Image",
+        "Video (omit or disable)"
+      ],
+      "right": [
+        "blend mode (drop)",
+        "remove/none"
+      ],
+      "active_bg": "bg_secondary",
+      "separator_below": true
+    },
+    "color_area": {
+      "x": 16,
+      "w": 208,
+      "h": 208,
+      "radius": 5,
+      "thumb": {
+        "size": 14,
+        "ring": "2px white",
+        "shadow": "0 0 0 1px #0000004d"
+      }
+    },
+    "sliders": {
+      "eyedropper": {
+        "x": 16,
+        "size": 24,
+        "radius": 5
+      },
+      "x": 52,
+      "w": 172,
+      "hue_y_offset": -2,
+      "track_h": 12,
+      "radius": 6,
+      "gap": 16,
+      "alpha_track": "checkerboard 4px + gradient",
+      "thumb": {
+        "size": 16,
+        "ring": "3px white",
+        "fill": "current color"
+      }
+    },
+    "value_row": {
+      "y_offset_after_sliders": 20,
+      "format_dropdown": {
+        "x": 16,
+        "w": 55,
+        "h": 24,
+        "bg": "bg",
+        "border": "1px border",
+        "radius": 5,
+        "options": [
+          "Hex",
+          "RGB",
+          "CSS",
+          "HSL",
+          "HSB"
+        ]
+      },
+      "hex": {
+        "x": 80,
+        "w": 89,
+        "h": 24,
+        "bg": "bg_secondary",
+        "radius": [
+          5,
+          0,
+          0,
+          5
+        ],
+        "text_x": 8
+      },
+      "opacity": {
+        "x": 170,
+        "w": 54,
+        "h": 24,
+        "bg": "bg_secondary",
+        "radius": [
+          0,
+          5,
+          5,
+          0
+        ],
+        "value_x": 8,
+        "suffix": "%",
+        "suffix_color": "text_secondary",
+        "divider": "1px bg between hex and opacity"
+      }
+    },
+    "swatches_section": {
+      "separator_above": true,
+      "source_dropdown": {
+        "x": 16,
+        "w": 208,
+        "h": 24,
+        "bg": "bg",
+        "border": "1px border",
+        "radius": 5,
+        "label": "On this page",
+        "options": [
+          "On this page",
+          "Document colors",
+          "<library names>"
+        ]
+      },
+      "grid": {
+        "x": 16,
+        "y_offset": 32,
+        "size": 16,
+        "radius": "20%",
+        "pitch": 24,
+        "per_row": 9,
+        "inner_ring": "inset 0 0 0 2px #ffffff1a on dark swatches"
+      }
+    }
+  },
+  "input_fields": {
+    "_note": "Inspector inputs (Figma UI3). Values and placeholders must be vertically centred on the 24px field: 11px Inter 450, line 16, text baseline at y+16 roughly; never clipped.",
+    "height": 24,
+    "radius": 5,
+    "bg": "bg_secondary",
+    "hover_border": "1px border",
+    "focus_border": "1px bg_brand",
+    "prefix": {
+      "x": 8,
+      "w": 16,
+      "kinds": "letter (X,Y,W,H) in text_secondary or a 16px icon",
+      "value_x": 24
+    },
+    "plain_value_x": 8,
+    "suffix_gap": 4,
+    "suffix_color": "text_secondary",
+    "placeholder_color": "text_tertiary",
+    "mixed": "'Mixed' in text_secondary",
+    "number_format": "integers without decimals; up to 2 decimals trimmed (12.5 not 12.50); angles with ° ; percentages as 100 + separate %"
   }
 }
