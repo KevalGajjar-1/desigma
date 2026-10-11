@@ -11,12 +11,16 @@ use desigma_doc::{TextAutoResize, TextProps, Vec2};
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
+use std::sync::Arc;
 use tiny_skia as sk;
 
 struct Fonts {
     fs: FontSystem,
     swash: SwashCache,
+    /// Lowercased family names present in the font database.
     families: HashSet<String>,
+    /// Faces embedded via `desigma-fonts` (preferred over any system copy).
+    bundled: HashSet<fontdb::ID>,
 }
 
 thread_local! {
@@ -31,39 +35,111 @@ pub struct TextLayout {
     pub paths: Vec<Option<sk::Path>>,
 }
 
+fn init_fonts() -> Fonts {
+    let mut db = fontdb::Database::new();
+    // Bundled fonts go in first and any system face claiming the same family
+    // is dropped, so "Inter" always resolves to the embedded copy.
+    let mut bundled = HashSet::new();
+    let mut owned = HashSet::new();
+    for asset in desigma_fonts::bundled() {
+        owned.insert(asset.family.to_lowercase());
+        bundled.extend(db.load_font_source(fontdb::Source::Binary(Arc::new(asset.data))));
+    }
+    db.load_system_fonts();
+    let shadowed: Vec<fontdb::ID> = db
+        .faces()
+        .filter(|f| !bundled.contains(&f.id) && f.families.iter().any(|(n, _)| owned.contains(&n.to_lowercase())))
+        .map(|f| f.id)
+        .collect();
+    for id in shadowed {
+        db.remove_face(id);
+    }
+    db.set_sans_serif_family("Inter");
+    let fs = FontSystem::new_with_locale_and_db("en-US".to_string(), db);
+    let families = family_names(&fs);
+    Fonts { fs, swash: SwashCache::new(), families, bundled }
+}
+
+fn family_names(fs: &FontSystem) -> HashSet<String> {
+    let mut out = HashSet::new();
+    for face in fs.db().faces() {
+        for (name, _) in &face.families {
+            out.insert(name.to_lowercase());
+        }
+    }
+    out
+}
+
 fn with_fonts<R>(f: impl FnOnce(&mut Fonts) -> R) -> R {
     FONTS.with(|cell| {
         let mut slot = cell.borrow_mut();
         if slot.is_none() {
-            let fs = FontSystem::new();
-            let mut families = HashSet::new();
-            for face in fs.db().faces() {
-                for (name, _) in &face.families {
-                    families.insert(name.to_lowercase());
-                }
-            }
-            *slot = Some(Fonts { fs, swash: SwashCache::new(), families });
+            *slot = Some(init_fonts());
         }
         f(slot.as_mut().unwrap())
     })
 }
 
-/// Registers extra font data (e.g. a bundled Inter) with the shared font system.
-pub fn load_font_data(data: Vec<u8>) {
+/// Registers extra font data (e.g. a font fetched by `desigma-fonts`) with the
+/// shared font system. Cached layouts are discarded.
+pub fn register_font(data: Vec<u8>) {
     with_fonts(|f| {
-        let before = f.fs.db().len();
         f.fs.db_mut().load_font_data(data);
-        for face in f.fs.db().faces().skip(before) {
-            for (name, _) in &face.families {
-                f.families.insert(name.to_lowercase());
-            }
-        }
+        f.families = family_names(&f.fs);
     });
     LAYOUTS.with(|l| l.borrow_mut().clear());
 }
 
-fn auto_line_ratio(fonts: &mut Fonts, st: &d::TextStyle, has_family: bool) -> f32 {
-    let fam = if has_family { fontdb::Family::Name(&st.font_family) } else { fontdb::Family::SansSerif };
+/// Compatible alias of [`register_font`].
+pub fn load_font_data(data: Vec<u8>) {
+    register_font(data)
+}
+
+/// Which font a text style will be shaped with.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ResolvedFont {
+    /// Family name in the font database (after substitution).
+    pub family: String,
+    /// The matched face is one embedded in the binary.
+    pub bundled: bool,
+}
+
+/// Resolves `family` the way the text layout does: the family itself if it is
+/// in the font database, else its open-source substitute, else the default
+/// sans-serif (Inter). Returns `None` only if the database has no match at all.
+pub fn resolve_font(family: &str, weight: u16, italic: bool) -> Option<ResolvedFont> {
+    with_fonts(|f| {
+        let name = resolve_family(f, family);
+        let fam = match &name {
+            Some(n) => fontdb::Family::Name(n),
+            None => fontdb::Family::SansSerif,
+        };
+        let q = fontdb::Query {
+            families: &[fam],
+            weight: fontdb::Weight(weight),
+            stretch: fontdb::Stretch::Normal,
+            style: if italic { fontdb::Style::Italic } else { fontdb::Style::Normal },
+        };
+        let id = f.fs.db().query(&q)?;
+        let face = f.fs.db().face(id)?;
+        Some(ResolvedFont { family: face.families.first()?.0.clone(), bundled: f.bundled.contains(&id) })
+    })
+}
+
+/// Family name to ask the font database for, or `None` to use default sans-serif.
+fn resolve_family(fonts: &Fonts, requested: &str) -> Option<String> {
+    if fonts.families.contains(&requested.to_lowercase()) {
+        return Some(requested.to_string());
+    }
+    let sub = desigma_fonts::substitute(requested)?;
+    fonts.families.contains(&sub.to_lowercase()).then(|| sub.to_string())
+}
+
+fn auto_line_ratio(fonts: &mut Fonts, st: &d::TextStyle, family: Option<&str>) -> f32 {
+    let fam = match family {
+        Some(n) => fontdb::Family::Name(n),
+        None => fontdb::Family::SansSerif,
+    };
     let q = fontdb::Query {
         families: &[fam],
         weight: fontdb::Weight(st.font_weight),
@@ -167,12 +243,12 @@ fn compute_layout(fonts: &mut Fonts, props: &TextProps, size: Vec2) -> TextLayou
     styles.extend(props.runs.iter().map(|r| r.style.clone()));
     let mut builders: Vec<sk::PathBuilder> = styles.iter().map(|_| sk::PathBuilder::new()).collect();
 
-    let has_family: Vec<bool> = styles.iter().map(|s| fonts.families.contains(&s.font_family.to_lowercase())).collect();
+    let family_names: Vec<Option<String>> = styles.iter().map(|s| resolve_family(fonts, &s.font_family)).collect();
     let ratios: Vec<f32> = styles
         .iter()
         .enumerate()
         .map(|(i, s)| match s.line_height {
-            d::LineHeight::Auto => auto_line_ratio(fonts, s, has_family[i]),
+            d::LineHeight::Auto => auto_line_ratio(fonts, s, family_names[i].as_deref()),
             _ => 1.0,
         })
         .collect();
@@ -188,7 +264,10 @@ fn compute_layout(fonts: &mut Fonts, props: &TextProps, size: Vec2) -> TextLayou
     let attrs_for = |seg: &Segment| -> Attrs<'_> {
         let st = &styles[seg.style];
         let fsize = (st.font_size * if seg.small { 0.8 } else { 1.0 }).max(0.1);
-        let family = if has_family[seg.style] { Family::Name(&st.font_family) } else { Family::SansSerif };
+        let family = match &family_names[seg.style] {
+            Some(n) => Family::Name(n),
+            None => Family::SansSerif,
+        };
         let mut a = Attrs::new()
             .family(family)
             .weight(Weight(st.font_weight))

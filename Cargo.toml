@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/desigma-doc",
     "crates/desigma-render",
+    "crates/desigma-fonts",
     "crates/desigma-fig",
     "crates/desigma-app",
     "crates/desigma-diff",
@@ -18,6 +19,7 @@ repository = "https://github.com/deepfounder-ai/desigma"
 desigma-doc = { path = "crates/desigma-doc" }
 desigma-render = { path = "crates/desigma-render" }
 desigma-fig = { path = "crates/desigma-fig" }
+desigma-fonts = { path = "crates/desigma-fonts" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"

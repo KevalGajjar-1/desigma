@@ -18,7 +18,7 @@ mod text;
 use desigma_doc::{Document, Effect, Node, NodeId, NodeKind, Vec2};
 use geom::{node_shape, to_sk_transform, transformed_bounds, Shape};
 use paint::{blend_mode, fill_paths, stroke_paths, PaintEnv};
-pub use text::load_font_data;
+pub use text::{load_font_data, register_font, resolve_font, ResolvedFont};
 pub use tiny_skia;
 use tiny_skia as sk;
 
