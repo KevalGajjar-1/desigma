@@ -4,11 +4,11 @@
 
 use super::properties::{row_end, section_sep, sublabel, title, Pane};
 use crate::app::App;
-use crate::icons::{self, Icon};
+use crate::icons::Icon;
 use crate::theme;
 use crate::widgets::field;
 use crate::widgets::menu::{dropdown, popup_menu, MenuItem, MenuResult};
-use crate::widgets::{self};
+use crate::widgets;
 use desigma_doc::*;
 use egui::{Align2, Pos2, Rect, Sense, Ui, Vec2};
 
@@ -73,7 +73,6 @@ fn instance_header(app: &mut App, ui: &mut Ui, pane: &mut Pane, inst: NodeId) {
         app.swap_instance(inst, comps[i]);
     }
     ui.painter().rect_stroke(dd, theme::cr(theme::RADIUS_MEDIUM), egui::Stroke::new(1.0, theme::CANVAS_COMPONENT.gamma_multiply(0.55)), egui::StrokeKind::Inside);
-    icons::paint(ui.painter(), Icon::Instance, Pos2::new(dd.left() + 12.0, dd.center().y), 12.0, theme::TEXT_COMPONENT);
     let go = pane.rect(181.0, row_y, theme::PANEL_ACTION_BUTTON, theme::PANEL_ACTION_BUTTON);
     widgets::record(ui, "go-to-main", go);
     if widgets::icon_button(ui, go, "go-main", Icon::Component, false, "Go to main component").clicked() {
