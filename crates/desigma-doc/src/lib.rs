@@ -4,9 +4,11 @@
 //! [`Document`], the renderer draws it, the app edits it through [`Command`]s.
 //! Coordinates are in Figma units (1 unit = 1 CSS px at 100% zoom), y down.
 
+mod comments;
 mod components;
 mod geom;
 mod history;
+mod library;
 mod node;
 mod paint;
 mod prototype;
@@ -15,9 +17,11 @@ mod variables;
 mod variables_apply;
 mod variables_edit;
 
+pub use comments::*;
 pub use components::*;
 pub use geom::*;
 pub use history::*;
+pub use library::*;
 pub use node::*;
 pub use paint::*;
 pub use prototype::*;
@@ -70,6 +74,15 @@ pub struct Document {
     /// Device used when presenting the prototype.
     #[serde(default)]
     pub prototype_device: PrototypeDevice,
+    /// Comment threads on the canvas.
+    #[serde(default)]
+    pub comments: Vec<CommentThread>,
+    /// Published / enabled libraries and local copies of library assets.
+    #[serde(default)]
+    pub library: LibraryState,
+    /// Hidden page holding copies of library components; not in `pages`.
+    #[serde(default)]
+    pub library_page: Option<NodeId>,
     /// Embedded images keyed by content hash (Figma `imageRef`).
     pub images: BTreeMap<String, Vec<u8>>,
     next_id: u64,

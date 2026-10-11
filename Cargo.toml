@@ -5,6 +5,7 @@ members = [
     "crates/desigma-render",
     "crates/desigma-fonts",
     "crates/desigma-fig",
+    "crates/desigma-library",
     "crates/desigma-app",
     "crates/desigma-diff",
     "crates/desigma-export",
@@ -21,6 +22,7 @@ repository = "https://github.com/deepfounder-ai/desigma"
 desigma-doc = { path = "crates/desigma-doc" }
 desigma-render = { path = "crates/desigma-render" }
 desigma-fig = { path = "crates/desigma-fig" }
+desigma-library = { path = "crates/desigma-library" }
 desigma-fonts = { path = "crates/desigma-fonts" }
 desigma-export = { path = "crates/desigma-export" }
 desigma-svg = { path = "crates/desigma-svg" }

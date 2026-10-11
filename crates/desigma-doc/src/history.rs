@@ -36,6 +36,15 @@ pub enum Command {
     SetFlows {
         flows: Vec<Flow>,
     },
+    /// Replace all comment threads.
+    SetComments {
+        comments: Vec<CommentThread>,
+    },
+    /// Replace library bookkeeping (publish info, enabled libraries, asset copies).
+    SetLibraryState {
+        state: LibraryState,
+        library_page: Option<NodeId>,
+    },
     /// Replace the guides of one page.
     SetGuides {
         page: NodeId,
@@ -117,6 +126,11 @@ impl Command {
                 Command::InsertPage { index, nodes }
             }
             Command::SetFlows { flows } => Command::SetFlows { flows: std::mem::replace(&mut doc.flows, flows) },
+            Command::SetComments { comments } => Command::SetComments { comments: std::mem::replace(&mut doc.comments, comments) },
+            Command::SetLibraryState { state, library_page } => Command::SetLibraryState {
+                state: std::mem::replace(&mut doc.library, state),
+                library_page: std::mem::replace(&mut doc.library_page, library_page),
+            },
             Command::SetGuides { page, guides } => {
                 let old = if guides.is_empty() { doc.guides.remove(&page) } else { doc.guides.insert(page, guides) };
                 Command::SetGuides { page, guides: old.unwrap_or_default() }

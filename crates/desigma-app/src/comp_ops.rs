@@ -38,7 +38,9 @@ fn ids_of(doc: &Document, cmd: &Command, out: &mut Vec<NodeId>) {
         | Command::SetFlows { .. }
         | Command::SetVariables { .. }
         | Command::SetGuides { .. }
-        | Command::SetPrototypeDevice { .. } => {}
+        | Command::SetPrototypeDevice { .. }
+        | Command::SetComments { .. }
+        | Command::SetLibraryState { .. } => {}
     }
 }
 
