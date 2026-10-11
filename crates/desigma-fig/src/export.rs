@@ -208,7 +208,7 @@ fn geometry(paths: &[Path]) -> Value {
     )
 }
 
-fn figma_id(doc: &Document, id: NodeId) -> String {
+pub(crate) fn figma_id(doc: &Document, id: NodeId) -> String {
     doc.get(id).and_then(|n| n.source_id.clone()).unwrap_or_else(|| format!("9000:{}", id.0))
 }
 
@@ -463,7 +463,8 @@ fn export_node(doc: &Document, id: NodeId, parent_abs: Option<&Affine>, depth: u
 
 /// Produces JSON shaped like Figma's `GET /v1/files/:key` response.
 pub fn export_rest_json(doc: &Document) -> Value {
-    let pages: Vec<Value> = doc.pages.iter().filter_map(|p| export_node(doc, *p, None, 0)).collect();
+    let mut pages: Vec<Value> = doc.pages.iter().filter_map(|p| export_node(doc, *p, None, 0)).collect();
+    crate::proto::export_into(doc, &mut pages);
     let mut styles = Map::new();
     for (id, s) in &doc.styles {
         let ty = match s {

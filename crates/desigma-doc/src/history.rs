@@ -14,6 +14,8 @@ pub enum Command {
     /// Insert a page subtree (page node first) at `index` in `Document::pages`.
     InsertPage { index: usize, nodes: Vec<Node> },
     RemovePage { id: NodeId },
+    /// Replace the document's prototype flow list (flow starting points).
+    SetFlows { flows: Vec<Flow> },
     Batch(Vec<Command>),
 }
 
@@ -80,6 +82,7 @@ impl Command {
                 let nodes = doc.remove(id)?;
                 Command::InsertPage { index, nodes }
             }
+            Command::SetFlows { flows } => Command::SetFlows { flows: std::mem::replace(&mut doc.flows, flows) },
             Command::Batch(cmds) => {
                 let mut inv = Vec::with_capacity(cmds.len());
                 for c in cmds {
@@ -157,6 +160,22 @@ mod tests {
         assert_eq!(d.get(page).unwrap().children, vec![id]);
         h.redo(&mut d).unwrap();
         assert!(d.get(id).is_none());
+    }
+
+    #[test]
+    fn undo_redo_flows() {
+        let mut d = Document::new("t");
+        let page = d.add_page("P");
+        let fid = d.alloc_id();
+        let f = d.insert(page, Node::frame(fid, Rect::new(0.0, 0.0, 10.0, 10.0))).unwrap();
+        let flow = Flow { name: "Flow 1".into(), page, start: f, description: String::new() };
+        let mut h = History::default();
+        h.exec(&mut d, Command::SetFlows { flows: vec![flow.clone()] }).unwrap();
+        assert_eq!(d.flows, vec![flow]);
+        h.undo(&mut d).unwrap();
+        assert!(d.flows.is_empty());
+        h.redo(&mut d).unwrap();
+        assert_eq!(d.flows.len(), 1);
     }
 
     #[test]

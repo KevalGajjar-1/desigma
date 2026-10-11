@@ -33,7 +33,7 @@ fn ids_of(doc: &Document, cmd: &Command, out: &mut Vec<NodeId>) {
             out.extend(doc.get(node.id).and_then(|n| n.parent));
         }
         Command::Batch(v) => v.iter().for_each(|c| ids_of(doc, c, out)),
-        Command::InsertPage { .. } | Command::RemovePage { .. } => {}
+        Command::InsertPage { .. } | Command::RemovePage { .. } | Command::SetFlows { .. } => {}
     }
 }
 

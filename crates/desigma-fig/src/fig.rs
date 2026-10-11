@@ -113,6 +113,10 @@ pub(crate) fn message_to_rest(msg: &KiwiValue, name: &str) -> Value {
         .into_iter()
         .filter(|&i| entries[i].json.get("internalOnly").and_then(Value::as_bool) != Some(true))
         .filter_map(|i| build(&entries, &children, &blobs, i, &mut visited, 0))
+        .map(|mut p| {
+            crate::proto::lift_flow_starts(&mut p);
+            p
+        })
         .collect();
 
     json!({
@@ -212,6 +216,7 @@ fn convert_node(nc: &Value, id: &str, blobs: &[&[u8]]) -> Option<Map<String, Val
         copy(&mut m, nc, "backgroundColor", "backgroundColor");
         return Some(m);
     }
+    crate::proto::convert_fig(&mut m, nc);
 
     // Paint.
     let paints = |k: &str| -> Value { Value::Array(rest_import::farr(nc, k).iter().filter_map(convert_paint).collect()) };
