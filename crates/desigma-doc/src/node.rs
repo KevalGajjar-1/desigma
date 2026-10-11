@@ -1,6 +1,6 @@
 use crate::*;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Node {
@@ -42,6 +42,87 @@ pub struct Node {
     /// already expanded by weight/align; filled with the stroke paints.
     #[serde(default)]
     pub stroke_geometry: Option<Vec<Path>>,
+    /// Component/instance bookkeeping; empty for ordinary nodes.
+    #[serde(default, skip_serializing_if = "ComponentLink::is_empty")]
+    pub component: ComponentLink,
+}
+
+/// A node property that an instance can override independently of its main
+/// component. Syncing a component into its instances copies every field that
+/// is not in the instance node's [`ComponentLink::overrides`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub enum OverrideField {
+    Name,
+    Visible,
+    Locked,
+    Opacity,
+    Blend,
+    Size,
+    Transform,
+    Fills,
+    Stroke,
+    Effects,
+    CornerRadii,
+    /// Text characters.
+    Characters,
+    /// Text style and runs.
+    TextStyle,
+    /// Frame props: clipping, auto layout, grids.
+    Layout,
+    /// Which component an instance points at (instance swap).
+    MainComponent,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum PropValue {
+    Bool(bool),
+    Text(String),
+    /// Selected option of a variant property.
+    Variant(String),
+    /// Component swapped in, by node id.
+    Instance(NodeId),
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum PropKind {
+    Boolean,
+    Text,
+    Variant { options: Vec<String> },
+    InstanceSwap { preferred: Vec<NodeId> },
+}
+
+/// Component property definition, on a Component or ComponentSet.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ComponentPropDef {
+    pub name: String,
+    pub kind: PropKind,
+    pub default: PropValue,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct ComponentLink {
+    /// For a node inside an instance: the node of the main component it mirrors.
+    /// Instance roots point at their component via `NodeKind::Instance::component`.
+    pub source: Option<NodeId>,
+    /// Properties changed on this instance node; preserved when syncing.
+    pub overrides: BTreeSet<OverrideField>,
+    /// Property definitions (Component / ComponentSet only).
+    pub props: Vec<ComponentPropDef>,
+    /// Property values chosen on an instance root, by property name.
+    pub values: BTreeMap<String, PropValue>,
+    /// Binds a node property to a component property, e.g.
+    /// `Visible -> "Show icon"`, `Characters -> "Label"`, `MainComponent -> "Icon"`.
+    pub bindings: BTreeMap<OverrideField, String>,
+}
+
+impl ComponentLink {
+    pub fn is_empty(&self) -> bool {
+        self.source.is_none()
+            && self.overrides.is_empty()
+            && self.props.is_empty()
+            && self.values.is_empty()
+            && self.bindings.is_empty()
+    }
 }
 
 impl Node {
@@ -70,6 +151,7 @@ impl Node {
             style_refs: BTreeMap::new(),
             fill_geometry: None,
             stroke_geometry: None,
+            component: ComponentLink::default(),
         }
     }
 

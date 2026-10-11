@@ -253,4 +253,23 @@ mod tests {
         let back = Document::from_json(&d.to_json().unwrap()).unwrap();
         assert_eq!(back.nodes.len(), 2);
     }
+
+    #[test]
+    fn component_link_roundtrip_and_default() {
+        let mut d = Document::new("t");
+        let page = d.add_page("P");
+        let id = d.alloc_id();
+        let mut n = Node::rectangle(id, Rect::new(0.0, 0.0, 5.0, 5.0));
+        n.component.source = Some(NodeId(99));
+        n.component.overrides.insert(OverrideField::Fills);
+        n.component.bindings.insert(OverrideField::Visible, "Show icon".into());
+        d.insert(page, n).unwrap();
+        let json = d.to_json().unwrap();
+        let back = Document::from_json(&json).unwrap();
+        assert_eq!(back.get(id).unwrap().component, d.get(id).unwrap().component);
+        // Plain nodes omit the field, and files without it still load.
+        assert!(!json.contains("\"component\": {}"));
+        let page_json = serde_json::to_string(back.get(page).unwrap()).unwrap();
+        assert!(!page_json.contains("\"component\""));
+    }
 }
