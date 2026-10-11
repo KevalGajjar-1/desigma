@@ -118,7 +118,35 @@ pub(crate) fn message_to_rest(msg: &KiwiValue, name: &str) -> Value {
     json!({
         "name": name,
         "document": {"id": "0:0", "name": "Document", "type": "DOCUMENT", "children": pages},
+        "styles": style_table(&entries),
     })
+}
+
+/// REST-style `styles` map from shared-style nodes (nodes carrying `styleType`
+/// FILL/TEXT/EFFECT/GRID; they normally live on the internal-only canvas). The
+/// library key is looked up in `sharedStyleMasterData.styleKey`, `styleKey` or
+/// `key`; all of it is optional.
+fn style_table(entries: &[Entry]) -> Value {
+    let mut out = Map::new();
+    for e in entries {
+        let j = &e.json;
+        let Some(ty) = fstr(j, "styleType").filter(|t| matches!(*t, "FILL" | "TEXT" | "EFFECT" | "GRID")) else { continue };
+        let key = j
+            .get("sharedStyleMasterData")
+            .and_then(|d| fstr(d, "styleKey"))
+            .or_else(|| fstr(j, "styleKey"))
+            .or_else(|| fstr(j, "key"))
+            .unwrap_or("");
+        let mut m = Map::new();
+        if !key.is_empty() {
+            m.insert("key".into(), key.into());
+        }
+        m.insert("name".into(), fstr(j, "name").unwrap_or("").into());
+        m.insert("description".into(), fstr(j, "styleDescription").unwrap_or("").into());
+        m.insert("styleType".into(), ty.into());
+        out.insert(e.id.clone(), Value::Object(m));
+    }
+    Value::Object(out)
 }
 
 fn build(
@@ -178,8 +206,7 @@ fn convert_node(nc: &Value, id: &str, blobs: &[&[u8]]) -> Option<Map<String, Val
     copy(&mut m, nc, "mask", "isMask");
     copy(&mut m, nc, "size", "size");
     if let Some(t) = nc.get("transform") {
-        let g = |k: &str, d: f64| t.get(k).and_then(Value::as_f64).unwrap_or(d);
-        m.insert("relativeTransform".into(), json!([[g("m00", 1.0), g("m01", 0.0), g("m02", 0.0)], [g("m10", 0.0), g("m11", 1.0), g("m12", 0.0)]]));
+        m.insert("relativeTransform".into(), matrix_json(t));
     }
     if ty == "CANVAS" {
         copy(&mut m, nc, "backgroundColor", "backgroundColor");
@@ -242,6 +269,9 @@ fn convert_node(nc: &Value, id: &str, blobs: &[&[u8]]) -> Option<Map<String, Val
         let masked = nc.get("frameMaskDisabled").and_then(Value::as_bool) != Some(true);
         m.insert("clipsContent".into(), masked.into());
         convert_stack(&mut m, nc);
+        if let Some(g) = convert_grids(nc) {
+            m.insert("layoutGrids".into(), g);
+        }
     }
     // Child layout.
     if let Some(g) = fnum(nc, "stackChildPrimaryGrow") {
@@ -294,25 +324,149 @@ fn convert_node(nc: &Value, id: &str, blobs: &[&[u8]]) -> Option<Map<String, Val
         }
         "BOOLEAN_OPERATION" => enum_map(&mut m, nc, "booleanOperation", "booleanOperation", &[("XOR", "EXCLUDE")]),
         "INSTANCE" => {
-            if let Some(g) = nc.get("symbolData").and_then(|s| s.get("symbolID")).and_then(guid_str) {
+            let sd = nc.get("symbolData");
+            if let Some(g) = sd.and_then(|s| s.get("symbolID")).and_then(guid_str) {
                 m.insert("componentId".into(), g.into());
             }
-        }
-        "VECTOR" => {
-            let geo: Vec<Value> = rest_import::farr(nc, "fillGeometry")
-                .iter()
-                .filter_map(|g| {
-                    let idx = g.get("commandsBlob")?.as_u64()? as usize;
-                    let path = commands_blob_to_path(blobs.get(idx)?, fstr(g, "windingRule") == Some("EVENODD"));
-                    Some(json!({"path": write_path(&path), "windingRule": fstr(g, "windingRule").unwrap_or("NONZERO")}))
-                })
-                .collect();
-            m.insert("fillGeometry".into(), Value::Array(geo));
+            let ov = override_entries(sd.and_then(|s| s.get("symbolOverrides")), blobs, false);
+            if !ov.is_empty() {
+                m.insert("_overrides".into(), Value::Array(ov));
+            }
+            let derived = override_entries(nc.get("derivedSymbolData").or_else(|| sd.and_then(|s| s.get("derivedSymbolData"))), blobs, true);
+            if !derived.is_empty() {
+                m.insert("_derived".into(), Value::Array(derived));
+            }
         }
         "TEXT" => convert_text(&mut m, nc),
         _ => {}
     }
+    // Precomputed outlines (text keeps none: the renderer lays glyphs out itself).
+    if ty != "TEXT" {
+        for k in ["fillGeometry", "strokeGeometry"] {
+            if let Some(g) = convert_geometry(nc, k, blobs) {
+                m.insert(k.into(), g);
+            }
+        }
+    }
     Some(m)
+}
+
+fn matrix_json(t: &Value) -> Value {
+    let g = |k: &str, d: f64| t.get(k).and_then(Value::as_f64).unwrap_or(d);
+    json!([[g("m00", 1.0), g("m01", 0.0), g("m02", 0.0)], [g("m10", 0.0), g("m11", 1.0), g("m12", 0.0)]])
+}
+
+/// REST geometry list from `fillGeometry` / `strokeGeometry` blob commands.
+/// Winding rule: kiwi `WindingRule` is NONZERO / ODD.
+fn convert_geometry(nc: &Value, key: &str, blobs: &[&[u8]]) -> Option<Value> {
+    let geo: Vec<Value> = rest_import::farr(nc, key)
+        .iter()
+        .filter_map(|g| {
+            let idx = g.get("commandsBlob")?.as_u64()? as usize;
+            let odd = matches!(fstr(g, "windingRule"), Some("ODD" | "EVENODD"));
+            let path = commands_blob_to_path(blobs.get(idx)?, odd);
+            Some(json!({"path": write_path(&path), "windingRule": if odd { "EVENODD" } else { "NONZERO" }}))
+        })
+        .collect();
+    (!geo.is_empty()).then_some(Value::Array(geo))
+}
+
+/// REST `layoutGrids` from kiwi grids: `pattern` (GRID/COLUMNS/ROWS; else `type`,
+/// else `axis` X = columns / Y = rows), `sectionSize`, `gutterSize`, `offset`,
+/// `count` (or `numSections`), `color`, `visible`.
+fn convert_grids(nc: &Value) -> Option<Value> {
+    let grids: Vec<Value> = rest_import::farr(nc, "layoutGrids")
+        .iter()
+        .filter_map(|g| {
+            let is_pat = |s: &&str| matches!(*s, "GRID" | "COLUMNS" | "ROWS");
+            let pattern = fstr(g, "pattern").filter(is_pat).or_else(|| fstr(g, "type").filter(is_pat)).or(match fstr(g, "axis") {
+                Some("X") => Some("COLUMNS"),
+                Some("Y") => Some("ROWS"),
+                _ => None,
+            })?;
+            let mut m = Map::new();
+            m.insert("pattern".into(), pattern.into());
+            copy(&mut m, g, "sectionSize", "sectionSize");
+            copy(&mut m, g, "gutterSize", "gutterSize");
+            copy(&mut m, g, "offset", "offset");
+            copy(&mut m, g, "color", "color");
+            copy(&mut m, g, "visible", "visible");
+            if let Some(c) = g.get("count").or_else(|| g.get("numSections")) {
+                m.insert("count".into(), c.clone());
+            }
+            Some(Value::Object(m))
+        })
+        .collect();
+    (!grids.is_empty()).then_some(Value::Array(grids))
+}
+
+/// `guidPath` as `"s:l"` strings (accepts `{guids: [...]}` or a bare array).
+fn guid_path(o: &Value) -> Vec<String> {
+    let p = o.get("guidPath");
+    let list = p.and_then(|p| p.get("guids")).or(p).and_then(Value::as_array);
+    list.map(|a| a.iter().filter_map(guid_str).collect()).unwrap_or_default()
+}
+
+/// Partial REST node fields from an override / derived-data entry: only keys
+/// present in the entry are emitted.
+fn convert_override(o: &Value, blobs: &[&[u8]]) -> Map<String, Value> {
+    let mut m = Map::new();
+    for k in ["name", "visible", "locked", "opacity", "blendMode", "size", "strokeWeight", "strokeAlign", "cornerRadius"] {
+        copy(&mut m, o, k, k);
+    }
+    copy(&mut m, o, "mask", "isMask");
+    if let Some(t) = o.get("transform") {
+        m.insert("relativeTransform".into(), matrix_json(t));
+    }
+    for (src, dst) in [("fillPaints", "fills"), ("strokePaints", "strokes")] {
+        if o.get(src).is_some() {
+            m.insert(dst.into(), Value::Array(rest_import::farr(o, src).iter().filter_map(convert_paint).collect()));
+        }
+    }
+    if o.get("effects").is_some() {
+        m.insert("effects".into(), Value::Array(rest_import::farr(o, "effects").iter().filter_map(convert_effect).collect()));
+    }
+    for k in ["fillGeometry", "strokeGeometry"] {
+        if let Some(g) = convert_geometry(o, k, blobs) {
+            m.insert(k.into(), g);
+        }
+    }
+    // Text.
+    let mut st = convert_type_style(o, None);
+    st.remove("fills");
+    if let Some(ls) = o.get("letterSpacing") {
+        if fstr(ls, "units") == Some("PERCENT") && fnum(o, "fontSize").is_none() {
+            // Resolved against the target node's own font size when applied.
+            st.remove("letterSpacing");
+            st.insert("letterSpacingPercent".into(), kiwi::clean_f32(fnum(ls, "value").unwrap_or(0.0)));
+        }
+    }
+    for k in ["textAutoResize", "textTruncation", "maxLines"] {
+        copy(&mut st, o, k, k);
+    }
+    if !st.is_empty() {
+        m.insert("style".into(), Value::Object(st));
+    }
+    if let Some(td) = o.get("textData") {
+        if let Some(c) = fstr(td, "characters") {
+            m.insert("characters".into(), c.into());
+        }
+        text_overrides(&mut m, td, fnum(o, "fontSize"));
+    }
+    m
+}
+
+fn override_entries(list: Option<&Value>, blobs: &[&[u8]], derived: bool) -> Vec<Value> {
+    let Some(a) = list.and_then(Value::as_array) else { return Vec::new() };
+    a.iter()
+        .map(|o| {
+            let mut set = convert_override(o, blobs);
+            if derived {
+                set.retain(|k, _| matches!(k.as_str(), "size" | "relativeTransform" | "fillGeometry" | "strokeGeometry"));
+            }
+            json!({"path": guid_path(o), "set": Value::Object(set)})
+        })
+        .collect()
 }
 
 fn convert_stack(m: &mut Map<String, Value>, nc: &Value) {
@@ -460,24 +614,25 @@ fn convert_type_style(o: &Value, base_size: Option<f32>) -> Map<String, Value> {
         m.insert("letterSpacing".into(), kiwi::clean_f32(px));
     }
     if let Some(lh) = o.get("lineHeight") {
-        let v = fnum(lh, "value").unwrap_or(100.0);
-        match fstr(lh, "units") {
-            Some("PIXELS") => {
+        // Kiwi `Number {value, units}`: PIXELS = px; PERCENT = percent of the font
+        // size (100 means exactly 1.0 x font size, NOT auto); RAW = multiplier,
+        // where RAW 1 is Figma's "auto". A missing value also means auto.
+        let intrinsic = |m: &mut Map<String, Value>| {
+            m.insert("lineHeightUnit".into(), "INTRINSIC_%".into());
+        };
+        let percent = |m: &mut Map<String, Value>, p: f32| {
+            m.insert("lineHeightUnit".into(), "FONT_SIZE_%".into());
+            m.insert("lineHeightPercentFontSize".into(), kiwi::clean_f32(p));
+        };
+        match (fnum(lh, "value"), fstr(lh, "units")) {
+            (None, _) => intrinsic(&mut m),
+            (Some(v), Some("PIXELS")) => {
                 m.insert("lineHeightUnit".into(), "PIXELS".into());
                 m.insert("lineHeightPx".into(), kiwi::clean_f32(v));
             }
-            Some("RAW") => {
-                m.insert("lineHeightUnit".into(), "FONT_SIZE_%".into());
-                m.insert("lineHeightPercentFontSize".into(), kiwi::clean_f32(v * 100.0));
-            }
-            _ => {
-                if (v - 100.0).abs() < 1e-3 {
-                    m.insert("lineHeightUnit".into(), "INTRINSIC_%".into());
-                } else {
-                    m.insert("lineHeightUnit".into(), "FONT_SIZE_%".into());
-                    m.insert("lineHeightPercentFontSize".into(), kiwi::clean_f32(v));
-                }
-            }
+            (Some(v), Some("RAW")) if (v - 1.0).abs() < 1e-3 => intrinsic(&mut m),
+            (Some(v), Some("RAW")) => percent(&mut m, v * 100.0),
+            (Some(v), _) => percent(&mut m, v),
         }
     }
     if o.get("fillPaints").is_some() {
@@ -497,19 +652,26 @@ fn convert_text(m: &mut Map<String, Value>, nc: &Value) {
     if let Some(a) = fstr(nc, "textAutoResize") {
         m.insert("textAutoResize".into(), a.into());
     }
+    // textTruncation ENDING and maxLines (kiwi fields of the same names).
+    copy(m, nc, "textTruncation", "textTruncation");
+    copy(m, nc, "maxLines", "maxLines");
     m.insert("style".into(), Value::Object(style));
-    let base_size = fnum(nc, "fontSize");
     if let Some(td) = td {
-        if let Some(ids) = td.get("characterStyleIDs").and_then(Value::as_array) {
-            m.insert("characterStyleOverrides".into(), Value::Array(ids.clone()));
-            let mut table = Map::new();
-            for o in rest_import::farr(td, "styleOverrideTable") {
-                if let Some(sid) = o.get("styleID").and_then(Value::as_u64) {
-                    table.insert(sid.to_string(), Value::Object(convert_type_style(o, base_size)));
-                }
+        text_overrides(m, td, fnum(nc, "fontSize"));
+    }
+}
+
+/// Per-character style ids and the override table from kiwi `textData`.
+fn text_overrides(m: &mut Map<String, Value>, td: &Value, base_size: Option<f32>) {
+    if let Some(ids) = td.get("characterStyleIDs").and_then(Value::as_array) {
+        m.insert("characterStyleOverrides".into(), Value::Array(ids.clone()));
+        let mut table = Map::new();
+        for o in rest_import::farr(td, "styleOverrideTable") {
+            if let Some(sid) = o.get("styleID").and_then(Value::as_u64) {
+                table.insert(sid.to_string(), Value::Object(convert_type_style(o, base_size)));
             }
-            m.insert("styleOverrideTable".into(), Value::Object(table));
         }
+        m.insert("styleOverrideTable".into(), Value::Object(table));
     }
 }
 

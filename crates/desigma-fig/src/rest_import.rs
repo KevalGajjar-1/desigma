@@ -129,6 +129,9 @@ fn parse_effect(v: &Value) -> Option<Effect> {
 }
 
 fn parse_grid(v: &Value) -> Option<LayoutGrid> {
+    if fbool(v, "visible") == Some(false) {
+        return None; // the model has no per-grid visibility flag
+    }
     let col = v.get("color").and_then(color).unwrap_or(Color::rgba(255, 0, 0, 25));
     let count = v.get("count").and_then(Value::as_u64).unwrap_or(5) as u32;
     let gutter = fnum(v, "gutterSize").unwrap_or(0.0);
@@ -192,6 +195,10 @@ pub(crate) fn apply_type_style(ts: &mut TextStyle, v: &Value) {
     if let Some(p) = fnum(v, "paragraphSpacing") {
         ts.paragraph_spacing = p;
     }
+    // Percentage spacing from a partial `.fig` override: resolved against the final size.
+    if let Some(p) = fnum(v, "letterSpacingPercent") {
+        ts.letter_spacing = p / 100.0 * ts.font_size;
+    }
     match fstr(v, "lineHeightUnit") {
         Some("PIXELS") => {
             if let Some(px) = fnum(v, "lineHeightPx") {
@@ -248,6 +255,35 @@ struct Ctx {
     /// (instance, REST componentId)
     instances: Vec<(NodeId, String)>,
     component_keys: BTreeMap<String, String>,
+    /// `.fig` instance overrides / derived data, keyed by instance.
+    overrides: BTreeMap<NodeId, Overrides>,
+    next_clone: u64,
+}
+
+/// Overrides carried on `.fig` instance JSON as `_overrides` / `_derived`:
+/// `[{"path": ["1:6", ...], "set": {<partial REST node fields>}}]`.
+#[derive(Default)]
+struct Overrides {
+    set: Vec<OverrideEntry>,
+    derived: Vec<OverrideEntry>,
+}
+
+struct OverrideEntry {
+    path: Vec<String>,
+    set: Value,
+}
+
+fn parse_override_entries(v: Option<&Value>) -> Vec<OverrideEntry> {
+    v.and_then(Value::as_array)
+        .map(|a| {
+            a.iter()
+                .filter_map(|e| {
+                    let path = e.get("path")?.as_array()?.iter().filter_map(|s| s.as_str().map(String::from)).collect();
+                    Some(OverrideEntry { path, set: e.get("set")?.clone() })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 #[derive(Clone, Copy)]
@@ -311,6 +347,8 @@ pub(crate) fn import_rest_value(v: &Value, expand_instances: bool) -> Result<Doc
         ids: BTreeMap::new(),
         instances: Vec::new(),
         component_keys: BTreeMap::new(),
+        overrides: BTreeMap::new(),
+        next_clone: 0,
     };
     if let Some(comps) = v.get("components").and_then(Value::as_object) {
         for (id, c) in comps {
@@ -327,6 +365,7 @@ pub(crate) fn import_rest_value(v: &Value, expand_instances: bool) -> Result<Doc
         cx.import_page(p);
     }
     cx.finish(expand_instances);
+    cx.doc.style_meta = style_meta(v.get("styles"), &cx.doc);
     Ok(cx.doc)
 }
 
@@ -371,6 +410,10 @@ impl Ctx {
             if let Some(cid) = fstr(v, "componentId") {
                 self.instances.push((id, cid.to_string()));
             }
+            let ov = Overrides { set: parse_override_entries(v.get("_overrides")), derived: parse_override_entries(v.get("_derived")) };
+            if !ov.set.is_empty() || !ov.derived.is_empty() {
+                self.overrides.insert(id, ov);
+            }
         }
         if container {
             let info = ParentInfo { origin, layout: my_layout };
@@ -383,6 +426,9 @@ impl Ctx {
     /// Returns the node and, for auto-layout frames, its direction.
     fn build_node(&mut self, id: NodeId, ty: &str, v: &Value, pinfo: ParentInfo) -> (Node, Option<LayoutDirection>) {
         let frame = || frame_props(v);
+        // Text outlines (glyph paths) are not stored; the renderer lays text out itself.
+        let fill_geo = (ty != "TEXT").then(|| parse_geometry(farr(v, "fillGeometry"))).filter(|g| !g.is_empty());
+        let stroke_geo = (ty != "TEXT").then(|| parse_geometry(farr(v, "strokeGeometry"))).filter(|g| !g.is_empty());
         let kind = match ty {
             "FRAME" => NodeKind::Frame(frame()),
             "GROUP" => NodeKind::Group,
@@ -412,7 +458,7 @@ impl Ctx {
                 count: v.get("pointCount").and_then(Value::as_u64).unwrap_or(5).clamp(3, 1000) as u32,
                 inner_ratio: fnum(v, "starInnerRadius").unwrap_or(0.382),
             },
-            "VECTOR" => NodeKind::Vector { paths: parse_geometry(farr(v, "fillGeometry")) },
+            "VECTOR" => NodeKind::Vector { paths: fill_geo.clone().unwrap_or_default() },
             "TEXT" => NodeKind::Text(text_props(v)),
             "BOOLEAN_OPERATION" => NodeKind::BooleanOp(match fstr(v, "booleanOperation") {
                 Some("SUBTRACT") => BooleanOp::Subtract,
@@ -438,6 +484,8 @@ impl Ctx {
         n.opacity = fnum(v, "opacity").unwrap_or(1.0);
         n.blend = fstr(v, "blendMode").map(blend).unwrap_or(default_blend);
         n.is_mask = fbool(v, "isMask").unwrap_or(false);
+        n.fill_geometry = fill_geo;
+        n.stroke_geometry = stroke_geo;
 
         // Placement.
         let bbox = v.get("absoluteBoundingBox");
@@ -566,15 +614,62 @@ impl Ctx {
 
     fn finish(&mut self, expand_instances: bool) {
         let links = std::mem::take(&mut self.instances);
+        let mut targets: BTreeMap<NodeId, NodeId> = BTreeMap::new();
         for (inst, cid) in links {
             let Some(&comp) = self.ids.get(&cid) else { continue };
             if let Some(NodeKind::Instance { component, .. }) = self.doc.get_mut(inst).map(|n| &mut n.kind) {
                 *component = Some(comp);
             }
-            if expand_instances {
-                self.expand_instance(inst, comp);
+            targets.insert(inst, comp);
+        }
+        if !expand_instances {
+            return;
+        }
+        // Clone ids are handed out sequentially above every imported id, in
+        // instance order, so the same input always yields the same ids.
+        self.next_clone = self.doc.nodes.keys().next_back().map(|k| k.0).unwrap_or(0) + 1;
+        let mut done = BTreeSet::new();
+        let order: Vec<NodeId> = targets.keys().copied().collect();
+        for inst in order {
+            self.expand_rec(inst, &targets, &mut done);
+        }
+        // Instances whose component is unknown still honour their own overrides.
+        let rest: Vec<NodeId> = self.overrides.keys().copied().filter(|i| !done.contains(i)).collect();
+        for inst in rest {
+            self.apply_overrides(inst);
+        }
+    }
+
+    fn fresh_id(&mut self) -> NodeId {
+        let id = NodeId(self.next_clone);
+        self.next_clone += 1;
+        self.doc.reserve_ids(id);
+        id
+    }
+
+    /// Expands `inst`, first expanding instances nested inside its component so
+    /// their (overridden) children are copied too.
+    fn expand_rec(&mut self, inst: NodeId, targets: &BTreeMap<NodeId, NodeId>, done: &mut BTreeSet<NodeId>) {
+        if !done.insert(inst) {
+            return;
+        }
+        let Some(&comp) = targets.get(&inst) else { return };
+        let mut stack = vec![comp];
+        let mut nested = Vec::new();
+        while let Some(n) = stack.pop() {
+            if let Some(node) = self.doc.get(n) {
+                if n != comp && targets.contains_key(&n) {
+                    nested.push(n);
+                }
+                stack.extend(node.children.iter().copied());
             }
         }
+        nested.sort();
+        for n in nested {
+            self.expand_rec(n, targets, done);
+        }
+        self.expand_instance(inst, comp);
+        self.apply_overrides(inst);
     }
 
     /// Deep-copies the component's children under an empty instance.
@@ -596,7 +691,7 @@ impl Ctx {
         }
         *budget -= 1;
         let Some(orig) = self.doc.get(src).cloned() else { return };
-        let id = self.doc.alloc_id();
+        let id = self.fresh_id();
         let mut n = orig.clone();
         n.id = id;
         n.children.clear();
@@ -612,6 +707,200 @@ impl Ctx {
             }
         }
     }
+
+    /// Applies `.fig` `symbolOverrides` and then `derivedSymbolData` to the
+    /// instance's copied subtree.
+    fn apply_overrides(&mut self, inst: NodeId) {
+        let Some(ov) = self.overrides.remove(&inst) else { return };
+        for e in &ov.set {
+            if let Some(t) = self.resolve_path(inst, &e.path) {
+                self.apply_override(t, &e.set, false);
+            }
+        }
+        // Figma's computed results for resized instances win over the raw overrides.
+        for e in &ov.derived {
+            if let Some(t) = self.resolve_path(inst, &e.path) {
+                self.apply_override(t, &e.set, true);
+            }
+        }
+    }
+
+    /// Walks a `guidPath` (ids of the nodes inside the component, outermost
+    /// first) down from the instance. Clone source ids look like
+    /// `I<instance>;<original>`; only the part after the last `;` identifies the
+    /// original node.
+    fn resolve_path(&self, inst: NodeId, path: &[String]) -> Option<NodeId> {
+        fn tail(n: &Node) -> &str {
+            let s = n.source_id.as_deref().unwrap_or("");
+            s.rsplit(';').next().unwrap_or(s)
+        }
+        let mut cur = inst;
+        for g in path {
+            let node = self.doc.get(cur)?;
+            let direct = node.children.iter().copied().find(|c| self.doc.get(*c).map(|n| tail(n) == g).unwrap_or(false));
+            cur = match direct {
+                Some(c) => c,
+                None => {
+                    // Tolerate paths that skip intermediate containers.
+                    let mut stack: Vec<NodeId> = node.children.iter().rev().copied().collect();
+                    let mut found = None;
+                    while let Some(n) = stack.pop() {
+                        let Some(nn) = self.doc.get(n) else { continue };
+                        if tail(nn) == g {
+                            found = Some(n);
+                            break;
+                        }
+                        stack.extend(nn.children.iter().rev().copied());
+                    }
+                    found?
+                }
+            };
+        }
+        Some(cur)
+    }
+
+    /// Applies partial REST node fields to an existing node. `derived_only`
+    /// restricts to size, transform and geometry.
+    fn apply_override(&mut self, id: NodeId, set: &Value, derived_only: bool) {
+        let Some(n) = self.doc.get_mut(id) else { return };
+        let keep = |k: &str| !derived_only || matches!(k, "size" | "relativeTransform" | "fillGeometry" | "strokeGeometry");
+        let has = |k: &str| keep(k) && set.get(k).is_some();
+        if has("size") {
+            if let Some(sz) = set.get("size").and_then(vec2) {
+                n.size = sz;
+            }
+        }
+        if has("relativeTransform") {
+            if let Some(t) = set.get("relativeTransform").and_then(parse_transform) {
+                n.transform = t;
+            }
+        }
+        if has("fillGeometry") {
+            let g = parse_geometry(farr(set, "fillGeometry"));
+            if let NodeKind::Vector { paths } = &mut n.kind {
+                *paths = g.clone();
+            }
+            n.fill_geometry = Some(g).filter(|g| !g.is_empty());
+        }
+        if has("strokeGeometry") {
+            n.stroke_geometry = Some(parse_geometry(farr(set, "strokeGeometry"))).filter(|g| !g.is_empty());
+        }
+        if derived_only {
+            return;
+        }
+        if let Some(s) = fstr(set, "name") {
+            n.name = s.to_string();
+        }
+        if let Some(b) = fbool(set, "visible") {
+            n.visible = b;
+        }
+        if let Some(b) = fbool(set, "locked") {
+            n.locked = b;
+        }
+        if let Some(o) = fnum(set, "opacity") {
+            n.opacity = o;
+        }
+        if let Some(b) = fstr(set, "blendMode") {
+            n.blend = blend(b);
+        }
+        if let Some(b) = fbool(set, "isMask") {
+            n.is_mask = b;
+        }
+        if set.get("fills").is_some() {
+            let fills = parse_paints(set.get("fills"));
+            match &mut n.kind {
+                NodeKind::Text(t) => t.style.fills = fills,
+                _ => n.fills = fills,
+            }
+        }
+        if set.get("strokes").is_some() {
+            n.stroke.paints = parse_paints(set.get("strokes"));
+        }
+        if let Some(w) = fnum(set, "strokeWeight") {
+            n.stroke.weight = w;
+        }
+        if let Some(a) = fstr(set, "strokeAlign") {
+            n.stroke.align = match a {
+                "CENTER" => StrokeAlign::Center,
+                "OUTSIDE" => StrokeAlign::Outside,
+                _ => StrokeAlign::Inside,
+            };
+        }
+        if set.get("effects").is_some() {
+            n.effects = farr(set, "effects").iter().filter_map(parse_effect).collect();
+        }
+        if let Some(r) = set.get("rectangleCornerRadii").and_then(Value::as_array).filter(|a| a.len() == 4) {
+            for (i, x) in r.iter().enumerate() {
+                n.corner_radii[i] = num(x).unwrap_or(0.0);
+            }
+        } else if let Some(r) = fnum(set, "cornerRadius") {
+            n.corner_radii = [r; 4];
+        }
+        if let NodeKind::Text(t) = &mut n.kind {
+            if let Some(st) = set.get("style") {
+                apply_type_style(&mut t.style, st);
+                if let Some(a) = fstr(st, "textAutoResize") {
+                    t.auto_resize = auto_resize(a);
+                }
+                if fstr(st, "textTruncation") == Some("ENDING") {
+                    t.auto_resize = TextAutoResize::Truncate;
+                }
+                if let Some(m) = st.get("maxLines").and_then(Value::as_u64) {
+                    t.max_lines = Some(m.min(u32::MAX as u64) as u32).filter(|m| *m > 0);
+                }
+            }
+            if let Some(c) = fstr(set, "characters") {
+                if c != t.content {
+                    t.runs.clear(); // byte ranges no longer apply
+                }
+                t.content = c.to_string();
+            }
+            if set.get("characterStyleOverrides").is_some() {
+                let ids: Vec<u64> = farr(set, "characterStyleOverrides").iter().map(|x| x.as_u64().unwrap_or(0)).collect();
+                t.runs = build_runs(&t.content, &t.style, &ids, set.get("styleOverrideTable"));
+            }
+        }
+    }
+}
+
+/// Library style metadata from the top-level REST `styles` map. A FILL style
+/// that is only ever used as a stroke gets [`StyleProperty::Stroke`].
+fn style_meta(styles: Option<&Value>, doc: &Document) -> BTreeMap<String, StyleMeta> {
+    let mut out = BTreeMap::new();
+    let Some(map) = styles.and_then(Value::as_object) else { return out };
+    let mut used_as_fill: BTreeSet<&str> = BTreeSet::new();
+    let mut used_as_stroke: BTreeSet<&str> = BTreeSet::new();
+    for n in doc.nodes.values() {
+        for (k, sid) in &n.style_refs {
+            match k.as_str() {
+                "stroke" => used_as_stroke.insert(sid),
+                "fill" => used_as_fill.insert(sid),
+                _ => continue,
+            };
+        }
+    }
+    for (id, m) in map {
+        if !doc.styles.contains_key(id) {
+            continue;
+        }
+        let property = match fstr(m, "styleType") {
+            Some("TEXT") => StyleProperty::Text,
+            Some("EFFECT") => StyleProperty::Effect,
+            Some("GRID") => StyleProperty::Grid,
+            _ if used_as_stroke.contains(id.as_str()) && !used_as_fill.contains(id.as_str()) => StyleProperty::Stroke,
+            _ => StyleProperty::Fill,
+        };
+        out.insert(
+            id.clone(),
+            StyleMeta {
+                name: fstr(m, "name").unwrap_or("").to_string(),
+                key: fstr(m, "key").map(String::from).filter(|k| !k.is_empty()),
+                description: fstr(m, "description").unwrap_or("").to_string(),
+                property,
+            },
+        );
+    }
+    out
 }
 
 fn abs_origin(v: &Value) -> Option<Vec2> {
@@ -686,13 +975,22 @@ fn text_props(v: &Value) -> TextProps {
     if v.get("fills").is_some() {
         style.fills = parse_paints(v.get("fills"));
     }
-    let auto = fstr(v, "textAutoResize").or_else(|| st.and_then(|s| fstr(s, "textAutoResize"))).map(auto_resize).unwrap_or(TextAutoResize::None);
+    let mut auto = fstr(v, "textAutoResize").or_else(|| st.and_then(|s| fstr(s, "textAutoResize"))).map(auto_resize).unwrap_or(TextAutoResize::None);
+    if fstr(v, "textTruncation").or_else(|| st.and_then(|s| fstr(s, "textTruncation"))) == Some("ENDING") {
+        auto = TextAutoResize::Truncate;
+    }
+    let max_lines = v.get("maxLines").or_else(|| st.and_then(|s| s.get("maxLines"))).and_then(Value::as_u64).filter(|n| *n > 0).map(|n| n.min(u32::MAX as u64) as u32);
 
-    let mut runs = Vec::new();
     let overrides: Vec<u64> = farr(v, "characterStyleOverrides").iter().map(|x| x.as_u64().unwrap_or(0)).collect();
+    let runs = build_runs(&content, &style, &overrides, v.get("styleOverrideTable"));
+    TextProps { content, style, runs, auto_resize: auto, max_lines }
+}
+
+/// Style runs over byte ranges from per-UTF-16-unit override ids.
+fn build_runs(content: &str, base: &TextStyle, overrides: &[u64], table: Option<&Value>) -> Vec<TextRun> {
+    let mut runs = Vec::new();
     if overrides.iter().any(|&x| x != 0) {
-        let table = v.get("styleOverrideTable");
-        let offs = utf16_to_byte_offsets(&content);
+        let offs = utf16_to_byte_offsets(content);
         let units = offs.len() - 1;
         let mut i = 0;
         while i < overrides.len().min(units) {
@@ -703,7 +1001,7 @@ fn text_props(v: &Value) -> TextProps {
             }
             if sid != 0 {
                 if let Some(o) = table.and_then(|t| t.get(sid.to_string())) {
-                    let mut rs = style.clone();
+                    let mut rs = base.clone();
                     apply_type_style(&mut rs, o);
                     let (s, e) = (offs[i], offs[j]);
                     if e > s {
@@ -714,7 +1012,7 @@ fn text_props(v: &Value) -> TextProps {
             i = j;
         }
     }
-    TextProps { content, style, runs, auto_resize: auto, max_lines: None }
+    runs
 }
 
 fn layout_child(v: &Value, parent: Option<LayoutDirection>, kind: &NodeKind) -> LayoutChild {

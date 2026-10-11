@@ -84,8 +84,7 @@ pub fn parse_path(d: &str, fill_rule: FillRule) -> Path {
     let mut last_cmd = b' ';
     let mut cmd = b' ';
 
-    'outer: loop {
-        let Some(c) = lx.peek() else { break };
+    'outer: while let Some(c) = lx.peek() {
         if c.is_ascii_alphabetic() {
             cmd = c;
             lx.i += 1;

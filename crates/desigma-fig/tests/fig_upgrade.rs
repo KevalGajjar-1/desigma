@@ -1,0 +1,211 @@
+//! `.fig` import of geometry, styles, grids, text clamping, line height and instance overrides.
+use desigma_doc::*;
+use desigma_fig::container::Compression;
+use desigma_fig::testkit::upgrade_fig;
+use desigma_fig::{export_rest_json, import_fig, import_rest_json};
+
+fn doc() -> Document {
+    import_fig(&upgrade_fig(Compression::Zstd)).unwrap()
+}
+
+fn find<'a>(doc: &'a Document, name: &str) -> &'a Node {
+    doc.nodes.values().find(|n| n.name == name).unwrap_or_else(|| panic!("no node named {name}"))
+}
+
+fn child<'a>(doc: &'a Document, parent: &Node, name: &str) -> &'a Node {
+    parent.children.iter().map(|c| doc.get(*c).unwrap()).find(|n| n.name == name).unwrap_or_else(|| panic!("{} has no child {name}", parent.name))
+}
+
+fn text(n: &Node) -> &TextProps {
+    match &n.kind {
+        NodeKind::Text(t) => t,
+        _ => panic!("{} is not text", n.name),
+    }
+}
+
+fn solid(n: &[Paint]) -> Color {
+    match n[0].kind {
+        PaintKind::Solid(c) => c,
+        _ => panic!("not solid"),
+    }
+}
+
+#[test]
+fn fill_and_stroke_geometry_from_blobs() {
+    let d = doc();
+    let b = find(&d, "Bool");
+    let fg = b.fill_geometry.as_ref().expect("fill geometry on boolean op");
+    assert_eq!(fg[0].fill_rule, FillRule::NonZero);
+    assert_eq!(fg[0].cmds.len(), 4); // M L L Z
+    let sg = b.stroke_geometry.as_ref().expect("stroke geometry on boolean op");
+    assert_eq!(sg[0].fill_rule, FillRule::EvenOdd, "kiwi WindingRule ODD is even-odd");
+    assert_eq!(sg[0].cmds.len(), 5); // M L L L Z
+    assert!(find(&d, "Star").fill_geometry.is_some());
+    assert!(find(&d, "Star").stroke_geometry.is_none());
+    assert!(find(&d, "Card").fill_geometry.is_none());
+}
+
+#[test]
+fn style_nodes_become_style_meta() {
+    let d = doc();
+    let bool_node = find(&d, "Bool");
+    let fill = &bool_node.style_refs["fill"];
+    let stroke = &bool_node.style_refs["stroke"];
+    assert_eq!(fill, "2:100");
+    assert_eq!(d.style_meta[fill], StyleMeta { name: "Brand/Primary".into(), key: Some("key-primary".into()), description: "Main brand fill".into(), property: StyleProperty::Fill });
+    // A FILL style used only through styleIdForStrokeFill is a stroke style.
+    assert_eq!(d.style_meta[stroke].property, StyleProperty::Stroke);
+    assert_eq!(d.style_meta[stroke].key, None);
+    assert_eq!(d.style_name(stroke), "Border/Strong");
+    let text_style = &find(&d, "Clamp").style_refs["text"];
+    assert_eq!(d.style_meta[text_style].property, StyleProperty::Text);
+    assert_eq!(d.style_meta[text_style].description, "Body copy");
+    assert!(matches!(d.styles[text_style], Style::Text(_)));
+}
+
+#[test]
+fn linear_blend_modes_map_in_fig() {
+    let d = doc();
+    assert_eq!(find(&d, "Bool").blend, BlendMode::LinearBurn);
+    assert_eq!(find(&d, "Star").blend, BlendMode::LinearDodge);
+    assert_eq!(child(&d, find(&d, "Card A"), "Bg").blend, BlendMode::LinearDodge, "via an instance override");
+}
+
+#[test]
+fn text_truncation_and_max_lines() {
+    let d = doc();
+    let t = text(find(&d, "Clamp"));
+    assert_eq!(t.auto_resize, TextAutoResize::Truncate);
+    assert_eq!(t.max_lines, Some(2));
+    let p = text(find(&d, "Plain"));
+    assert_eq!((p.auto_resize, p.max_lines), (TextAutoResize::None, None));
+}
+
+#[test]
+fn line_height_semantics() {
+    let d = doc();
+    let lh = |n: &str| text(find(&d, n)).style.line_height;
+    assert_eq!(lh("Clamp"), LineHeight::Percent(100.0), "PERCENT 100 is 100% of the font size, not auto");
+    assert_eq!(lh("LhPct"), LineHeight::Percent(150.0));
+    assert_eq!(lh("LhAuto"), LineHeight::Auto, "RAW 1 is auto");
+    assert_eq!(lh("LhNone"), LineHeight::Auto, "absent is auto");
+    assert_eq!(lh("LhPx"), LineHeight::Pixels(18.0));
+}
+
+#[test]
+fn layout_grids() {
+    let d = doc();
+    let g = &find(&d, "Grids").kind.frame_props().unwrap().grids;
+    assert_eq!(g.len(), 2, "the invisible rows grid is dropped");
+    assert!(matches!(&g[0], LayoutGrid::Columns { count: 4, gutter, offset, color } if *gutter == 8.0 && *offset == 2.0 && (color.a - 0.1).abs() < 1e-6));
+    assert!(matches!(&g[1], LayoutGrid::Grid { size, .. } if *size == 10.0));
+}
+
+#[test]
+fn instance_overrides_apply_to_the_copy_only() {
+    let d = doc();
+    let comp = find(&d, "Card");
+    assert_eq!(text(child(&d, comp, "Label")).content, "Old", "the component is untouched");
+
+    let a = find(&d, "Card A");
+    assert_eq!(a.children.len(), 3);
+    let label = child(&d, a, "Label");
+    let t = text(label);
+    assert_eq!(t.content, "New \u{1F600}");
+    assert_eq!(solid(&t.style.fills), Color { r: 1.0, g: 0.0, b: 0.0, a: 1.0 });
+    assert!((t.style.letter_spacing - 5.0).abs() < 1e-4, "50% of the target's 10px font");
+    assert_eq!(label.opacity, 0.75);
+    assert_eq!(label.source_id.as_deref(), Some("I2:40;2:11"));
+
+    let bg = child(&d, a, "Bg");
+    assert!(!bg.visible);
+    assert_eq!(bg.corner_radii, [4.0; 4]);
+    // derivedSymbolData: size/transform/geometry, but never names.
+    assert_eq!(bg.size, Vec2::new(200.0, 80.0));
+    assert_eq!(bg.transform.translation(), Vec2::new(5.0, 6.0));
+    assert!(bg.fill_geometry.is_some());
+
+    let inner = child(&d, a, "Inner");
+    let dot = child(&d, inner, "Dot");
+    assert_eq!(dot.size, Vec2::new(7.0, 7.0));
+    assert_eq!(solid(&dot.fills), Color { r: 0.0, g: 0.0, b: 1.0, a: 1.0 });
+    assert_eq!(comp_dot(&d).size, Vec2::new(5.0, 5.0));
+
+    // Another instance of the same component is independent.
+    let b = find(&d, "Card B");
+    assert_eq!(text(child(&d, b, "Label")).content, "Old");
+    assert!(child(&d, b, "Bg").visible);
+}
+
+fn comp_dot(d: &Document) -> &Node {
+    let comp = find(d, "Card");
+    child(d, child(d, comp, "Inner"), "Dot")
+}
+
+#[test]
+fn nested_instances_resolve_multi_step_paths() {
+    let d = doc();
+    // The wrapper's own nested instance carries its override ...
+    let wrapper = find(&d, "Wrapper");
+    let card_in = child(&d, wrapper, "CardIn");
+    assert_eq!(text(child(&d, card_in, "Label")).content, "Inner text");
+    // ... and an instance of the wrapper can override through two levels.
+    let wi = find(&d, "WrapInst");
+    let copy_in = child(&d, wi, "CardIn");
+    assert!(matches!(copy_in.kind, NodeKind::Instance { .. }));
+    assert_eq!(text(child(&d, copy_in, "Label")).content, "Deep");
+    // The wrapper's nested copy is not affected by the outer override.
+    assert_eq!(text(child(&d, card_in, "Label")).content, "Inner text");
+}
+
+#[test]
+fn ids_are_deterministic_across_imports() {
+    let bytes = upgrade_fig(Compression::Deflate);
+    let a = import_fig(&bytes).unwrap();
+    let b = import_fig(&bytes).unwrap();
+    assert_eq!(a.nodes.keys().collect::<Vec<_>>(), b.nodes.keys().collect::<Vec<_>>());
+    let map = |d: &Document| d.nodes.iter().map(|(k, n)| (*k, n.source_id.clone(), n.name.clone(), n.parent)).collect::<Vec<_>>();
+    assert_eq!(map(&a), map(&b));
+    assert_eq!(a.nodes, b.nodes);
+    // Clone ids are dense and above every imported id; further allocation does not collide.
+    let mut a = a;
+    let fresh = a.alloc_id();
+    assert!(!a.nodes.contains_key(&fresh));
+    assert!(fresh > *a.nodes.keys().next_back().unwrap());
+    // All instance copies carry the Figma `I<instance>;<node>` source id form.
+    assert!(a.nodes.values().any(|n| n.source_id.as_deref().is_some_and(|s| s.starts_with("I2:30;"))));
+}
+
+#[test]
+fn fig_round_trips_through_rest_export() {
+    let d = doc();
+    let json = export_rest_json(&d);
+    let again = import_rest_json(&json.to_string()).unwrap();
+    assert_eq!(d.nodes.len(), again.nodes.len());
+    assert_eq!(d.style_meta, again.style_meta);
+    assert_eq!(json, export_rest_json(&again), "export is a fixed point after re-import");
+    let bool_node = find(&again, "Bool");
+    assert_eq!(bool_node.fill_geometry, find(&d, "Bool").fill_geometry);
+    assert_eq!(bool_node.stroke_geometry, find(&d, "Bool").stroke_geometry);
+    assert_eq!(text(find(&again, "Clamp")).max_lines, Some(2));
+    assert_eq!(text(find(&again, "Clamp")).auto_resize, TextAutoResize::Truncate);
+    assert_eq!(text(find(&again, "Clamp")).style.line_height, LineHeight::Percent(100.0));
+    assert_eq!(text(find(&again, "LhAuto")).style.line_height, LineHeight::Auto);
+}
+
+#[test]
+fn corrupted_override_data_never_panics() {
+    let bytes = upgrade_fig(Compression::Deflate);
+    let mut x = 0x9E3779B9u32;
+    for _ in 0..300 {
+        let mut b = bytes.clone();
+        for _ in 0..3 {
+            x ^= x << 13;
+            x ^= x >> 17;
+            x ^= x << 5;
+            let i = x as usize % b.len();
+            b[i] ^= (x >> 8) as u8 | 1;
+        }
+        let _ = import_fig(&b);
+    }
+}
