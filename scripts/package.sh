@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+# Package the release binaries for one target.
+#
+#   scripts/package.sh <target-triple> <version> [bin-dir]
+#
+# Expects `desigma` and `desigma-diff` already built in release mode. bin-dir
+# defaults to target/<triple>/release, falling back to target/release (a plain
+# `cargo build --release` without --target). Writes into dist/:
+#   desigma-<version>-<triple>.zip     (Windows) or .tar.gz (everything else)
+#   <archive>.sha256                   (checksum line; CI merges these into SHA256SUMS)
+set -euo pipefail
+
+target=${1:?usage: package.sh <target-triple> <version> [bin-dir]}
+version=${2:?usage: package.sh <target-triple> <version> [bin-dir]}
+version=${version#v}
+bin_dir=${3:-target/$target/release}
+[ -d "$bin_dir" ] || bin_dir=target/release
+
+case "$target" in
+  *windows*) exe=.exe; fmt=zip ;;
+  *) exe=; fmt=tar.gz ;;
+esac
+
+name=desigma-$version-$target
+root=$(pwd)
+stage=$root/dist/$name
+rm -rf "$stage"
+mkdir -p "$stage"
+
+for bin in desigma desigma-diff; do
+  cp "$bin_dir/$bin$exe" "$stage/"
+done
+cp LICENSE-MIT LICENSE-APACHE README.md "$stage/"
+
+cd "$root/dist"
+if [ "$fmt" = zip ]; then
+  archive=$name.zip
+  rm -f "$archive"
+  if command -v zip >/dev/null 2>&1; then
+    zip -qr "$archive" "$name"
+  elif command -v 7z >/dev/null 2>&1; then
+    7z a -tzip -bso0 "$archive" "$name"
+  else
+    python3 -m zipfile -c "$archive" "$name" 2>/dev/null || python -m zipfile -c "$archive" "$name"
+  fi
+else
+  archive=$name.tar.gz
+  tar -czf "$archive" "$name"
+fi
+rm -rf "$stage"
+
+if command -v sha256sum >/dev/null 2>&1; then
+  sha256sum "$archive" > "$archive.sha256"
+else
+  shasum -a 256 "$archive" > "$archive.sha256"
+fi
+
+echo "packaged dist/$archive"
+cat "$archive.sha256"

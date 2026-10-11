@@ -3,6 +3,7 @@
 .DS_Store
 *.fig.tmp
 /out
+/dist
 /.claude/
 
 # Figma UI captures: local pixel references only, not redistributed
