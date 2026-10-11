@@ -372,7 +372,8 @@ fn dropped_into_frame_on_move() {
 
 #[test]
 fn color_swatch_opens_picker_without_panic() {
-    let mut s = Sim::with(Options { select: Some("Card".into()), ..Default::default() });
+    // (the demo Card's fill is bound to a variable, so use a plain layer)
+    let mut s = Sim::with(Options { select: Some("Hero".into()), ..Default::default() });
     let sw = s.rect_of("sw:false:0");
     s.click(sw.center());
     assert!(s.app().props.picker.is_some());
@@ -702,5 +703,6 @@ fn text_tool_auto_resizes_with_real_measurement() {
 mod components;
 mod menus;
 mod proto;
+mod variables;
 
 mod assets_thumbs;
