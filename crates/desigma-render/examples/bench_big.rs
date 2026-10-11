@@ -136,6 +136,10 @@ fn stats(v: &[f64]) -> String {
 }
 
 fn main() {
+    if std::env::var("BENCH_REFERENCE_FX").is_ok() {
+        desigma_render::set_fast_effects(false);
+        println!("(original blur and shadow implementation)");
+    }
     let (mut doc, page, leaves) = big_doc();
     println!("nodes: {}   viewport {W}x{H}   threads: {}", doc.nodes.len(), std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1));
     let mut pm = Pixmap::new(W, H).unwrap();

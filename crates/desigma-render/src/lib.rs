@@ -14,6 +14,9 @@ mod effects;
 mod geom;
 mod index;
 mod paint;
+mod shadow;
+#[cfg(test)]
+mod shadow_tests;
 mod text;
 mod tiles;
 
@@ -25,6 +28,35 @@ pub use text::{font_generation, load_font_data, register_font, resolve_font, Res
 pub use tiles::{Tile, TileBudget, TileCache, TileFrame, TileKey, TILE_SIZE};
 pub use tiny_skia;
 use tiny_skia as sk;
+
+/// Benchmark and test hook: `false` switches blurs and shadows back to the
+/// original unoptimised implementation (same API, slower).
+#[doc(hidden)]
+pub fn set_fast_effects(on: bool) {
+    blur::set_reference_mode(!on);
+}
+
+/// Benchmark hook: blurs `pm` with the optimised or the original blur.
+#[doc(hidden)]
+pub fn bench_blur(pm: &mut tiny_skia::Pixmap, sigma: f32, reference: bool, margined: bool) {
+    if reference {
+        blur::gaussian_blur_reference(pm, sigma);
+    } else {
+        blur::gaussian_blur_at(pm, sigma, (0, 0), if margined { blur::Edges::Margined } else { blur::Edges::Exact });
+    }
+}
+
+/// Number of blurred shadow masks currently cached (diagnostics).
+#[doc(hidden)]
+pub fn shadow_cache_len() -> usize {
+    shadow::cached_patches()
+}
+
+/// Empties the shadow mask cache (diagnostics).
+#[doc(hidden)]
+pub fn clear_shadow_cache() {
+    shadow::clear_cache();
+}
 
 /// Maps page space to device pixels: device = (page - offset) * zoom * dpr.
 #[derive(Clone, Copy, Debug)]
@@ -52,6 +84,7 @@ pub fn render_page(doc: &Document, page: NodeId, vp: &Viewport, target: &mut tin
     let Some(p) = doc.get(page) else { return };
     let s = vp.zoom * vp.dpr;
     let ts = sk::Transform::from_row(s, 0.0, 0.0, s, -vp.offset.x * s, -vp.offset.y * s);
+    effects::set_grid_origin(&ts);
     let r = Renderer { doc, env: PaintEnv { doc }, cull: None };
     r.draw_children(&p.children, ts, target, None, None);
 }
@@ -78,6 +111,7 @@ pub(crate) fn render_with_transform(doc: &Document, page: NodeId, ts: sk::Transf
     };
     target.fill(bg);
     let Some(p) = doc.get(page) else { return };
+    effects::set_grid_origin(&ts);
     let cull = index.map(|index| {
         // page-space window covered by the target (1 device px of slack)
         let (w, h) = (target.width() as f32, target.height() as f32);
@@ -102,6 +136,7 @@ pub fn render_node(doc: &Document, node: NodeId, scale: f32) -> Option<tiny_skia
     let mut pm = tiny_skia::Pixmap::new(w, h)?;
     let r = Renderer { doc, env: PaintEnv { doc }, cull: None };
     let ts = sk::Transform::from_scale(scale, scale);
+    effects::set_grid_origin(&ts);
     if let NodeKind::Page { background } = &n.kind {
         pm.fill(paint::sk_color(background, 1.0));
         r.draw_children(&n.children, ts, &mut pm, None, None);
@@ -310,6 +345,29 @@ impl Renderer<'_> {
 
     // ----- node body ------------------------------------------------------
 
+    /// Device rectangle, corner radius and fill alpha when the node's drop
+    /// silhouette is a plain axis-aligned rounded rectangle with a single solid
+    /// fill (the case the analytic shadow path handles).
+    fn solid_rrect(&self, n: &Node, ts: &sk::Transform, shape: Option<&Shape>) -> Option<(shadow::RRect, f32)> {
+        let sh = shape?;
+        if !sh.is_rect || !sh.fillable || n.fill_geometry.is_some() || !self.visible_strokes(n).is_empty() {
+            return None;
+        }
+        let fills = self.visible_fills(n);
+        let [fill] = fills[..] else { return None };
+        let desigma_doc::PaintKind::Solid(c) = &fill.kind else { return None };
+        let radii = if matches!(n.kind, NodeKind::Section) { [0.0; 4] } else { n.corner_radii };
+        if radii.iter().any(|r| (r - radii[0]).abs() > 1e-4) || (radii[0] > 0.0 && n.corner_smoothing > 0.0) {
+            return None;
+        }
+        let (sx, sy) = (ts.sx, ts.sy);
+        if ts.kx.abs() > 1e-5 || ts.ky.abs() > 1e-5 || sx.is_nan() || sx <= 0.0 || sy.is_nan() || sy <= 0.0 || (sx - sy).abs() > 1e-4 * sx {
+            return None;
+        }
+        let r = radii[0].max(0.0).min(n.size.x.min(n.size.y) / 2.0);
+        Some((shadow::RRect { x: ts.tx, y: ts.ty, w: n.size.x * sx, h: n.size.y * sy, r: r * sx }, (c.a * fill.opacity).clamp(0.0, 1.0)))
+    }
+
     fn draw_body(&self, n: &Node, ts: sk::Transform, target: &mut sk::Pixmap, clip: Option<&sk::Mask>, alpha: f32, back: Back) {
         let scale = ts_scale(&ts);
         let shape = node_shape(self.doc, n, 0.15 / scale);
@@ -324,9 +382,15 @@ impl Renderer<'_> {
         };
 
         // 1. drop shadows + background blur (behind the node)
+        let fast_rrect = if blur::reference_mode() { None } else { self.solid_rrect(n, &ts, shape.as_ref()) };
         for e in &n.effects {
             match e {
                 Effect::DropShadow { color, offset, radius, spread, visible: true, show_behind } => {
+                    if let Some((rr, fill_alpha)) = fast_rrect {
+                        if shadow::drop_shadow_rrect(target, clip, rr, scale, color, *offset, *radius, *spread, *show_behind, alpha, fill_alpha, &sil) {
+                            continue;
+                        }
+                    }
                     effects::drop_shadow(target, clip, bb, scale, color, *offset, *radius, *spread, *show_behind, alpha, &sil)
                 }
                 Effect::BackgroundBlur { radius, visible: true } if *radius > 0.0 => {
