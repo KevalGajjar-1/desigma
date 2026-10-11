@@ -774,11 +774,12 @@ fn rulers_toggle_and_guides_are_created_snapped_to_and_removed() {
     let to = Pos2::new(cr.left() + 300.0, cr.top() + 300.0);
     s.drag(from, to);
     let page = s.app().page;
-    let guides = s.app().page_guides.get(&page).cloned().unwrap_or_default();
+    let guides = s.app().doc.guides.get(&page).cloned().unwrap_or_default();
     assert_eq!(guides.len(), 1);
     let want = s.app().view.to_page(cr.min, to).y.round();
-    assert_eq!(guides[0].axis, crate::canvas::snap::GuideAxis::Y);
-    assert_eq!(guides[0].pos, want, "guides land on whole pixels");
+    assert_eq!(guides[0].axis, desigma_doc::GuideAxis::Y);
+    assert_eq!(guides[0].frame, None);
+    assert_eq!(guides[0].offset, want, "guides land on whole pixels");
 
     // layers snap to the guide while moving
     let targets = crate::canvas::interact::snap_targets(s.app(), &[]);
@@ -787,11 +788,76 @@ fn rulers_toggle_and_guides_are_created_snapped_to_and_removed() {
     // dragging the guide back onto the ruler deletes it
     let on_guide = Pos2::new(cr.left() + 500.0, s.app().view.to_screen(cr.min, DV::new(0.0, want)).y);
     s.drag(on_guide, Pos2::new(on_guide.x, cr.top() + 8.0));
-    assert!(s.app().page_guides.get(&page).is_none_or(|g| g.is_empty()));
+    assert!(s.app().doc.guides.get(&page).is_none_or(|g| g.is_empty()));
+
+    // create and delete were one undo step each
+    s.cmd_key(Key::Z);
+    assert_eq!(s.app().doc.guides[&page].len(), 1, "undo restores the deleted guide");
+    s.cmd_key(Key::Z);
+    assert!(s.app().doc.guides.get(&page).is_none_or(|g| g.is_empty()), "undo removes the created guide");
 
     // hiding the rulers hides guides' snapping too
     shift_key(&mut s, Key::R);
     assert!(!s.app().ui.rulers);
+}
+
+#[test]
+fn frame_guides_follow_the_frame_and_each_drag_is_one_undo_step() {
+    let mut s = Sim::with(Options { select: Some("Card".into()), ..Default::default() });
+    shift_key(&mut s, Key::R);
+    let card = s.by_name("Card");
+    let page = s.app().page;
+    let cr = s.app().canvas_rect;
+    let bb = crate::util::world_aabb(&s.app().doc, card);
+    // drop a vertical guide from the left ruler onto the selected frame
+    let to = s.screen(bb.x + 30.4, bb.y + 20.0);
+    s.drag(Pos2::new(cr.left() + 10.0, to.y), to);
+    let g = s.app().doc.guides[&page].clone();
+    assert_eq!(g.len(), 1, "one guide for the whole drag");
+    assert_eq!(g[0].frame, Some(card));
+    assert_eq!(g[0].axis, desigma_doc::GuideAxis::X);
+    assert_eq!(g[0].offset, (bb.x + 30.4).round() - bb.x, "offset is frame-local");
+
+    // it moves with the frame, and snaps layers at its new place
+    let mut moved = s.app().doc.get(card).unwrap().clone();
+    moved.transform.tx += 100.0;
+    s.shell.app.hist.exec(&mut s.shell.app.doc, desigma_doc::Command::Update { node: Box::new(moved) }).unwrap();
+    let want = (bb.x + 30.4).round() + 100.0;
+    let targets = crate::canvas::interact::snap_targets(s.app(), &[]);
+    assert!(targets.iter().any(|r| crate::canvas::snap::is_guide_rect(r) && r.x == want), "frame guide followed the frame");
+    s.shell.app.changed();
+    s.frame(vec![]);
+
+    // a guide dropped with nothing selected is a page guide
+    let to2 = s.screen(bb.x - 200.0, bb.y - 150.0);
+    s.shell.app.selection.clear();
+    s.drag(Pos2::new(cr.left() + 10.0, to2.y), to2);
+    let g = s.app().doc.guides[&page].clone();
+    assert_eq!(g.len(), 2);
+    assert_eq!(g[1].frame, None);
+
+    // one undo per drag
+    s.cmd_key(Key::Z);
+    assert_eq!(s.app().doc.guides[&page].len(), 1);
+}
+
+#[test]
+fn guides_are_saved_with_the_file() {
+    let s = Sim::new();
+    let mut doc = s.app().doc.clone();
+    let page = s.app().page;
+    let frame = s.by_name("Card");
+    let guides = vec![
+        desigma_doc::Guide { axis: desigma_doc::GuideAxis::X, offset: 12.0, frame: None },
+        desigma_doc::Guide { axis: desigma_doc::GuideAxis::Y, offset: 7.5, frame: Some(frame) },
+    ];
+    desigma_doc::History::default().exec(&mut doc, desigma_doc::Command::SetGuides { page, guides: guides.clone() }).unwrap();
+    let mut path = std::env::temp_dir();
+    path.push(format!("desigma_guides_{}", std::process::id()));
+    let p = crate::io::save_path(&doc, &path).unwrap();
+    let back = crate::io::load_path(&p).unwrap();
+    std::fs::remove_file(p).ok();
+    assert_eq!(back.guides[&page], guides);
 }
 
 #[test]

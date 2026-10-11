@@ -118,6 +118,44 @@ fn parse_effect(v: &Value) -> Option<Effect> {
     })
 }
 
+/// `exportSettings` of a node: format, suffix and the SCALE / WIDTH / HEIGHT constraint.
+pub(crate) fn parse_export_settings(v: &Value) -> Vec<ExportPreset> {
+    farr(v, "exportSettings")
+        .iter()
+        .map(|e| {
+            let format = match fstr(e, "format").unwrap_or("PNG").to_ascii_uppercase().as_str() {
+                "JPG" | "JPEG" => ExportFileFormat::Jpg,
+                "SVG" => ExportFileFormat::Svg,
+                "PDF" => ExportFileFormat::Pdf,
+                _ => ExportFileFormat::Png,
+            };
+            let c = e.get("constraint");
+            let value = c.and_then(|c| fnum(c, "value")).unwrap_or(1.0);
+            let constraint = match c.and_then(|c| fstr(c, "type")) {
+                Some("WIDTH") => ExportConstraint::Width(value),
+                Some("HEIGHT") => ExportConstraint::Height(value),
+                _ => ExportConstraint::Scale(value),
+            };
+            ExportPreset { format, constraint, suffix: fstr(e, "suffix").unwrap_or("").to_string() }
+        })
+        .collect()
+}
+
+/// `guides` of a page or frame: `[{axis: "X" | "Y", offset}]`.
+fn parse_guides(v: &Value, frame: Option<NodeId>) -> Vec<Guide> {
+    farr(v, "guides")
+        .iter()
+        .filter_map(|g| {
+            let axis = match fstr(g, "axis")?.to_ascii_uppercase().as_str() {
+                "X" => GuideAxis::X,
+                "Y" => GuideAxis::Y,
+                _ => return None,
+            };
+            Some(Guide { axis, offset: fnum(g, "offset")?, frame })
+        })
+        .collect()
+}
+
 fn parse_grid(v: &Value) -> Option<LayoutGrid> {
     if fbool(v, "visible") == Some(false) {
         return None; // the model has no per-grid visibility flag
@@ -390,6 +428,10 @@ impl Ctx {
         if let Some(fl) = v.get("flowStartingPoints") {
             self.flow_pages.push((pid, serde_json::json!({ "flowStartingPoints": fl })));
         }
+        let guides = parse_guides(v, None);
+        if !guides.is_empty() {
+            self.doc.guides.entry(pid).or_default().extend(guides);
+        }
         let info = ParentInfo { origin: Vec2::ZERO, layout: None };
         for c in farr(v, "children") {
             self.import_node(c, pid, info, 0);
@@ -414,8 +456,15 @@ impl Ctx {
         let is_instance = matches!(node.kind, NodeKind::Instance { .. });
         let origin = abs_origin(v).unwrap_or(pinfo.origin);
         let container = node.kind.is_container();
+        let is_frame = node.kind.frame_props().is_some();
         if self.doc.insert(parent, node).is_err() {
             return;
+        }
+        if is_frame {
+            let guides = parse_guides(v, Some(id));
+            if let (false, Some(page)) = (guides.is_empty(), self.doc.page_of(id)) {
+                self.doc.guides.entry(page).or_default().extend(guides);
+            }
         }
         if let Some(raw) = crate::proto::collect(v) {
             self.proto.push((id, raw));
@@ -513,6 +562,7 @@ impl Ctx {
         n.variables = crate::variables::parse_node_variables(v);
         n.blend = fstr(v, "blendMode").map(blend).unwrap_or(default_blend);
         n.is_mask = fbool(v, "isMask").unwrap_or(false);
+        n.export_settings = parse_export_settings(v);
         n.fill_geometry = fill_geo;
         n.stroke_geometry = stroke_geo;
 

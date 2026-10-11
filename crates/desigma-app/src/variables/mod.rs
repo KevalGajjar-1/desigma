@@ -120,7 +120,7 @@ impl App {
             return false;
         }
         let cleanup = dangling_binding_cleanup(&self.doc, removed_vars, removed_colls);
-        let mut cmds = vec![store.command()];
+        let mut cleaned = Vec::new();
         for mut n in cleanup {
             let keys: Vec<String> = self
                 .doc
@@ -128,9 +128,35 @@ impl App {
                 .map(|o| o.variables.bindings.iter().filter(|(_, v)| removed_vars.contains(v)).map(|(k, _)| k.clone()).collect())
                 .unwrap_or_default();
             bake_bindings(&self.doc, &mut n, &keys);
-            cmds.push(Command::Update { node: Box::new(n) });
+            cleaned.push(n);
         }
-        let cmd = if cmds.len() == 1 { cmds.pop().unwrap() } else { Command::Batch(cmds) };
+        let changed = changed_variables(&self.doc, &store, removed_vars);
+        let affected = bound_nodes(&self.doc, &changed);
+        let mut cmds = vec![];
+        if affected.is_empty() {
+            cmds.push(store.command());
+            cmds.extend(cleaned.into_iter().map(|n| Command::Update { node: Box::new(n) }));
+        } else {
+            // Nodes bound to a changed variable (directly or through aliases) reflow in the
+            // same undo step: auto layout and text auto-resize run on the new values.
+            let mut trial = self.doc.clone();
+            let _ = store.clone().command().apply(&mut trial);
+            for n in cleaned {
+                let _ = Command::Update { node: Box::new(n) }.apply(&mut trial);
+            }
+            reflow_bound(&mut trial, &changed, &affected);
+            cmds.push(store.command());
+            for (id, n) in &trial.nodes {
+                if self.doc.nodes.get(id) != Some(n) {
+                    cmds.push(Command::Update { node: Box::new(n.clone()) });
+                }
+            }
+        }
+        let mut cmd = if cmds.len() == 1 { cmds.pop().unwrap() } else { Command::Batch(cmds) };
+        if !affected.is_empty() {
+            // Edits to a main component's layers carry over to its instances.
+            cmd = crate::comp_ops::with_sync(&mut self.doc, cmd);
+        }
         match self.hist.exec(&mut self.doc, cmd) {
             Ok(()) => {
                 self.changed();
@@ -250,6 +276,69 @@ impl App {
     }
 }
 
+/// Variables whose resolved value may differ after installing `store`: those added or edited,
+/// those of collections whose modes changed, and every variable aliasing one of them.
+/// Removed variables are left out (their bindings are baked, nothing reflows).
+pub fn changed_variables(doc: &Document, store: &VariableStore, removed: &[String]) -> HashSet<String> {
+    let mut changed: HashSet<String> = store.variables.iter().filter(|(id, v)| doc.variables.get(*id) != Some(v)).map(|(id, _)| id.clone()).collect();
+    for (cid, c) in &store.collections {
+        if doc.variable_collections.get(cid).is_some_and(|old| old.modes != c.modes || old.default_mode != c.default_mode) {
+            changed.extend(c.variables.iter().cloned());
+        }
+    }
+    loop {
+        let more: Vec<String> = store
+            .variables
+            .iter()
+            .filter(|(id, v)| !changed.contains(*id) && v.values.values().any(|x| matches!(x, VariableValue::Alias(a) if changed.contains(a))))
+            .map(|(id, _)| id.clone())
+            .collect();
+        if more.is_empty() {
+            break;
+        }
+        changed.extend(more);
+    }
+    changed.retain(|id| !removed.contains(id));
+    changed
+}
+
+/// Nodes with a binding to one of `vars`.
+pub fn bound_nodes(doc: &Document, vars: &HashSet<String>) -> Vec<NodeId> {
+    if vars.is_empty() {
+        return vec![];
+    }
+    doc.nodes.values().filter(|n| n.variables.bindings.values().any(|v| vars.contains(v))).map(|n| n.id).collect()
+}
+
+/// Writes the new values of `vars` into the bound properties of `nodes` (which are already
+/// resolved against the new store in `doc`), re-fits auto-sized text and re-runs auto layout.
+pub fn reflow_bound(doc: &mut Document, vars: &HashSet<String>, nodes: &[NodeId]) {
+    for id in nodes {
+        let binds: Vec<(String, String)> = match doc.get(*id) {
+            Some(n) => n.variables.bindings.iter().filter(|(_, v)| vars.contains(*v)).map(|(k, v)| (k.clone(), v.clone())).collect(),
+            None => continue,
+        };
+        for (key, var) in binds {
+            if let Some(val) = doc.resolve_variable(*id, &var) {
+                if let Some(n) = doc.get_mut(*id) {
+                    set_bound_property(n, &key, &val);
+                }
+            }
+        }
+        let fitted = doc.get(*id).and_then(|n| match &resolve_node(doc, n).kind {
+            NodeKind::Text(t) => Some(layout::fit_text(t, n.size)),
+            _ => None,
+        });
+        if let (Some(size), Some(n)) = (fitted, doc.get_mut(*id)) {
+            n.size = size;
+        }
+    }
+    let mut ed = crate::edit::Edit::new();
+    for id in nodes {
+        layout::relayout_around(doc, &mut ed, *id);
+    }
+}
+
 /// True when `text` is a variables-only payload (no design document in it).
 pub fn is_variables_payload(text: &str) -> bool {
     let Ok(v) = serde_json::from_str::<serde_json::Value>(text) else { return false };
@@ -306,6 +395,96 @@ mod tests {
         app.undo();
         assert_eq!(app.doc.get(rect).unwrap().variables.bindings["fills/0"], brand);
         assert!(app.doc.variables.contains_key(&brand));
+    }
+
+    /// A horizontal hug-all frame with two 20x20 rects and a text whose `itemSpacing`
+    /// binds to `gap_var`; returns (frame, first, second, text).
+    fn spaced_row(app: &mut App, gap_var: &str) -> (NodeId, NodeId, NodeId, NodeId) {
+        let page = app.page;
+        let fid = app.doc.alloc_id();
+        let mut f = Node::frame(fid, desigma_doc::Rect::new(0.0, 0.0, 10.0, 10.0));
+        f.kind = NodeKind::Frame(FrameProps {
+            auto_layout: Some(AutoLayout {
+                direction: LayoutDirection::Horizontal,
+                item_spacing: 12.0,
+                primary_sizing: Sizing::Hug,
+                counter_sizing: Sizing::Hug,
+                ..Default::default()
+            }),
+            ..Default::default()
+        });
+        let frame = app.doc.insert(page, f).unwrap();
+        let mut kids = vec![];
+        for _ in 0..2 {
+            let id = app.doc.alloc_id();
+            kids.push(app.doc.insert(frame, Node::rectangle(id, desigma_doc::Rect::new(0.0, 0.0, 20.0, 20.0))).unwrap());
+        }
+        let tid = app.doc.alloc_id();
+        let style = TextStyle { font_size: 12.0, ..Default::default() };
+        let text = app.doc.insert(frame, Node::text(tid, desigma_doc::Rect::new(0.0, 0.0, 10.0, 10.0), "Size me", style)).unwrap();
+        app.bind_variable(&[frame], &["itemSpacing"], gap_var);
+        (frame, kids[0], kids[1], text)
+    }
+
+    fn set_number(app: &mut App, name: &str, v: f32) {
+        let mut store = VariableStore::from_doc(&app.doc);
+        let id = store.variables.values().find(|x| x.name == name).unwrap().id.clone();
+        let mode = store.collections.values().next().unwrap().default_mode.clone();
+        store.set_value(&id, &mode, VariableValue::Number(v));
+        assert!(app.commit_store(store, &[], &[]));
+    }
+
+    #[test]
+    fn changing_a_variable_reflows_auto_layout_in_the_same_undo_step() {
+        let mut app = app_with_vars();
+        let gap = app.doc.variables.values().find(|v| v.name == "Gap").unwrap().id.clone();
+        let (frame, _a, b, _t) = spaced_row(&mut app, &gap);
+        assert_eq!(app.doc.get(b).unwrap().transform.tx, 32.0);
+        let w0 = app.doc.get(frame).unwrap().size.x;
+        set_number(&mut app, "Gap", 30.0);
+        assert_eq!(app.doc.get(b).unwrap().transform.tx, 50.0, "the second child moved by the gap change");
+        assert_eq!(app.doc.get(frame).unwrap().size.x, w0 + 18.0 * 2.0, "a hugging frame grows with two more gaps");
+        // layout and the variable edit undo together
+        app.undo();
+        assert_eq!(app.doc.get(b).unwrap().transform.tx, 32.0);
+        assert_eq!(app.doc.get(frame).unwrap().size.x, w0);
+        assert_eq!(app.doc.variables[&gap].values.values().next(), Some(&VariableValue::Number(12.0)));
+        app.redo();
+        assert_eq!(app.doc.get(b).unwrap().transform.tx, 50.0);
+    }
+
+    #[test]
+    fn aliased_variables_reflow_their_bound_nodes() {
+        let mut app = app_with_vars();
+        let gap = app.doc.variables.values().find(|v| v.name == "Gap").unwrap().id.clone();
+        let mut store = VariableStore::from_doc(&app.doc);
+        let coll = store.collections.keys().next().unwrap().clone();
+        let mode = store.collections[&coll].default_mode.clone();
+        let alias = store.add_variable(&coll, "Gap/Alias", VariableKind::Number).unwrap();
+        assert!(store.set_alias(&alias, &mode, &gap));
+        assert!(app.commit_store(store, &[], &[]));
+        let (frame, _a, b, _t) = spaced_row(&mut app, &alias);
+        assert_eq!(app.doc.get(b).unwrap().transform.tx, 32.0);
+        set_number(&mut app, "Gap", 4.0);
+        assert_eq!(app.doc.get(b).unwrap().transform.tx, 24.0, "bound through an alias, still follows");
+        assert!(app.doc.get(frame).unwrap().size.x < 100.0);
+        app.undo();
+        assert_eq!(app.doc.get(b).unwrap().transform.tx, 32.0);
+    }
+
+    #[test]
+    fn variable_driven_text_size_refits_auto_resize_text_and_the_frame_around_it() {
+        let mut app = app_with_vars();
+        let gap = app.doc.variables.values().find(|v| v.name == "Gap").unwrap().id.clone();
+        let (frame, _a, _b, text) = spaced_row(&mut app, &gap);
+        app.bind_variable(&[text], &["fontSize"], &gap);
+        let (tw, fw) = (app.doc.get(text).unwrap().size, app.doc.get(frame).unwrap().size.x);
+        set_number(&mut app, "Gap", 48.0);
+        let t = app.doc.get(text).unwrap();
+        assert!(t.size.x > tw.x && t.size.y > tw.y, "text grew: {:?} -> {:?}", tw, t.size);
+        assert!(app.doc.get(frame).unwrap().size.x > fw, "and the hugging frame followed");
+        app.undo();
+        assert_eq!(app.doc.get(text).unwrap().size, tw);
     }
 
     #[test]

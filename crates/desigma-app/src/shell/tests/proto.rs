@@ -196,11 +196,45 @@ fn flows_list_add_rename_delete_with_undo() {
 #[test]
 fn device_dropdown_and_background_swatch() {
     let mut s = proto_sim(None);
-    assert_eq!(s.app().proto.device, 0);
+    assert_eq!(s.app().doc.prototype_device, desigma_doc::PrototypeDevice::default());
     pick(&mut s, "proto-device", 1);
-    assert_eq!(s.app().proto.device, 1);
+    let d = s.app().doc.prototype_device.clone();
+    assert_eq!(d.preset.as_deref(), Some("iPhone 15"));
+    assert_eq!(d.size, Some(DV::new(393.0, 852.0)));
+    pick(&mut s, "proto-device", 2);
+    assert_eq!(s.app().doc.prototype_device.size, Some(DV::new(430.0, 932.0)));
+    // each pick is one undo step
+    s.cmd_key(Key::Z);
+    assert_eq!(s.app().doc.prototype_device.preset.as_deref(), Some("iPhone 15"));
+    s.cmd_key(Key::Z);
+    assert_eq!(s.app().doc.prototype_device, desigma_doc::PrototypeDevice::default());
     s.click(s.rect_of("proto-bg-swatch").center());
     assert!(s.app().props.picker.is_some(), "the background swatch opens the color picker");
+}
+
+#[test]
+fn device_survives_save_and_load_and_letterboxes_the_presented_frame() {
+    let mut s = proto_sim(None);
+    pick(&mut s, "proto-device", 1);
+    let mut path = std::env::temp_dir();
+    path.push(format!("desigma_device_{}", std::process::id()));
+    let p = crate::io::save_path(&s.app().doc, &path).unwrap();
+    let back = crate::io::load_path(&p).unwrap();
+    std::fs::remove_file(p).ok();
+    assert_eq!(back.prototype_device, s.app().doc.prototype_device);
+
+    s.shell.app.doc.prototype_device.background = Some(Color::rgba(10, 20, 30, 255));
+    present_open(&mut s);
+    let st = s.app().proto.present.as_ref().unwrap();
+    let (screen, radius) = st.device_screen.expect("a device screen is laid out");
+    assert!(radius > 0.0);
+    // the screen has the device's aspect, the frame fits inside it and is centered
+    assert!((screen.width() / screen.height() - 393.0 / 852.0).abs() < 0.01);
+    assert!(screen.contains_rect(st.stage.shrink(0.5)));
+    assert!((st.stage.center() - screen.center()).length() < 1.0);
+    let frame_aspect = st.player.size_of(st.player.current);
+    assert!((st.stage.width() / st.stage.height() - frame_aspect.x / frame_aspect.y).abs() < 0.01);
+    assert!(st.stage.width() <= screen.width() + 0.5 && st.stage.height() <= screen.height() + 0.5);
 }
 
 #[test]

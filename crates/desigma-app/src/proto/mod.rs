@@ -28,20 +28,61 @@ pub struct ProtoState {
     pub hot: Option<NodeId>,
     /// Deepest layer under the pointer while in prototype mode.
     pub hover: Option<NodeId>,
-    /// Device preset index into [`DEVICES`] (shown as a bezel when presenting).
-    pub device: usize,
     pub present: Option<crate::present::PresentState>,
 }
 
-/// Device presets: name, width, height, corner radius.
+/// Device presets: name, width, height, corner radius. The chosen preset is stored in
+/// `Document::prototype_device`; Present letterboxes the start frame into its size.
 pub const DEVICES: &[(&str, f32, f32, f32)] = &[
     ("None", 0.0, 0.0, 0.0),
     ("iPhone 15", 393.0, 852.0, 48.0),
-    ("iPhone SE", 375.0, 667.0, 24.0),
-    ("Pixel 8", 412.0, 915.0, 40.0),
+    ("iPhone 15 Pro Max", 430.0, 932.0, 52.0),
+    ("Android Large", 360.0, 800.0, 32.0),
     ("iPad mini", 744.0, 1133.0, 28.0),
+    ("MacBook Air", 1280.0, 832.0, 12.0),
     ("Desktop", 1440.0, 1024.0, 8.0),
+    ("Presentation", 1920.0, 1080.0, 0.0),
 ];
+
+/// Corner radius used for a stored device whose name is not a known preset.
+const CUSTOM_DEVICE_RADIUS: f32 = 24.0;
+
+/// Index of the stored device in [`DEVICES`] (0 = None). Unknown names map to `None`.
+pub fn device_index(d: &PrototypeDevice) -> Option<usize> {
+    match &d.preset {
+        None => Some(0),
+        Some(name) => DEVICES.iter().position(|p| p.0 == name && p.1 > 0.0),
+    }
+}
+
+/// The stored device as `Command` payload for preset `i` (keeps the background).
+pub fn device_for(i: usize, keep: &PrototypeDevice) -> PrototypeDevice {
+    match DEVICES.get(i).filter(|d| d.1 > 0.0) {
+        Some(d) => PrototypeDevice { preset: Some(d.0.to_string()), size: Some(Vec2::new(d.1, d.2)), background: keep.background },
+        None => PrototypeDevice { preset: None, size: None, background: keep.background },
+    }
+}
+
+/// Viewport size and corner radius to present in; `None` = no device frame.
+pub fn device_viewport(d: &PrototypeDevice) -> Option<(Vec2, f32)> {
+    d.preset.as_ref()?;
+    let known = d.preset.as_ref().and_then(|n| DEVICES.iter().find(|p| p.0 == n && p.1 > 0.0));
+    let size = d.size.or_else(|| known.map(|p| Vec2::new(p.1, p.2)))?;
+    (size.x > 0.0 && size.y > 0.0).then(|| (size, known.map(|p| p.3).unwrap_or(CUSTOM_DEVICE_RADIUS)))
+}
+
+impl App {
+    /// Persists the device as one undo step.
+    pub fn set_prototype_device(&mut self, device: PrototypeDevice) {
+        if device == self.doc.prototype_device {
+            return;
+        }
+        if let Err(e) = self.hist.exec(&mut self.doc, Command::SetPrototypeDevice { device }) {
+            self.show_toast(format!("Edit failed: {e}"), true);
+        }
+        self.changed();
+    }
+}
 
 // ------------------------------------------------------------------ labels
 

@@ -394,6 +394,8 @@ pub const PROTO_POPOVER_WIDTH: f32 = 240.0;
 pub const PRESENT_BG: Color32 = rgb(0x1E1E1E);
 pub const PRESENT_BAR_HEIGHT: f32 = 48.0;
 pub const PRESENT_PADDING: f32 = 32.0;
+/// Thickness of the plain device bezel drawn around the device screen when presenting.
+pub const PRESENT_BEZEL: f32 = 10.0;
 pub const PRESENT_MAX_SCALE: f32 = 4.0;
 
 // ---------------------------------------------------------------- app defaults

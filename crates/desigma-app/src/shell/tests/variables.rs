@@ -274,3 +274,54 @@ fn dragging_the_grip_reorders_rows() {
     s.shell.app.undo();
     assert_eq!(order(&s), before);
 }
+
+#[test]
+fn text_fill_edits_only_the_selected_range_and_binds_the_layer() {
+    let mut s = Sim::new();
+    s.key(Key::T);
+    s.click(s.screen(300.0, 820.0));
+    s.type_text("hello world");
+    let id = s.app().selection[0];
+    s.cmd_key(Key::Home);
+    s.mods = Modifiers::SHIFT;
+    for _ in 0..5 {
+        s.key(Key::ArrowRight);
+    }
+    s.mods = Modifiers::NONE;
+    s.frame(vec![]);
+    // the Fill section shows the text colour; editing it recolours just "hello"
+    s.scroll_inspector_down();
+    let hex = s.rect_of("text-hex");
+    s.click(Pos2::new(hex.left() + 30.0, hex.center().y));
+    s.type_text("FF0000");
+    s.key(Key::Enter);
+    let t = text_of(&s, id);
+    assert_eq!(t.runs.len(), 1, "{:?}", t.runs);
+    assert_eq!((t.runs[0].start, t.runs[0].end), (0, 5));
+    assert!(matches!(&t.runs[0].style.fills[0].kind, PaintKind::Solid(c) if c.to_hex() == "FF0000"));
+    assert!(!matches!(&t.style.fills[0].kind, PaintKind::Solid(c) if c.to_hex() == "FF0000"), "the rest keeps its colour");
+    s.key(Key::Escape);
+    assert!(s.app().canvas.text.is_none(), "Escape leaves the text session");
+
+    // with one colour, the whole layer's colour can be bound to a variable (`fills/0`)
+    s.key(Key::T);
+    s.click(s.screen(300.0, 900.0));
+    s.type_text("plain");
+    let id = s.app().selection[0];
+    s.key(Key::Escape);
+    s.shell.app.selection = vec![id];
+    s.scroll_inspector_down();
+    let sw = s.rect_of("text-sw");
+    s.mv(Pos2::new(sw.right() + 40.0, sw.center().y));
+    s.frame(vec![]);
+    s.click(s.rect_of("bind:fills/0").center());
+    s.frame(vec![]);
+    s.click(s.rect_of("pick:Text/Primary").center());
+    let ink = var(s.app(), "Text/Primary").id.clone();
+    let n = s.app().doc.get(id).unwrap();
+    assert_eq!(n.variables.bindings["fills/0"], ink);
+    let t = text_of(&s, id);
+    assert!(matches!(&t.style.fills[0].kind, PaintKind::Solid(c) if c.to_hex() == "1E1E1E"), "the raw colour takes the variable's value");
+    s.cmd_key(Key::Z);
+    assert!(s.app().doc.get(id).unwrap().variables.is_empty(), "binding is one undo step");
+}

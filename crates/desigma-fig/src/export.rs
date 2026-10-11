@@ -252,6 +252,36 @@ fn frame_fields(m: &mut Map<String, Value>, f: &FrameProps) {
     m.insert("itemReverseZIndex".into(), al.reverse_z.into());
 }
 
+fn export_preset(p: &ExportPreset) -> Value {
+    let format = match p.format {
+        ExportFileFormat::Png => "PNG",
+        ExportFileFormat::Jpg => "JPG",
+        ExportFileFormat::Svg => "SVG",
+        ExportFileFormat::Pdf => "PDF",
+    };
+    let (ty, value) = match p.constraint {
+        ExportConstraint::Scale(v) => ("SCALE", v),
+        ExportConstraint::Width(v) => ("WIDTH", v),
+        ExportConstraint::Height(v) => ("HEIGHT", v),
+    };
+    json!({"suffix": p.suffix, "format": format, "constraint": {"type": ty, "value": n(value)}})
+}
+
+/// Ruler guides that belong to `id`: a page's own guides, or the guides of a frame.
+fn guides_of(doc: &Document, id: NodeId) -> Vec<Value> {
+    if doc.guides.is_empty() {
+        return vec![];
+    }
+    let guide = |g: &Guide| json!({"axis": if g.axis == GuideAxis::X { "X" } else { "Y" }, "offset": n(g.offset)});
+    if matches!(doc.get(id).map(|n| &n.kind), Some(NodeKind::Page { .. })) {
+        return doc.guides.get(&id).map(|l| l.iter().filter(|g| g.frame.is_none()).map(guide).collect()).unwrap_or_default();
+    }
+    match doc.page_of(id).and_then(|p| doc.guides.get(&p)) {
+        Some(l) => l.iter().filter(|g| g.frame == Some(id)).map(guide).collect(),
+        None => vec![],
+    }
+}
+
 fn export_node(doc: &Document, id: NodeId, parent_abs: Option<&Affine>, depth: usize) -> Option<Value> {
     if depth > 400 {
         return None;
@@ -284,6 +314,13 @@ fn export_node(doc: &Document, id: NodeId, parent_abs: Option<&Affine>, depth: u
     };
     m.insert("type".into(), ty.into());
     crate::variables::export_node_variables(node, &mut m);
+    if !node.export_settings.is_empty() {
+        m.insert("exportSettings".into(), Value::Array(node.export_settings.iter().map(export_preset).collect()));
+    }
+    let guides = guides_of(doc, id);
+    if !guides.is_empty() {
+        m.insert("guides".into(), Value::Array(guides));
+    }
 
     let abs = parent_abs.map(|p| *p * node.transform).unwrap_or(node.transform);
     match &node.kind {

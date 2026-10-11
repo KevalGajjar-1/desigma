@@ -195,9 +195,6 @@ pub(super) fn section(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[NodeId
     }
     row_end(pane);
 
-    // ---- colour
-    color_row(app, ui, pane, sel, &sum);
-
     // ---- alignment (paragraph level: always the base style)
     let cur = match t.style.align_h {
         TextAlignH::Left | TextAlignH::Justified => 0,
@@ -253,6 +250,15 @@ pub(super) fn section(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[NodeId
     }
 }
 
+/// The Fill section of text layers: the text colour (`TextStyle::fills`, per character range
+/// while a text session has a selection) with the variable bind button.
+pub(super) fn fill_section(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[NodeId]) {
+    let sum = if editing(app, sel) { ts::session_summary(app) } else { nodes_summary(app, sel) };
+    if let Some(sum) = sum {
+        color_row(app, ui, pane, sel, &sum);
+    }
+}
+
 fn color_row(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[NodeId], sum: &Summary) {
     let sw = pane.rect(theme::SWATCH_ROW_X, 4.0, theme::SWATCH_SIZE, theme::SWATCH_SIZE);
     let hex_r = pane.rect(theme::SWATCH_ROW_X + theme::SWATCH_SIZE + 8.0, 0.0, 96.0, theme::FIELD_HEIGHT);
@@ -265,13 +271,24 @@ fn color_row(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[NodeId], sum: &
                 Color32::from_rgba_unmultiplied(f(c.r), f(c.g), f(c.b), f(c.a * op))
             };
             widgets::swatch(ui.painter(), sw, col);
+            widgets::record(ui, "text-sw", sw);
+            widgets::record(ui, "text-hex", hex_r);
             let swr = ui.interact(sw, ui.id().with("typo-sw"), Sense::click());
-            if swr.clicked() {
+            // A variable binds the whole layer's colour (key `fills/0`, as the renderer resolves it).
+            let field_r = Rect::from_min_max(hex_r.min, Pos2::new(op_r.left() - 4.0, hex_r.bottom()));
+            let bound = var_bind::pill_field(app, ui, field_r, sel, &["fills/0"]);
+            if swr.clicked() && !bound {
                 open_picker(app, PickTarget::TextFill, col, sw, sel.to_vec());
             }
-            if let Some(s) = field::text_input(ui, hex_r, "text-hex", &c.to_hex()) {
-                if let Some(nc) = Color::from_hex(&s) {
-                    set_style(app, sel, |st| set_solid(st, Color { a: c.a, ..nc }, None));
+            if !bound {
+                if let Some(s) = field::text_input(ui, hex_r, "text-hex", &c.to_hex()) {
+                    if let Some(nc) = Color::from_hex(&s) {
+                        set_style(app, sel, |st| set_solid(st, Color { a: c.a, ..nc }, None));
+                    }
+                }
+                // Not offered while a character range is being edited: bindings are per layer.
+                if !editing(app, sel) {
+                    var_bind::hover_button(app, ui, hex_r, sel, &["fills/0"], VariableKind::Color);
                 }
             }
             if let Some(v) = field::num_field(ui, op_r, "text-op", Prefix::None, Some((op * 100.0).round()), "%") {

@@ -5,8 +5,10 @@
 //! selection is highlighted. Dragging from a ruler creates a guide, a red line
 //! that other layers snap to; dragging it back onto its ruler deletes it.
 //!
-//! Guides are kept per page in [`App::page_guides`]; the document model has no
-//! field for them, so they are not saved with the file.
+//! Guides live in [`desigma_doc::Document::guides`] (saved with the file); every
+//! create / move / delete is one `Command::SetGuides` undo step. A guide dropped
+//! over a selected frame becomes a frame guide: its offset is frame-local, it is
+//! drawn within the frame and moves with it.
 
 use super::snap::{self, GuideAxis};
 use super::*;
@@ -14,11 +16,69 @@ use crate::theme;
 use crate::util::*;
 use egui::{Align2, Color32, Painter, Pos2, Stroke, Vec2 as EV};
 
-/// A guide line in page coordinates: a vertical line at x or a horizontal one at y.
+/// A stored guide resolved to page coordinates.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RulerGuide {
     pub axis: GuideAxis,
+    /// Page-space position (frame origin + offset for frame guides).
     pub pos: f32,
+    pub frame: Option<NodeId>,
+}
+
+fn to_doc_axis(a: GuideAxis) -> desigma_doc::GuideAxis {
+    match a {
+        GuideAxis::X => desigma_doc::GuideAxis::X,
+        GuideAxis::Y => desigma_doc::GuideAxis::Y,
+    }
+}
+
+fn from_doc_axis(a: desigma_doc::GuideAxis) -> GuideAxis {
+    match a {
+        desigma_doc::GuideAxis::X => GuideAxis::X,
+        desigma_doc::GuideAxis::Y => GuideAxis::Y,
+    }
+}
+
+/// World-space origin of a frame guide's frame.
+fn frame_origin(doc: &desigma_doc::Document, f: NodeId) -> Option<DV> {
+    doc.get(f)?;
+    Some(doc.world_transform(f).apply(DV::ZERO))
+}
+
+fn axis_of(o: DV, axis: GuideAxis) -> f32 {
+    if axis == GuideAxis::X {
+        o.x
+    } else {
+        o.y
+    }
+}
+
+/// Resolves a stored guide to page space; `None` when its frame is gone.
+pub fn resolve(doc: &desigma_doc::Document, g: &desigma_doc::Guide) -> Option<RulerGuide> {
+    let axis = from_doc_axis(g.axis);
+    let base = match g.frame {
+        None => 0.0,
+        Some(f) => axis_of(frame_origin(doc, f)?, axis),
+    };
+    Some(RulerGuide { axis, pos: base + g.offset, frame: g.frame })
+}
+
+/// Inverse of [`resolve`]: the stored guide for a page-space position.
+pub fn store(doc: &desigma_doc::Document, axis: GuideAxis, pos: f32, frame: Option<NodeId>) -> desigma_doc::Guide {
+    let base = frame.and_then(|f| frame_origin(doc, f)).map(|o| axis_of(o, axis)).unwrap_or(0.0);
+    desigma_doc::Guide { axis: to_doc_axis(axis), offset: pos - base, frame }
+}
+
+/// The selected frame under a page point (the smallest one), if any.
+fn selected_frame_at(app: &App, p: DV) -> Option<NodeId> {
+    app.selection
+        .iter()
+        .copied()
+        .filter(|id| app.doc.get(*id).is_some_and(|n| n.kind.frame_props().is_some()))
+        .map(|id| (id, world_aabb(&app.doc, id)))
+        .filter(|(_, bb)| p.x >= bb.x && p.x <= bb.x + bb.w && p.y >= bb.y && p.y <= bb.y + bb.h)
+        .min_by(|a, b| (a.1.w * a.1.h).total_cmp(&(b.1.w * b.1.h)))
+        .map(|(id, _)| id)
 }
 
 /// A guide being created or moved.
@@ -27,7 +87,10 @@ pub struct GuideDrag {
     pub axis: GuideAxis,
     /// Index in the page's guides when an existing guide is dragged.
     pub index: Option<usize>,
+    /// Page-space position.
     pub pos: f32,
+    /// Frame the guide belongs to (new guides pick the selected frame under the pointer).
+    pub frame: Option<NodeId>,
     /// Whether the pointer currently sits on the ruler it came from (releasing there deletes).
     pub on_ruler: bool,
 }
@@ -132,8 +195,10 @@ fn rotated_text(p: &Painter, pos: Pos2, text: &str, color: Color32) {
     p.add(egui::epaint::TextShape::new(pos, galley, color).with_angle(-std::f32::consts::FRAC_PI_2));
 }
 
-fn guides_of(app: &App) -> &[RulerGuide] {
-    app.page_guides.get(&app.page).map(|v| v.as_slice()).unwrap_or(&[])
+/// The page's guides with their stored index (guides of missing frames are skipped).
+fn guides_of(app: &App) -> Vec<(usize, RulerGuide)> {
+    let Some(list) = app.doc.guides.get(&app.page) else { return vec![] };
+    list.iter().enumerate().filter_map(|(i, g)| resolve(&app.doc, g).map(|r| (i, r))).collect()
 }
 
 /// Guides as snap targets (see [`snap::guide_rect`]).
@@ -141,7 +206,7 @@ pub fn guide_rects(app: &App) -> Vec<Rect> {
     if !app.ui.rulers {
         return vec![];
     }
-    guides_of(app).iter().map(|g| snap::guide_rect(g.axis, g.pos)).collect()
+    guides_of(app).iter().map(|(_, g)| snap::guide_rect(g.axis, g.pos)).collect()
 }
 
 fn page_pos(app: &App, rect: ERect, pos: Pos2, axis: GuideAxis) -> f32 {
@@ -173,14 +238,14 @@ pub fn press(app: &mut App, rect: ERect, pos: Pos2) -> bool {
     };
     if let Some(axis) = new {
         let v = page_pos(app, rect, pos, axis);
-        app.canvas.inter = Interaction::Guide(GuideDrag { axis, index: None, pos: v, on_ruler: true });
+        app.canvas.inter = Interaction::Guide(GuideDrag { axis, index: None, pos: v, frame: None, on_ruler: true });
         return true;
     }
     if !matches!(app.tool, tools::Tool::Move | tools::Tool::Scale) {
         return false;
     }
     if let Some((i, g)) = hit_guide(app, rect, pos) {
-        app.canvas.inter = Interaction::Guide(GuideDrag { axis: g.axis, index: Some(i), pos: g.pos, on_ruler: false });
+        app.canvas.inter = Interaction::Guide(GuideDrag { axis: g.axis, index: Some(i), pos: g.pos, frame: g.frame, on_ruler: false });
         return true;
     }
     false
@@ -195,17 +260,31 @@ pub fn hit_guide(app: &App, rect: ERect, pos: Pos2) -> Option<(usize, RulerGuide
     if top.contains(pos) || left.contains(pos) {
         return None;
     }
-    guides_of(app).iter().enumerate().find_map(|(i, g)| {
+    let pg = app.view.to_page(rect.min, pos);
+    guides_of(app).into_iter().find_map(|(i, g)| {
         let s = match g.axis {
             GuideAxis::X => app.view.to_screen(rect.min, v2(g.pos, 0.0)).x - pos.x,
             GuideAxis::Y => app.view.to_screen(rect.min, v2(0.0, g.pos)).y - pos.y,
         };
-        (s.abs() <= 4.0).then_some((i, *g))
+        (s.abs() <= 4.0 && frame_covers(app, &g, pg)).then_some((i, g))
     })
+}
+
+/// Whether the page point lies along a frame guide's extent (always true for page guides).
+fn frame_covers(app: &App, g: &RulerGuide, p: DV) -> bool {
+    let Some(f) = g.frame else { return true };
+    let bb = world_aabb(&app.doc, f);
+    match g.axis {
+        GuideAxis::X => p.y >= bb.y && p.y <= bb.y + bb.h,
+        GuideAxis::Y => p.x >= bb.x && p.x <= bb.x + bb.w,
+    }
 }
 
 pub fn drag(app: &App, g: &mut GuideDrag, rect: ERect, pos: Pos2) {
     g.pos = page_pos(app, rect, pos, g.axis);
+    if g.index.is_none() {
+        g.frame = selected_frame_at(app, app.view.to_page(rect.min, pos));
+    }
     let (top, left) = strips(rect);
     // Back on a ruler (or off the canvas): releasing now removes / cancels the guide.
     let over = match g.axis {
@@ -216,7 +295,9 @@ pub fn drag(app: &App, g: &mut GuideDrag, rect: ERect, pos: Pos2) {
 }
 
 pub fn release(app: &mut App, g: GuideDrag) {
-    let list = app.page_guides.entry(app.page).or_default();
+    let page = app.page;
+    let old = app.doc.guides.get(&page).cloned().unwrap_or_default();
+    let mut list = old.clone();
     match (g.index, g.on_ruler) {
         (Some(i), true) => {
             if i < list.len() {
@@ -224,16 +305,20 @@ pub fn release(app: &mut App, g: GuideDrag) {
             }
         }
         (Some(i), false) => {
-            if let Some(slot) = list.get_mut(i) {
-                slot.pos = g.pos;
+            if i < list.len() {
+                list[i] = store(&app.doc, g.axis, g.pos, list[i].frame);
             }
         }
-        (None, false) => list.push(RulerGuide { axis: g.axis, pos: g.pos }),
+        (None, false) => list.push(store(&app.doc, g.axis, g.pos, g.frame)),
         (None, true) => {}
     }
-    if list.is_empty() {
-        app.page_guides.remove(&app.page);
+    if list == old {
+        return;
     }
+    if let Err(e) = app.hist.exec(&mut app.doc, desigma_doc::Command::SetGuides { page, guides: list }) {
+        app.show_toast(format!("Guide edit failed: {e}"), true);
+    }
+    app.changed();
 }
 
 /// Draws the guides (under the strips) and the rulers.
@@ -248,28 +333,34 @@ pub fn overlay(app: &App, ui: &Ui, rect: ERect) {
         _ => None,
     };
     let to_s = |v: DV| app.view.to_screen(rect.min, v);
-    let line = |axis: GuideAxis, pos: f32| match axis {
-        GuideAxis::X => {
-            let x = crisp(to_s(v2(pos, 0.0)).x);
-            [Pos2::new(x, top.bottom()), Pos2::new(x, rect.bottom())]
-        }
-        GuideAxis::Y => {
-            let y = crisp(to_s(v2(0.0, pos)).y);
-            [Pos2::new(left.right(), y), Pos2::new(rect.right(), y)]
+    // Page guides span the canvas; frame guides only the frame they belong to.
+    let line = |axis: GuideAxis, pos: f32, frame: Option<NodeId>| {
+        let ext = frame.map(|f| world_aabb(&app.doc, f));
+        match axis {
+            GuideAxis::X => {
+                let x = crisp(to_s(v2(pos, 0.0)).x);
+                let (y0, y1) = ext.map(|b| (to_s(v2(0.0, b.y)).y, to_s(v2(0.0, b.y + b.h)).y)).unwrap_or((top.bottom(), rect.bottom()));
+                [Pos2::new(x, y0.max(top.bottom())), Pos2::new(x, y1.min(rect.bottom()))]
+            }
+            GuideAxis::Y => {
+                let y = crisp(to_s(v2(0.0, pos)).y);
+                let (x0, x1) = ext.map(|b| (to_s(v2(b.x, 0.0)).x, to_s(v2(b.x + b.w, 0.0)).x)).unwrap_or((left.right(), rect.right()));
+                [Pos2::new(x0.max(left.right()), y), Pos2::new(x1.min(rect.right()), y)]
+            }
         }
     };
-    for (i, g) in guides_of(app).iter().enumerate() {
+    for (i, g) in guides_of(app) {
         if dragging.is_some_and(|d| d.index == Some(i)) {
             continue;
         }
-        p.line_segment(line(g.axis, g.pos), Stroke::new(1.0, theme::RULER_GUIDE));
+        p.line_segment(line(g.axis, g.pos, g.frame), Stroke::new(1.0, theme::RULER_GUIDE));
     }
     if let Some(d) = dragging.filter(|d| !d.on_ruler) {
-        p.line_segment(line(d.axis, d.pos), Stroke::new(1.0, theme::RULER_GUIDE));
+        p.line_segment(line(d.axis, d.pos, d.frame), Stroke::new(1.0, theme::RULER_GUIDE));
         // value badge next to the pointer
         if let Some(ptr) = ui.input(|i| i.pointer.latest_pos()) {
-            let o = origin(app);
-            let v = d.pos - if d.axis == GuideAxis::X { o.x } else { o.y };
+            let o = d.frame.and_then(|f| frame_origin(&app.doc, f)).unwrap_or_else(|| origin(app));
+            let v = d.pos - axis_of(o, d.axis);
             let text = fmt_value(v);
             let font = theme::font_small_strong();
             let w = crate::widgets::text_width(&p, &text, &font) + theme::CANVAS_BADGE_PAD_X * 2.0;
