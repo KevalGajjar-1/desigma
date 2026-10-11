@@ -123,11 +123,7 @@ pub struct ComponentLink {
 
 impl ComponentLink {
     pub fn is_empty(&self) -> bool {
-        self.source.is_none()
-            && self.overrides.is_empty()
-            && self.props.is_empty()
-            && self.values.is_empty()
-            && self.bindings.is_empty()
+        self.source.is_none() && self.overrides.is_empty() && self.props.is_empty() && self.values.is_empty() && self.bindings.is_empty()
     }
 }
 
@@ -188,13 +184,7 @@ impl Node {
     pub fn text(id: NodeId, r: Rect, content: impl Into<String>, style: TextStyle) -> Self {
         Self::placed(
             id,
-            NodeKind::Text(TextProps {
-                content: content.into(),
-                style,
-                runs: Vec::new(),
-                auto_resize: TextAutoResize::WidthAndHeight,
-                max_lines: None,
-            }),
+            NodeKind::Text(TextProps { content: content.into(), style, runs: Vec::new(), auto_resize: TextAutoResize::WidthAndHeight, max_lines: None }),
             r,
         )
     }
@@ -207,7 +197,9 @@ impl Node {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum NodeKind {
-    Page { background: Color },
+    Page {
+        background: Color,
+    },
     Frame(FrameProps),
     Group,
     Section,
@@ -215,19 +207,32 @@ pub enum NodeKind {
     Ellipse(ArcData),
     Line,
     /// Regular polygon with `count` sides.
-    Polygon { count: u32 },
-    Star { count: u32, inner_ratio: f32 },
+    Polygon {
+        count: u32,
+    },
+    Star {
+        count: u32,
+        inner_ratio: f32,
+    },
     /// Arbitrary vector geometry in local space.
-    Vector { paths: Vec<Path> },
+    Vector {
+        paths: Vec<Path>,
+    },
     Text(TextProps),
     BooleanOp(BooleanOp),
     /// Main component; frame-like.
     Component(FrameProps),
     ComponentSet(FrameProps),
     /// Instance of a component; children are the resolved (overridden) copy.
-    Instance { frame: FrameProps, component: Option<NodeId>, component_key: Option<String> },
+    Instance {
+        frame: FrameProps,
+        component: Option<NodeId>,
+        component_key: Option<String>,
+    },
     /// Anything the importer could not map, kept so nothing is silently lost.
-    Unknown { type_name: String },
+    Unknown {
+        type_name: String,
+    },
 }
 
 impl NodeKind {

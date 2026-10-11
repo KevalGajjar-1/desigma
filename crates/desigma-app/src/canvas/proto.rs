@@ -63,7 +63,8 @@ pub fn process(app: &mut App, ui: &mut Ui, rect: ERect, resp: &Response) -> bool
         app.proto.hot = None;
         return false;
     }
-    let (pos, pressed, down, esc) = ui.input(|i| (i.pointer.latest_pos(), i.pointer.primary_pressed(), i.pointer.primary_down(), i.key_pressed(egui::Key::Escape)));
+    let (pos, pressed, down, esc) =
+        ui.input(|i| (i.pointer.latest_pos(), i.pointer.primary_pressed(), i.pointer.primary_down(), i.key_pressed(egui::Key::Escape)));
     let inside = pos.filter(|p| rect.contains(*p) && resp.hovered());
     let idle = matches!(app.canvas.inter, super::Interaction::None) && app.canvas.text.is_none() && app.canvas.vedit.is_none();
 
@@ -91,11 +92,8 @@ pub fn process(app: &mut App, ui: &mut Ui, rect: ERect, resp: &Response) -> bool
         return true;
     }
 
-    app.proto.hover = if idle {
-        inside.and_then(|p| interact::hit_under(app, app.view.to_page(rect.min, p), true)).filter(|id| can_connect(app, *id))
-    } else {
-        None
-    };
+    app.proto.hover =
+        if idle { inside.and_then(|p| interact::hit_under(app, app.view.to_page(rect.min, p), true)).filter(|id| can_connect(app, *id)) } else { None };
     app.proto.hot = if idle { inside.and_then(|p| hotspot_at(app, rect, p)) } else { None };
     if let Some(h) = app.proto.hot {
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
@@ -152,7 +150,8 @@ pub fn overlays(app: &App, ui: &Ui, rect: ERect) {
         let Some((_, lr)) = labels.iter().find(|(id, _)| *id == f.start) else { continue };
         let font = theme::font_small_strong();
         let w = widgets::text_width(&p, &f.name, &font) + 30.0;
-        let r = ERect::from_min_size(Pos2::new(lr.left(), lr.top() - theme::PROTO_FLAG_GAP - theme::PROTO_FLAG_HEIGHT), egui::vec2(w, theme::PROTO_FLAG_HEIGHT));
+        let r =
+            ERect::from_min_size(Pos2::new(lr.left(), lr.top() - theme::PROTO_FLAG_GAP - theme::PROTO_FLAG_HEIGHT), egui::vec2(w, theme::PROTO_FLAG_HEIGHT));
         p.rect_filled(r, theme::cr(theme::RADIUS_MEDIUM), theme::PROTO_BLUE);
         crate::icons::paint(&p, crate::icons::Icon::Flag, Pos2::new(r.left() + 11.0, r.center().y), 12.0, Color32::WHITE);
         p.text(Pos2::new(r.left() + 21.0, r.center().y), Align2::LEFT_CENTER, &f.name, font, Color32::WHITE);

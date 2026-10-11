@@ -101,7 +101,13 @@ pub fn section(app: &mut App, ui: &mut Ui, x0: f32, top: f32, sel: &[NodeId]) ->
 
     // Title + add button.
     let title = at(0.0, 0.0, theme::RIGHT_PANEL_WIDTH - 1.0, theme::SECTION_TITLE_HEIGHT);
-    ui.painter().text(Pos2::new(title.left() + theme::SECTION_CONTENT_X, title.center().y), Align2::LEFT_CENTER, "Export", theme::font_body_strong(), theme::TEXT);
+    ui.painter().text(
+        Pos2::new(title.left() + theme::SECTION_CONTENT_X, title.center().y),
+        Align2::LEFT_CENTER,
+        "Export",
+        theme::font_body_strong(),
+        theme::TEXT,
+    );
     // Created before the button so the button sits on top of it.
     let title_resp = ui.interact(title, ui.id().with("export-title"), Sense::click());
     let plus = at(theme::SECTION_TRAILING_X, 8.0, theme::PANEL_ACTION_BUTTON, theme::PANEL_ACTION_BUTTON);
@@ -117,7 +123,8 @@ pub fn section(app: &mut App, ui: &mut Ui, x0: f32, top: f32, sel: &[NodeId]) ->
     for (i, row) in rows.iter_mut().enumerate() {
         let scale_r = at(theme::SECTION_CONTENT_X, y, SCALE_W, theme::FIELD_HEIGHT);
         let fmt_r = at(theme::SECTION_CONTENT_X + SCALE_W + ROW_GAP, y, FORMAT_W, theme::FIELD_HEIGHT);
-        let minus = at(theme::SECTION_CONTENT_X + theme::SECTION_CONTENT_W - theme::PANEL_ACTION_BUTTON, y, theme::PANEL_ACTION_BUTTON, theme::PANEL_ACTION_BUTTON);
+        let minus =
+            at(theme::SECTION_CONTENT_X + theme::SECTION_CONTENT_W - theme::PANEL_ACTION_BUTTON, y, theme::PANEL_ACTION_BUTTON, theme::PANEL_ACTION_BUTTON);
 
         // Scale: editable text ("2x", "512w") with a presets menu behind the chevron.
         let text_r = Rect::from_min_max(scale_r.min, Pos2::new(scale_r.right() - 20.0, scale_r.bottom()));
@@ -326,12 +333,7 @@ mod tests {
     use desigma_doc::{Node, Rect as R};
 
     fn frame(ctx: &egui::Context, t: f64, events: Vec<egui::Event>, f: impl FnMut(&mut Ui)) {
-        let raw = egui::RawInput {
-            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(400.0, 800.0))),
-            time: Some(t),
-            events,
-            ..Default::default()
-        };
+        let raw = egui::RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(400.0, 800.0))), time: Some(t), events, ..Default::default() };
         let _ = ctx.run_ui(raw, f);
     }
 

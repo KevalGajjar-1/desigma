@@ -99,7 +99,8 @@ fn flows_section(app: &mut App, ui: &mut Ui, pane: &mut Pane) {
 
 fn device_section(app: &mut App, ui: &mut Ui, pane: &mut Pane) {
     title(ui, pane, "Device", None, false);
-    let names: Vec<String> = proto::DEVICES.iter().map(|d| if d.1 > 0.0 { format!("{} ({}×{})", d.0, d.1 as i32, d.2 as i32) } else { d.0.to_string() }).collect();
+    let names: Vec<String> =
+        proto::DEVICES.iter().map(|d| if d.1 > 0.0 { format!("{} ({}×{})", d.0, d.1 as i32, d.2 as i32) } else { d.0.to_string() }).collect();
     let cur = app.proto.device.min(names.len() - 1);
     let r = pane.full(0.0);
     record(ui, "proto-device", r);
@@ -198,7 +199,11 @@ fn selection_sections(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[NodeId
 
     // Scroll behaviour.
     title(ui, pane, "Scroll behavior", None, false);
-    let frames: Vec<NodeId> = sel.iter().copied().filter(|i| app.doc.get(*i).is_some_and(|n| matches!(n.kind, NodeKind::Frame(_) | NodeKind::Component(_) | NodeKind::Instance { .. }))).collect();
+    let frames: Vec<NodeId> = sel
+        .iter()
+        .copied()
+        .filter(|i| app.doc.get(*i).is_some_and(|n| matches!(n.kind, NodeKind::Frame(_) | NodeKind::Component(_) | NodeKind::Instance { .. })))
+        .collect();
     if !frames.is_empty() {
         sublabel(ui, pane, "Overflow");
         let cur: Option<Overflow> = {
@@ -217,7 +222,11 @@ fn selection_sections(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[NodeId
         pane.y += theme::FIELD_HEIGHT + 8.0;
     }
     // Fixed position inside a scrolling parent (any non-top-level layer).
-    let inner: Vec<(NodeId, NodeId)> = sel.iter().filter_map(|i| Some((*i, app.doc.get(*i)?.parent?))).filter(|(_, p)| app.doc.get(*p).is_some_and(|n| !matches!(n.kind, NodeKind::Page { .. }))).collect();
+    let inner: Vec<(NodeId, NodeId)> = sel
+        .iter()
+        .filter_map(|i| Some((*i, app.doc.get(*i)?.parent?)))
+        .filter(|(_, p)| app.doc.get(*p).is_some_and(|n| !matches!(n.kind, NodeKind::Page { .. })))
+        .collect();
     if !inner.is_empty() {
         sublabel(ui, pane, "Position");
         let fixed: Vec<bool> = inner.iter().map(|(i, p)| app.doc.get(*p).is_some_and(|n| n.prototype.fixed_children.contains(i))).collect();
@@ -440,7 +449,13 @@ fn popover(app: &mut App, ui: &mut Ui, region: Rect) {
         let add_r = pane.rect(theme::SECTION_CONTENT_X, 0.0, theme::SECTION_CONTENT_W, theme::FIELD_HEIGHT);
         record(ui, "proto-pop-add-action", add_r);
         let ar = ui.interact(add_r, ui.id().with("pop-add-action"), Sense::click());
-        icons::paint(ui.painter(), Icon::Plus, Pos2::new(add_r.left() + 8.0, add_r.center().y), 12.0, if ar.hovered() { theme::ICON } else { theme::ICON_SECONDARY });
+        icons::paint(
+            ui.painter(),
+            Icon::Plus,
+            Pos2::new(add_r.left() + 8.0, add_r.center().y),
+            12.0,
+            if ar.hovered() { theme::ICON } else { theme::ICON_SECONDARY },
+        );
         ui.painter().text(Pos2::new(add_r.left() + 22.0, add_r.center().y), Align2::LEFT_CENTER, "Add action", theme::font_body(), theme::TEXT_SECONDARY);
         if ar.clicked() {
             let fallback = frames.iter().copied().find(|f| Some(*f) != own_top).or(own_top).unwrap_or(node);
@@ -524,7 +539,17 @@ fn action_params(app: &mut App, ui: &mut Ui, pane: &mut Pane, node: NodeId, fram
                     record(ui, &format!("proto-pop-pos-{}", proto::position_name(*pos)), c);
                     let resp = ui.interact(c, ui.id().with(("pop-pos", ai, ry, cx)), Sense::click());
                     let sel = *position == *pos;
-                    ui.painter().rect_filled(c, theme::cr(theme::RADIUS_SMALL), if sel { theme::BG_BRAND } else if resp.hovered() { theme::BG_TERTIARY } else { theme::BG_SECONDARY });
+                    ui.painter().rect_filled(
+                        c,
+                        theme::cr(theme::RADIUS_SMALL),
+                        if sel {
+                            theme::BG_BRAND
+                        } else if resp.hovered() {
+                            theme::BG_TERTIARY
+                        } else {
+                            theme::BG_SECONDARY
+                        },
+                    );
                     // a tiny overlay thumbnail inside the cell
                     let thumb = Rect::from_center_size(c.center(), Vec2::new(8.0, 8.0));
                     let off = Vec2::new((cx as f32 - 1.0) * 5.0, (ry as f32 - 1.0) * 5.0);
@@ -534,11 +559,22 @@ fn action_params(app: &mut App, ui: &mut Ui, pane: &mut Pane, node: NodeId, fram
                     }
                 }
             }
-            let mb = Rect::from_min_size(Pos2::new(r.left() + LABEL_W + 3.0 * 28.0, r.top() + 28.0), Vec2::new(r.right() - (r.left() + LABEL_W + 3.0 * 28.0), 24.0));
+            let mb =
+                Rect::from_min_size(Pos2::new(r.left() + LABEL_W + 3.0 * 28.0, r.top() + 28.0), Vec2::new(r.right() - (r.left() + LABEL_W + 3.0 * 28.0), 24.0));
             record(ui, "proto-pop-pos-Manual", mb);
             let mr = ui.interact(mb, ui.id().with(("pop-manual", ai)), Sense::click());
             let msel = *position == OverlayPosition::Manual;
-            ui.painter().rect_filled(mb, theme::cr(theme::RADIUS_SMALL), if msel { theme::BG_BRAND } else if mr.hovered() { theme::BG_TERTIARY } else { theme::BG_SECONDARY });
+            ui.painter().rect_filled(
+                mb,
+                theme::cr(theme::RADIUS_SMALL),
+                if msel {
+                    theme::BG_BRAND
+                } else if mr.hovered() {
+                    theme::BG_TERTIARY
+                } else {
+                    theme::BG_SECONDARY
+                },
+            );
             ui.painter().text(mb.center(), Align2::CENTER_CENTER, "Manual", theme::font_small(), if msel { Color32::WHITE } else { theme::TEXT_SECONDARY });
             if mr.clicked() {
                 *position = OverlayPosition::Manual;
@@ -564,7 +600,11 @@ fn action_params(app: &mut App, ui: &mut Ui, pane: &mut Pane, node: NodeId, fram
             if let Some(bg) = *background {
                 let hex = Rect::from_min_size(Pos2::new(pane.x0 + theme::SECTION_CONTENT_X + LABEL_W, pane.oy + pane.y), Vec2::new(72.0, 24.0));
                 let op = Rect::from_min_size(hex.right_top() + Vec2::new(8.0, 0.0), Vec2::new(48.0, 24.0));
-                widgets::swatch(ui.painter(), Rect::from_min_size(Pos2::new(pane.x0 + theme::SECTION_CONTENT_X, pane.oy + pane.y + 4.0), Vec2::splat(16.0)), Color32::from_rgba_unmultiplied((bg.r * 255.0) as u8, (bg.g * 255.0) as u8, (bg.b * 255.0) as u8, (bg.a * 255.0) as u8));
+                widgets::swatch(
+                    ui.painter(),
+                    Rect::from_min_size(Pos2::new(pane.x0 + theme::SECTION_CONTENT_X, pane.oy + pane.y + 4.0), Vec2::splat(16.0)),
+                    Color32::from_rgba_unmultiplied((bg.r * 255.0) as u8, (bg.g * 255.0) as u8, (bg.b * 255.0) as u8, (bg.a * 255.0) as u8),
+                );
                 if let Some(s) = field::text_input(ui, hex, ("pop-bg-hex", ai), &bg.to_hex()) {
                     if let Some(c) = Color::from_hex(&s) {
                         *background = Some(Color { a: bg.a, ..c });
@@ -589,7 +629,13 @@ fn action_params(app: &mut App, ui: &mut Ui, pane: &mut Pane, node: NodeId, fram
             }
             let x = Rect::from_min_size(Pos2::new(pane.x0 + theme::SECTION_CONTENT_X + LABEL_W, pane.oy + pane.y), Vec2::new(52.0, 24.0));
             let y = x.translate(Vec2::new(60.0, 0.0));
-            ui.painter().text(Pos2::new(pane.x0 + theme::SECTION_CONTENT_X, x.center().y), Align2::LEFT_CENTER, "Offset", theme::font_body(), theme::TEXT_SECONDARY);
+            ui.painter().text(
+                Pos2::new(pane.x0 + theme::SECTION_CONTENT_X, x.center().y),
+                Align2::LEFT_CENTER,
+                "Offset",
+                theme::font_body(),
+                theme::TEXT_SECONDARY,
+            );
             if let Some(v) = field::num_field(ui, x, ("pop-sx", ai), Prefix::Text("X"), Some(offset.x), "") {
                 offset.x = v;
             }
@@ -633,12 +679,23 @@ fn transition_ui(ui: &mut Ui, pane: &mut Pane, tr: &mut Option<Transition>) {
     let Some(t) = tr.as_mut() else { return };
     if let Some(d) = proto::transition_direction(t.kind) {
         let c = label_ctl(ui, pane, "Direction");
-        for (i, (dir, glyph)) in [(Direction::Left, "←"), (Direction::Right, "→"), (Direction::Top, "↑"), (Direction::Bottom, "↓")].into_iter().enumerate() {
+        for (i, (dir, glyph)) in [(Direction::Left, "←"), (Direction::Right, "→"), (Direction::Top, "↑"), (Direction::Bottom, "↓")].into_iter().enumerate()
+        {
             let b = Rect::from_min_size(Pos2::new(c.left() + i as f32 * 28.0, c.top()), Vec2::new(26.0, 24.0));
             record(ui, &format!("proto-pop-dir-{}", proto::direction_name(dir)), b);
             let resp = ui.interact(b, ui.id().with(("pop-dir", i)), Sense::click());
             let sel = d == dir;
-            ui.painter().rect_filled(b, theme::cr(theme::RADIUS_SMALL), if sel { theme::BG_BRAND } else if resp.hovered() { theme::BG_TERTIARY } else { theme::BG_SECONDARY });
+            ui.painter().rect_filled(
+                b,
+                theme::cr(theme::RADIUS_SMALL),
+                if sel {
+                    theme::BG_BRAND
+                } else if resp.hovered() {
+                    theme::BG_TERTIARY
+                } else {
+                    theme::BG_SECONDARY
+                },
+            );
             ui.painter().text(b.center(), Align2::CENTER_CENTER, glyph, theme::font_body(), if sel { Color32::WHITE } else { theme::TEXT_SECONDARY });
             if resp.on_hover_text(proto::direction_name(dir)).clicked() {
                 t.kind = proto::with_direction(t.kind, dir);
@@ -648,7 +705,13 @@ fn transition_ui(ui: &mut Ui, pane: &mut Pane, tr: &mut Option<Transition>) {
     }
     if t.kind == TransitionKind::SmartAnimate {
         let r = pane.rect(theme::SECTION_CONTENT_X, 0.0, theme::SECTION_CONTENT_W, 28.0);
-        ui.painter().text(Pos2::new(r.left(), r.top() + 6.0), Align2::LEFT_CENTER, "Matches layers by name and position", theme::font_small(), theme::TEXT_TERTIARY);
+        ui.painter().text(
+            Pos2::new(r.left(), r.top() + 6.0),
+            Align2::LEFT_CENTER,
+            "Matches layers by name and position",
+            theme::font_small(),
+            theme::TEXT_TERTIARY,
+        );
         pane.y += 20.0;
     }
     // Easing: preset dropdown + curve preview.
@@ -701,7 +764,13 @@ fn transition_ui(ui: &mut Ui, pane: &mut Pane, tr: &mut Option<Transition>) {
     record(ui, "proto-pop-duration", c);
     if matches!(t.easing, Easing::Spring { .. }) {
         let ms = easing::effective_duration_ms(&t.easing, t.duration_ms);
-        ui.painter().text(Pos2::new(c.left() + 8.0, c.center().y), Align2::LEFT_CENTER, format!("{ms} ms (from spring)"), theme::font_body(), theme::TEXT_TERTIARY);
+        ui.painter().text(
+            Pos2::new(c.left() + 8.0, c.center().y),
+            Align2::LEFT_CENTER,
+            format!("{ms} ms (from spring)"),
+            theme::font_body(),
+            theme::TEXT_TERTIARY,
+        );
     } else if let Some(v) = field::num_field(ui, c, "pop-duration", Prefix::None, Some(t.duration_ms as f32), " ms") {
         t.duration_ms = v.clamp(0.0, 60_000.0) as u32;
     }

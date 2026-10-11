@@ -84,14 +84,8 @@ pub fn demo_document() -> Document {
     let mut card = Node::frame(id, Rect::new(560.0, 120.0, 10.0, 10.0));
     card.name = "Card".into();
     card.corner_radii = [12.0; 4];
-    card.effects = vec![Effect::DropShadow {
-        color: Color::rgba(0, 0, 0, 40),
-        offset: Vec2::new(0.0, 4.0),
-        radius: 12.0,
-        spread: 0.0,
-        visible: true,
-        show_behind: false,
-    }];
+    card.effects =
+        vec![Effect::DropShadow { color: Color::rgba(0, 0, 0, 40), offset: Vec2::new(0.0, 4.0), radius: 12.0, spread: 0.0, visible: true, show_behind: false }];
     card.kind = NodeKind::Frame(FrameProps {
         clips_content: false,
         auto_layout: Some(AutoLayout {
@@ -153,10 +147,7 @@ pub fn demo_document() -> Document {
         "Heading/Large".into(),
         Style::Text(TextStyle { font_size: 32.0, font_weight: 700, line_height: LineHeight::Pixels(40.0), ..Default::default() }),
     );
-    d.styles.insert(
-        "Body/Regular".into(),
-        Style::Text(TextStyle { font_size: 16.0, line_height: LineHeight::Pixels(24.0), ..Default::default() }),
-    );
+    d.styles.insert("Body/Regular".into(), Style::Text(TextStyle { font_size: 16.0, line_height: LineHeight::Pixels(24.0), ..Default::default() }));
     if let Some(p) = d.get_mut(page) {
         p.kind = NodeKind::Page { background: Color::from_hex(&format!("{:06X}", theme_page_bg())).unwrap() };
     }
@@ -222,7 +213,11 @@ fn variables_demo(d: &mut Document, card: NodeId, title: NodeId, text: NodeId, b
             }
         }
     };
-    bind(d, card, &[("fills/0", &surface), ("topLeftRadius", &radius), ("topRightRadius", &radius), ("bottomRightRadius", &radius), ("bottomLeftRadius", &radius)]);
+    bind(
+        d,
+        card,
+        &[("fills/0", &surface), ("topLeftRadius", &radius), ("topRightRadius", &radius), ("bottomRightRadius", &radius), ("bottomLeftRadius", &radius)],
+    );
     bind(d, title, &[("fills/0", &ink), ("characters", &heading)]);
     bind(d, text, &[("fills/0", &muted)]);
     bind(d, bar, &[("fills/0", &brand)]);

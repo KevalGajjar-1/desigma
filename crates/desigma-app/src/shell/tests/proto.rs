@@ -442,7 +442,12 @@ fn present_wheel_scrolls_a_scrolling_frame_and_fixed_children_stay() {
     let before = st.screen_center_of(hero).unwrap();
     let center = st.stage.center();
     s.mv(center);
-    s.frame(vec![Event::MouseWheel { unit: egui::MouseWheelUnit::Point, delta: egui::vec2(0.0, -300.0), phase: egui::TouchPhase::Move, modifiers: Modifiers::NONE }]);
+    s.frame(vec![Event::MouseWheel {
+        unit: egui::MouseWheelUnit::Point,
+        delta: egui::vec2(0.0, -300.0),
+        phase: egui::TouchPhase::Move,
+        modifiers: Modifiers::NONE,
+    }]);
     s.frame(vec![]);
     let st = s.app().proto.present.as_ref().unwrap();
     assert!(st.player.scroll_of(welcome).y > 100.0, "wheel scrolled: {:?}", st.player.scroll_of(welcome));
@@ -453,11 +458,8 @@ fn present_wheel_scrolls_a_scrolling_frame_and_fixed_children_stay() {
 fn present_open_link_asks_first() {
     let mut s = Sim::new();
     let btn = s.by_name("Button");
-    s.shell.app.doc.get_mut(btn).unwrap().prototype.reactions = vec![Reaction {
-        trigger: Trigger::OnClick,
-        actions: vec![Action::OpenUrl { url: "https://example.com/x".into(), new_tab: true }],
-        transition: None,
-    }];
+    s.shell.app.doc.get_mut(btn).unwrap().prototype.reactions =
+        vec![Reaction { trigger: Trigger::OnClick, actions: vec![Action::OpenUrl { url: "https://example.com/x".into(), new_tab: true }], transition: None }];
     present_open(&mut s);
     let at = s.app().proto.present.as_ref().unwrap().screen_center_of(btn).unwrap();
     s.click(at);

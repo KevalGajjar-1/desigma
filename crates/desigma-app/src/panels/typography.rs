@@ -16,7 +16,17 @@ use crate::widgets::{self};
 use desigma_doc::*;
 use egui::{Align2, Color32, Pos2, Rect, Sense, Stroke, StrokeKind, Ui, Vec2};
 
-const WEIGHTS: [(&str, u16); 9] = [("Thin", 100), ("Extra Light", 200), ("Light", 300), ("Regular", 400), ("Medium", 500), ("Semi Bold", 600), ("Bold", 700), ("Extra Bold", 800), ("Black", 900)];
+const WEIGHTS: [(&str, u16); 9] = [
+    ("Thin", 100),
+    ("Extra Light", 200),
+    ("Light", 300),
+    ("Regular", 400),
+    ("Medium", 500),
+    ("Semi Bold", 600),
+    ("Bold", 700),
+    ("Extra Bold", 800),
+    ("Black", 900),
+];
 
 /// Combines two summaries: properties that differ become mixed.
 pub fn combine(a: &Summary, b: &Summary) -> Summary {
@@ -96,7 +106,13 @@ fn seg_text(ui: &mut Ui, pane: &Pane, x: f32, key: &str, labels: &[&str], select
         };
         let resp = ui.interact(r, ui.id().with(("segt", key, i)), Sense::click());
         let sel = selected == Some(i);
-        let bg = if sel { theme::BG_TERTIARY } else if resp.hovered() { theme::BG_TERTIARY.gamma_multiply(0.6) } else { theme::BG_SECONDARY };
+        let bg = if sel {
+            theme::BG_TERTIARY
+        } else if resp.hovered() {
+            theme::BG_TERTIARY.gamma_multiply(0.6)
+        } else {
+            theme::BG_SECONDARY
+        };
         ui.painter().rect_filled(r, radius, bg);
         ui.painter().text(r.center(), Align2::CENTER_CENTER, *label, theme::font_body_strong(), if sel { theme::ICON } else { theme::ICON_SECONDARY });
         if i > 0 {
@@ -164,7 +180,10 @@ pub(super) fn section(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[NodeId
 
     // ---- line height + letter spacing
     let lh = match sum.line_height {
-        Some(l) => Some(richtext::line_height_px(l, sum.size.unwrap_or(t.style.font_size)).unwrap_or_else(|| ((sum.size.unwrap_or(t.style.font_size) * 1.21) * 10.0).round() / 10.0)),
+        Some(l) => Some(
+            richtext::line_height_px(l, sum.size.unwrap_or(t.style.font_size))
+                .unwrap_or_else(|| ((sum.size.unwrap_or(t.style.font_size) * 1.21) * 10.0).round() / 10.0),
+        ),
         None => None,
     };
     if let Some(v) = field::num_field(ui, pane.col(0, 0.0), "line-height", Prefix::Text("\u{2195}"), lh, "") {
@@ -185,7 +204,14 @@ pub(super) fn section(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[NodeId
         TextAlignH::Center => 1,
         TextAlignH::Right => 2,
     };
-    if let Some(i) = segmented(ui, pane, theme::SECTION_CONTENT_X, "text-align", &[crate::icons::Icon::TextLeft, crate::icons::Icon::TextCenter, crate::icons::Icon::TextRight], Some(cur)) {
+    if let Some(i) = segmented(
+        ui,
+        pane,
+        theme::SECTION_CONTENT_X,
+        "text-align",
+        &[crate::icons::Icon::TextLeft, crate::icons::Icon::TextCenter, crate::icons::Icon::TextRight],
+        Some(cur),
+    ) {
         let a = [TextAlignH::Left, TextAlignH::Center, TextAlignH::Right][i];
         set_base(app, sel, |s| s.align_h = a);
     }
@@ -360,7 +386,13 @@ fn family_picker(ui: &mut Ui, rect: Rect, label: &str) -> Option<String> {
                     ui.painter().rect_filled(row.shrink2(Vec2::new(theme::MENU_PILL_INSET, 0.0)), theme::cr(theme::MENU_PILL_RADIUS), theme::BG_MENU_SELECTED);
                 }
                 if cur {
-                    crate::icons::paint(ui.painter(), crate::icons::Icon::Check, Pos2::new(row.left() + 20.0, row.center().y), theme::MENU_ICON_SIZE, theme::TEXT);
+                    crate::icons::paint(
+                        ui.painter(),
+                        crate::icons::Icon::Check,
+                        Pos2::new(row.left() + 20.0, row.center().y),
+                        theme::MENU_ICON_SIZE,
+                        theme::TEXT,
+                    );
                 }
                 ui.painter().text(Pos2::new(row.left() + 36.0, row.center().y), Align2::LEFT_CENTER, list[i], theme::font_menu(), theme::TEXT);
                 if rr.clicked() {

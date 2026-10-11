@@ -32,9 +32,18 @@ pub fn show(app: &mut App, ui: &mut Ui, rect: Rect) {
         app.ui.menu = if app.ui.menu == Some(MenuKind::FileName) { None } else { Some(MenuKind::FileName) };
         app.ui.menu_anchor = Some(hit);
     }
-    let sub = p.text(Pos2::new(x0 + theme::PANEL_PADDING_X, y + theme::LEFT_SUBLABEL_Y + 8.0), Align2::LEFT_CENTER, "Drafts", theme::font_body(), theme::TEXT_SECONDARY);
+    let sub = p.text(
+        Pos2::new(x0 + theme::PANEL_PADDING_X, y + theme::LEFT_SUBLABEL_Y + 8.0),
+        Align2::LEFT_CENTER,
+        "Drafts",
+        theme::font_body(),
+        theme::TEXT_SECONDARY,
+    );
     widgets::badge(&p, Pos2::new(sub.right() + theme::BADGE_GAP, sub.center().y - theme::BADGE_HEIGHT / 2.0), "Free");
-    let tb = Rect::from_min_size(Pos2::new(inner.right() - theme::LEFT_SIDEBAR_BTN_RIGHT_PAD - theme::PANEL_ACTION_BUTTON, y + theme::LEFT_ACTION_Y), Vec2::splat(theme::PANEL_ACTION_BUTTON));
+    let tb = Rect::from_min_size(
+        Pos2::new(inner.right() - theme::LEFT_SIDEBAR_BTN_RIGHT_PAD - theme::PANEL_ACTION_BUTTON, y + theme::LEFT_ACTION_Y),
+        Vec2::splat(theme::PANEL_ACTION_BUTTON),
+    );
     if widgets::icon_button(ui, tb, "sidebar", Icon::Sidebar, false, "Hide sidebar").clicked() {
         app.ui.left_collapsed = true;
     }
@@ -91,7 +100,10 @@ fn pages_list(app: &mut App, ui: &mut Ui, list: Rect) {
         let p = ui.painter().clone();
         for (i, pid) in pages.iter().enumerate() {
             let top = list.top() + i as f32 * theme::PAGE_ROW_HEIGHT - scroll;
-            let row = Rect::from_min_size(Pos2::new(list.left() + theme::PAGE_ROW_INSET, top), Vec2::new(list.width() - theme::PAGE_ROW_INSET * 2.0, theme::PAGE_ROW_HEIGHT));
+            let row = Rect::from_min_size(
+                Pos2::new(list.left() + theme::PAGE_ROW_INSET, top),
+                Vec2::new(list.width() - theme::PAGE_ROW_INSET * 2.0, theme::PAGE_ROW_HEIGHT),
+            );
             if row.bottom() < list.top() || row.top() > list.bottom() {
                 continue;
             }
@@ -159,7 +171,10 @@ fn page_drag(app: &mut App, ui: &mut Ui, list: Rect, scroll: f32) {
         let slot = ((pos.y - list.top() + scroll) / theme::PAGE_ROW_HEIGHT).round().clamp(0.0, n as f32) as usize;
         app.layers.page_drop = Some(slot);
         let y = list.top() + slot as f32 * theme::PAGE_ROW_HEIGHT - scroll;
-        let line = Rect::from_min_max(Pos2::new(list.left() + theme::PAGE_ROW_INSET, y - theme::LAYER_DROP_THICKNESS / 2.0), Pos2::new(list.right() - theme::PAGE_ROW_INSET, y + theme::LAYER_DROP_THICKNESS / 2.0));
+        let line = Rect::from_min_max(
+            Pos2::new(list.left() + theme::PAGE_ROW_INSET, y - theme::LAYER_DROP_THICKNESS / 2.0),
+            Pos2::new(list.right() - theme::PAGE_ROW_INSET, y + theme::LAYER_DROP_THICKNESS / 2.0),
+        );
         ui.painter().with_clip_rect(list).rect_filled(line, 0.0, theme::DROP_INDICATOR);
     }
     if released {
@@ -178,11 +193,7 @@ fn page_menu(app: &mut App, ui: &mut Ui) {
         app.layers.page_menu = None;
         return;
     }
-    let items = [
-        MenuItem::new("Rename"),
-        MenuItem::new("Duplicate"),
-        MenuItem::new("Delete").disabled(app.doc.pages.len() <= 1),
-    ];
+    let items = [MenuItem::new("Rename"), MenuItem::new("Duplicate"), MenuItem::new("Delete").disabled(app.doc.pages.len() <= 1)];
     match popup_menu(ui.ctx(), egui::Id::new("page-menu"), at, theme::PAGE_MENU_WIDTH, &items, None) {
         MenuResult::Picked(i) => {
             app.layers.page_menu = None;

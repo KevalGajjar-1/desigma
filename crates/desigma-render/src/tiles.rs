@@ -31,11 +31,7 @@ fn pool() -> &'static rayon::ThreadPool {
     POOL.get_or_init(|| {
         let cores = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
         let n = std::env::var("DESIGMA_TILE_THREADS").ok().and_then(|v| v.parse().ok()).unwrap_or((cores / 2).clamp(2, 8));
-        rayon::ThreadPoolBuilder::new()
-            .num_threads(n)
-            .thread_name(|i| format!("desigma-tile-{i}"))
-            .build()
-            .expect("tile thread pool")
+        rayon::ThreadPoolBuilder::new().num_threads(n).thread_name(|i| format!("desigma-tile-{i}")).build().expect("tile thread pool")
     })
 }
 

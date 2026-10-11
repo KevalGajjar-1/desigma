@@ -21,10 +21,7 @@ fn flatten_quad(out: &mut Vec<Pt>, p0: sk::Point, p1: sk::Point, p2: sk::Point, 
     for i in 1..=n {
         let t = i as f32 / n as f32;
         let u = 1.0 - t;
-        out.push([
-            (u * u * p0.x + 2.0 * u * t * p1.x + t * t * p2.x) as f64,
-            (u * u * p0.y + 2.0 * u * t * p1.y + t * t * p2.y) as f64,
-        ]);
+        out.push([(u * u * p0.x + 2.0 * u * t * p1.x + t * t * p2.x) as f64, (u * u * p0.y + 2.0 * u * t * p1.y + t * t * p2.y) as f64]);
     }
 }
 
@@ -35,10 +32,7 @@ fn flatten_cubic(out: &mut Vec<Pt>, p0: sk::Point, p1: sk::Point, p2: sk::Point,
         let t = i as f32 / n as f32;
         let u = 1.0 - t;
         let (a, b, c, e) = (u * u * u, 3.0 * u * u * t, 3.0 * u * t * t, t * t * t);
-        out.push([
-            (a * p0.x + b * p1.x + c * p2.x + e * p3.x) as f64,
-            (a * p0.y + b * p1.y + c * p2.y + e * p3.y) as f64,
-        ]);
+        out.push([(a * p0.x + b * p1.x + c * p2.x + e * p3.x) as f64, (a * p0.y + b * p1.y + c * p2.y + e * p3.y) as f64]);
     }
 }
 
@@ -103,7 +97,6 @@ fn transform_shapes(shapes: &mut Shapes, a: &d::Affine) {
         }
     }
 }
-
 
 /// Normalised geometry of `child` in its parent's coordinate space.
 fn child_shapes(doc: &Document, child: &Node, tol: f32) -> Option<Shapes> {

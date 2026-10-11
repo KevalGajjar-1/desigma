@@ -201,7 +201,18 @@ pub fn show(app: &mut App, ui: &mut Ui, region: Rect) {
                 Vec2::new(region.width(), theme::LAYER_ROW_HEIGHT),
             );
             let is_sel = selected.contains(&row.id);
-            let under_sel = !is_sel && { let mut c = node.parent; let mut f = false; while let Some(pp) = c { if selected.contains(&pp) { f = true; break; } c = app.doc.get(pp).and_then(|n| n.parent); } f };
+            let under_sel = !is_sel && {
+                let mut c = node.parent;
+                let mut f = false;
+                while let Some(pp) = c {
+                    if selected.contains(&pp) {
+                        f = true;
+                        break;
+                    }
+                    c = app.doc.get(pp).and_then(|n| n.parent);
+                }
+                f
+            };
             let resp = ui.interact(rr, ui.id().with(("layer", row.id.0)), Sense::click_and_drag());
             let row_hot = ui.rect_contains_pointer(rr);
             if resp.hovered() {
@@ -220,7 +231,13 @@ pub fn show(app: &mut App, ui: &mut Ui, region: Rect) {
             if row.has_children {
                 let open = app.layers.expanded.contains(&row.id);
                 let cr = ui.interact(chev, ui.id().with(("chev", row.id.0)), Sense::click());
-                let col = if is_sel { theme::ICON_SELECTED } else if cr.hovered() { theme::ICON } else { theme::ICON_TERTIARY };
+                let col = if is_sel {
+                    theme::ICON_SELECTED
+                } else if cr.hovered() {
+                    theme::ICON
+                } else {
+                    theme::ICON_TERTIARY
+                };
                 icons::paint(&p, if open { Icon::ChevronDown } else { Icon::ChevronRight }, chev.center(), 12.0, col);
                 if cr.clicked() {
                     if open {
@@ -232,13 +249,25 @@ pub fn show(app: &mut App, ui: &mut Ui, region: Rect) {
             }
             let comp = is_component_like(&node);
             let icon_c = Pos2::new(chev.right() + theme::LAYER_ICON_GAP + theme::LAYER_ICON_SIZE / 2.0, rr.center().y);
-            let icon_col = if comp { theme::TEXT_COMPONENT } else if is_sel { theme::ICON_SELECTED } else { theme::ICON_TERTIARY };
+            let icon_col = if comp {
+                theme::TEXT_COMPONENT
+            } else if is_sel {
+                theme::ICON_SELECTED
+            } else {
+                theme::ICON_TERTIARY
+            };
             icons::paint(&p, kind_icon(&node.kind), icon_c, theme::LAYER_ICON_SIZE, icon_col);
 
             let text_left = icon_c.x + theme::LAYER_ICON_SIZE / 2.0 + 6.0;
             let toggles_w = theme::LAYER_TOGGLE_SIZE * 2.0 + 8.0;
             let text_right = rr.right() - toggles_w;
-            let tcol = if !node.visible { theme::TEXT_TERTIARY } else if comp { theme::TEXT_COMPONENT } else { theme::TEXT };
+            let tcol = if !node.visible {
+                theme::TEXT_TERTIARY
+            } else if comp {
+                theme::TEXT_COMPONENT
+            } else {
+                theme::TEXT
+            };
             if app.layers.renaming == Some(row.id) {
                 let id = ui.id().with(("layer-rename", row.id.0));
                 let tr = Rect::from_min_max(Pos2::new(text_left - 4.0, rr.top() + 4.0), Pos2::new(rr.right() - 8.0, rr.bottom() - 4.0));
@@ -272,14 +301,26 @@ pub fn show(app: &mut App, ui: &mut Ui, region: Rect) {
             let lock = eye.translate(Vec2::new(-theme::LAYER_TOGGLE_SIZE, 0.0));
             if row_hot || !node.visible {
                 let er = ui.interact(eye, ui.id().with(("eye", row.id.0)), Sense::click());
-                icons::paint(&p, if node.visible { Icon::Eye } else { Icon::EyeOff }, eye.center(), 14.0, if er.hovered() { theme::ICON } else { theme::ICON_SECONDARY });
+                icons::paint(
+                    &p,
+                    if node.visible { Icon::Eye } else { Icon::EyeOff },
+                    eye.center(),
+                    14.0,
+                    if er.hovered() { theme::ICON } else { theme::ICON_SECONDARY },
+                );
                 if er.clicked() {
                     app.toggle_visible(row.id);
                 }
             }
             if row_hot || node.locked {
                 let lr = ui.interact(lock, ui.id().with(("lock", row.id.0)), Sense::click());
-                icons::paint(&p, if node.locked { Icon::Lock } else { Icon::Unlock }, lock.center(), 14.0, if lr.hovered() { theme::ICON } else { theme::ICON_SECONDARY });
+                icons::paint(
+                    &p,
+                    if node.locked { Icon::Lock } else { Icon::Unlock },
+                    lock.center(),
+                    14.0,
+                    if lr.hovered() { theme::ICON } else { theme::ICON_SECONDARY },
+                );
                 if lr.clicked() {
                     app.toggle_lock(row.id);
                 }

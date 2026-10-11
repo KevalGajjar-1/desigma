@@ -51,14 +51,7 @@ fn arc_to(pb: &mut sk::PathBuilder, cx: f32, cy: f32, rx: f32, ry: f32, a0: f32,
         let b = a + step;
         let (sa, ca) = a.sin_cos();
         let (sb, cb) = b.sin_cos();
-        pb.cubic_to(
-            cx + rx * (ca - k * sa),
-            cy + ry * (sa + k * ca),
-            cx + rx * (cb + k * sb),
-            cy + ry * (sb - k * cb),
-            cx + rx * cb,
-            cy + ry * sb,
-        );
+        pb.cubic_to(cx + rx * (ca - k * sa), cy + ry * (sa + k * ca), cx + rx * (cb + k * sb), cy + ry * (sb - k * cb), cx + rx * cb, cy + ry * sb);
         a = b;
     }
 }
@@ -164,12 +157,7 @@ impl SmoothCorner {
                 let nb = ang + step;
                 let (sa, ca) = ang.sin_cos();
                 let (sb, cb) = nb.sin_cos();
-                cubic(
-                    pb,
-                    (cx + r * (ca - k * sa), cy + r * (sa + k * ca)),
-                    (cx + r * (cb + k * sb), cy + r * (sb - k * cb)),
-                    (cx + r * cb, cy + r * sb),
-                );
+                cubic(pb, (cx + r * (ca - k * sa), cy + r * (sa + k * ca)), (cx + r * (cb + k * sb), cy + r * (sb - k * cb)), (cx + r * cb, cy + r * sb));
                 ang = nb;
             }
         }
@@ -434,12 +422,7 @@ pub fn node_shape(doc: &Document, n: &Node, tol: f32) -> Option<Shape> {
 fn derived_shape(doc: &Document, n: &Node, tol: f32) -> Option<Shape> {
     let (w, h) = (n.size.x, n.size.y);
     match &n.kind {
-        NodeKind::Frame(_)
-        | NodeKind::Component(_)
-        | NodeKind::ComponentSet(_)
-        | NodeKind::Instance { .. }
-        | NodeKind::Section
-        | NodeKind::Rectangle => {
+        NodeKind::Frame(_) | NodeKind::Component(_) | NodeKind::ComponentSet(_) | NodeKind::Instance { .. } | NodeKind::Section | NodeKind::Rectangle => {
             let radii = if matches!(n.kind, NodeKind::Section) { [0.0; 4] } else { n.corner_radii };
             let mut s = Shape::single(smooth_rounded_rect(w, h, radii, n.corner_smoothing)?, sk::FillRule::Winding, true);
             s.is_rect = true;
@@ -452,14 +435,10 @@ fn derived_shape(doc: &Document, n: &Node, tol: f32) -> Option<Shape> {
             pb.line_to(w, 0.0);
             Some(Shape { paths: vec![(pb.finish()?, sk::FillRule::Winding)], closed: false, fillable: false, is_rect: false, stroke_paths: None })
         }
-        NodeKind::Polygon { count } => {
-            Some(Shape::single(poly_path(w, h, &polygon_points(*count), n.corner_radii[0])?, sk::FillRule::Winding, true))
+        NodeKind::Polygon { count } => Some(Shape::single(poly_path(w, h, &polygon_points(*count), n.corner_radii[0])?, sk::FillRule::Winding, true)),
+        NodeKind::Star { count, inner_ratio } => {
+            Some(Shape::single(poly_path(w, h, &star_points(*count, *inner_ratio), n.corner_radii[0])?, sk::FillRule::Winding, true))
         }
-        NodeKind::Star { count, inner_ratio } => Some(Shape::single(
-            poly_path(w, h, &star_points(*count, *inner_ratio), n.corner_radii[0])?,
-            sk::FillRule::Winding,
-            true,
-        )),
         NodeKind::Vector { paths } => {
             let s = vector_paths(paths);
             if s.paths.is_empty() {

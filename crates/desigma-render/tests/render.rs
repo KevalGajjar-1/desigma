@@ -361,14 +361,8 @@ fn polygon_star_vector() {
 fn drop_shadow_present_and_blurred() {
     let mut t = T::new();
     let r = t.rect(None, Rect::new(30.0, 30.0, 40.0, 40.0), RED);
-    t.node(r).effects = vec![Effect::DropShadow {
-        color: Color::rgba(0, 0, 0, 128),
-        offset: Vec2::new(0.0, 8.0),
-        radius: 8.0,
-        spread: 0.0,
-        visible: true,
-        show_behind: false,
-    }];
+    t.node(r).effects =
+        vec![Effect::DropShadow { color: Color::rgba(0, 0, 0, 128), offset: Vec2::new(0.0, 8.0), radius: 8.0, spread: 0.0, visible: true, show_behind: false }];
     let pm = t.render(100, 100);
     assert_eq!(px(&pm, 50, 50), [255, 0, 0, 255], "node on top of its shadow");
     let below = px(&pm, 50, 76);
@@ -390,13 +384,7 @@ fn drop_shadow_present_and_blurred() {
 fn inner_shadow_darkens_edges_only() {
     let mut t = T::new();
     let r = t.rect(None, Rect::new(10.0, 10.0, 60.0, 60.0), Color::WHITE);
-    t.node(r).effects = vec![Effect::InnerShadow {
-        color: Color::rgba(0, 0, 0, 255),
-        offset: Vec2::new(0.0, 6.0),
-        radius: 6.0,
-        spread: 0.0,
-        visible: true,
-    }];
+    t.node(r).effects = vec![Effect::InnerShadow { color: Color::rgba(0, 0, 0, 255), offset: Vec2::new(0.0, 6.0), radius: 6.0, spread: 0.0, visible: true }];
     let pm = t.render(80, 80);
     assert!(px(&pm, 40, 12)[0] < 120, "top edge shadowed: {:?}", px(&pm, 40, 12));
     assert!(px(&pm, 40, 45)[0] > 240, "centre/bottom clear: {:?}", px(&pm, 40, 45));
@@ -514,12 +502,7 @@ fn text_renders_ink() {
 
     // colour + alignment: centred text puts ink around the middle of the box
     let mut t = T::new();
-    let style = TextStyle {
-        font_size: 20.0,
-        align_h: TextAlignH::Center,
-        fills: vec![Paint::solid(RED)],
-        ..Default::default()
-    };
+    let style = TextStyle { font_size: 20.0, align_h: TextAlignH::Center, fills: vec![Paint::solid(RED)], ..Default::default() };
     let n = t.add(None, |id| Node::text(id, Rect::new(0.0, 0.0, 200.0, 30.0), "I", style));
     if let NodeKind::Text(p) = &mut t.node(n).kind {
         p.auto_resize = TextAutoResize::None;

@@ -92,9 +92,7 @@ fn blur_reach(n: &Node) -> f32 {
             Effect::InnerShadow { offset, radius, spread, visible: true, .. } => {
                 r = r.max(offset.x.abs().max(offset.y.abs()) + spread.abs() + radius * 1.6 + 2.0)
             }
-            Effect::LayerBlur { radius, visible: true } | Effect::BackgroundBlur { radius, visible: true } if *radius > 0.0 => {
-                r = r.max(radius * 1.6 + 2.0)
-            }
+            Effect::LayerBlur { radius, visible: true } | Effect::BackgroundBlur { radius, visible: true } if *radius > 0.0 => r = r.max(radius * 1.6 + 2.0),
             _ => {}
         }
     }
@@ -275,7 +273,15 @@ impl Differ {
         if let Some(p) = doc.get(page) {
             let changed_children = self.snap.get(&page).map(|s| s.children != p.children).unwrap_or(true);
             if changed_children {
-                self.children_delta(self.snap.get(&page).map(|s| s.children.clone()).unwrap_or_default(), &p.children, &obounds, &nbounds, &is_mask, &mut rects, &mut spread);
+                self.children_delta(
+                    self.snap.get(&page).map(|s| s.children.clone()).unwrap_or_default(),
+                    &p.children,
+                    &obounds,
+                    &nbounds,
+                    &is_mask,
+                    &mut rects,
+                    &mut spread,
+                );
             }
             self.snap.insert(page, p.clone());
         }

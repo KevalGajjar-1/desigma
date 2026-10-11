@@ -72,10 +72,7 @@ pub(crate) fn parse_paint(v: &Value) -> Option<Paint> {
         [g(0, Vec2::new(0.5, 0.0)), g(1, Vec2::new(0.5, 1.0)), g(2, Vec2::new(1.0, 0.0))]
     };
     let stops = || -> Vec<GradientStop> {
-        farr(v, "gradientStops")
-            .iter()
-            .filter_map(|s| Some(GradientStop { pos: fnum(s, "position")?, color: s.get("color").and_then(color)? }))
-            .collect()
+        farr(v, "gradientStops").iter().filter_map(|s| Some(GradientStop { pos: fnum(s, "position")?, color: s.get("color").and_then(color)? })).collect()
     };
     let kind = match t {
         "SOLID" => PaintKind::Solid(v.get("color").and_then(color).unwrap_or(Color::BLACK)),
@@ -113,14 +110,7 @@ fn parse_effect(v: &Value) -> Option<Effect> {
     let offset = v.get("offset").and_then(vec2).unwrap_or(Vec2::ZERO);
     let spread = fnum(v, "spread").unwrap_or(0.0);
     Some(match fstr(v, "type")? {
-        "DROP_SHADOW" => Effect::DropShadow {
-            color: col,
-            offset,
-            radius,
-            spread,
-            visible,
-            show_behind: fbool(v, "showShadowBehindNode").unwrap_or(false),
-        },
+        "DROP_SHADOW" => Effect::DropShadow { color: col, offset, radius, spread, visible, show_behind: fbool(v, "showShadowBehindNode").unwrap_or(false) },
         "INNER_SHADOW" => Effect::InnerShadow { color: col, offset, radius, spread, visible },
         "LAYER_BLUR" => Effect::LayerBlur { radius, visible },
         "BACKGROUND_BLUR" => Effect::BackgroundBlur { radius, visible },
@@ -478,9 +468,7 @@ impl Ctx {
             "INSTANCE" => NodeKind::Instance {
                 frame: frame(),
                 component: None,
-                component_key: fstr(v, "componentId")
-                    .and_then(|c| self.component_keys.get(c).cloned())
-                    .or_else(|| fstr(v, "componentKey").map(String::from)),
+                component_key: fstr(v, "componentId").and_then(|c| self.component_keys.get(c).cloned()).or_else(|| fstr(v, "componentKey").map(String::from)),
             },
             "RECTANGLE" => NodeKind::Rectangle,
             "ELLIPSE" => {
@@ -537,11 +525,7 @@ impl Ctx {
                 None => Affine::IDENTITY,
             },
         };
-        n.size = v
-            .get("size")
-            .and_then(vec2)
-            .or_else(|| bbox.and_then(|b| Some(Vec2::new(fnum(b, "width")?, fnum(b, "height")?))))
-            .unwrap_or(Vec2::ZERO);
+        n.size = v.get("size").and_then(vec2).or_else(|| bbox.and_then(|b| Some(Vec2::new(fnum(b, "width")?, fnum(b, "height")?)))).unwrap_or(Vec2::ZERO);
 
         // Paint & stroke.
         let fills = parse_paints(v.get("fills"));
@@ -1130,12 +1114,34 @@ pub(crate) fn override_field(key: &str, is_text: bool) -> Option<OverrideField> 
         "effects" => OverrideField::Effects,
         "cornerRadius" | "rectangleCornerRadii" | "cornerSmoothing" => OverrideField::CornerRadii,
         "characters" => OverrideField::Characters,
-        "style" | "characterStyleOverrides" | "styleOverrideTable" | "fontSize" | "fontName" | "fontFamily" | "textAutoResize" | "textTruncation" | "maxLines" => {
-            OverrideField::TextStyle
-        }
-        "layoutMode" | "itemSpacing" | "counterAxisSpacing" | "paddingLeft" | "paddingRight" | "paddingTop" | "paddingBottom" | "primaryAxisAlignItems"
-        | "counterAxisAlignItems" | "primaryAxisSizingMode" | "counterAxisSizingMode" | "layoutWrap" | "clipsContent" | "layoutGrids" | "layoutAlign"
-        | "layoutGrow" | "layoutPositioning" | "layoutSizingHorizontal" | "layoutSizingVertical" => OverrideField::Layout,
+        "style"
+        | "characterStyleOverrides"
+        | "styleOverrideTable"
+        | "fontSize"
+        | "fontName"
+        | "fontFamily"
+        | "textAutoResize"
+        | "textTruncation"
+        | "maxLines" => OverrideField::TextStyle,
+        "layoutMode"
+        | "itemSpacing"
+        | "counterAxisSpacing"
+        | "paddingLeft"
+        | "paddingRight"
+        | "paddingTop"
+        | "paddingBottom"
+        | "primaryAxisAlignItems"
+        | "counterAxisAlignItems"
+        | "primaryAxisSizingMode"
+        | "counterAxisSizingMode"
+        | "layoutWrap"
+        | "clipsContent"
+        | "layoutGrids"
+        | "layoutAlign"
+        | "layoutGrow"
+        | "layoutPositioning"
+        | "layoutSizingHorizontal"
+        | "layoutSizingVertical" => OverrideField::Layout,
         "componentId" | "mainComponent" | "overrides" => OverrideField::MainComponent,
         _ => return None,
     })
@@ -1217,7 +1223,8 @@ fn text_props(v: &Value) -> TextProps {
     if fstr(v, "textTruncation").or_else(|| st.and_then(|s| fstr(s, "textTruncation"))) == Some("ENDING") {
         auto = TextAutoResize::Truncate;
     }
-    let max_lines = v.get("maxLines").or_else(|| st.and_then(|s| s.get("maxLines"))).and_then(Value::as_u64).filter(|n| *n > 0).map(|n| n.min(u32::MAX as u64) as u32);
+    let max_lines =
+        v.get("maxLines").or_else(|| st.and_then(|s| s.get("maxLines"))).and_then(Value::as_u64).filter(|n| *n > 0).map(|n| n.min(u32::MAX as u64) as u32);
 
     let overrides: Vec<u64> = farr(v, "characterStyleOverrides").iter().map(|x| x.as_u64().unwrap_or(0)).collect();
     let runs = build_runs(&content, &style, &overrides, v.get("styleOverrideTable"));

@@ -112,11 +112,7 @@ pub fn inside_quad(c: &[Vec2; 4], p: Vec2) -> bool {
 pub fn resize_local(size0: Vec2, h: Handle, mouse_l: Vec2, keep_ratio: bool, from_center: bool) -> (Vec2, Vec2) {
     let (hx, hy) = h.norm();
     let (w0, h0) = (size0.x.max(1e-3), size0.y.max(1e-3));
-    let (ax, ay) = if from_center {
-        (0.5, 0.5)
-    } else {
-        (if h.affects_x() { 1.0 - hx } else { 0.5 }, if h.affects_y() { 1.0 - hy } else { 0.5 })
-    };
+    let (ax, ay) = if from_center { (0.5, 0.5) } else { (if h.affects_x() { 1.0 - hx } else { 0.5 }, if h.affects_y() { 1.0 - hy } else { 0.5 }) };
     let anchor = v2(ax * w0, ay * h0);
     let mut nw = w0;
     let mut nh = h0;

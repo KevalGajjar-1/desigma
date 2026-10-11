@@ -5,13 +5,7 @@ use desigma_doc::*;
 fn rect_path(x: f32, y: f32, w: f32, h: f32) -> Path {
     let v = Vec2::new;
     Path {
-        cmds: vec![
-            PathCmd::MoveTo(v(x, y)),
-            PathCmd::LineTo(v(x + w, y)),
-            PathCmd::LineTo(v(x + w, y + h)),
-            PathCmd::LineTo(v(x, y + h)),
-            PathCmd::Close,
-        ],
+        cmds: vec![PathCmd::MoveTo(v(x, y)), PathCmd::LineTo(v(x + w, y)), PathCmd::LineTo(v(x + w, y + h)), PathCmd::LineTo(v(x, y + h)), PathCmd::Close],
         fill_rule: FillRule::NonZero,
     }
 }

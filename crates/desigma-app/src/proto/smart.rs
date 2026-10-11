@@ -158,7 +158,13 @@ impl SmartPlan {
             }
             let attach = if parent == from_root { to_root } else { *to_of.get(&parent).unwrap_or(&to_root) };
             let attach_is_root_fallback = parent != from_root && !to_of.contains_key(&parent);
-            let new_id = clone_into(from_doc, id, &mut base, attach, attach_is_root_fallback.then(|| from_doc.world_transform(parent).invert().map(|i| i * from_doc.world_transform(id))).flatten());
+            let new_id = clone_into(
+                from_doc,
+                id,
+                &mut base,
+                attach,
+                attach_is_root_fallback.then(|| from_doc.world_transform(parent).invert().map(|i| i * from_doc.world_transform(id))).flatten(),
+            );
             if let Some(nid) = new_id {
                 fades.push(Fade { id: nid, opacity: fnode.opacity, fade_in: false });
             }
@@ -274,12 +280,22 @@ fn lerp_paints(a: &[Paint], b: &[Paint], t: f32) -> Vec<Paint> {
         for (x, y) in a.iter().zip(b) {
             match (&x.kind, &y.kind) {
                 (PaintKind::Solid(c1), PaintKind::Solid(c2)) => {
-                    out.push(Paint { kind: PaintKind::Solid(lerp_color(*c1, *c2, t)), opacity: lerp(x.opacity, y.opacity, t).clamp(0.0, 1.0), visible: y.visible, blend: y.blend });
+                    out.push(Paint {
+                        kind: PaintKind::Solid(lerp_color(*c1, *c2, t)),
+                        opacity: lerp(x.opacity, y.opacity, t).clamp(0.0, 1.0),
+                        visible: y.visible,
+                        blend: y.blend,
+                    });
                 }
                 (PaintKind::LinearGradient { handles: h1, stops: s1 }, PaintKind::LinearGradient { handles: h2, stops: s2 }) if s1.len() == s2.len() => {
                     let handles = [0, 1, 2].map(|i| Vec2::new(lerp(h1[i].x, h2[i].x, t), lerp(h1[i].y, h2[i].y, t)));
                     let stops = s1.iter().zip(s2).map(|(p, q)| GradientStop { pos: lerp(p.pos, q.pos, t), color: lerp_color(p.color, q.color, t) }).collect();
-                    out.push(Paint { kind: PaintKind::LinearGradient { handles, stops }, opacity: lerp(x.opacity, y.opacity, t).clamp(0.0, 1.0), visible: y.visible, blend: y.blend });
+                    out.push(Paint {
+                        kind: PaintKind::LinearGradient { handles, stops },
+                        opacity: lerp(x.opacity, y.opacity, t).clamp(0.0, 1.0),
+                        visible: y.visible,
+                        blend: y.blend,
+                    });
                 }
                 _ => out.push(if t < 0.5 { x.clone() } else { y.clone() }),
             }

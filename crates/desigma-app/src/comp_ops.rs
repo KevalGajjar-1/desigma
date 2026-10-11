@@ -384,11 +384,7 @@ impl App {
 
     /// Owner of the property definitions shown for `comp`: its set, else itself.
     pub fn prop_owner(&self, comp: NodeId) -> NodeId {
-        self.doc
-            .get(comp)
-            .and_then(|n| n.parent)
-            .filter(|p| matches!(self.doc.get(*p).map(|n| &n.kind), Some(NodeKind::ComponentSet(_))))
-            .unwrap_or(comp)
+        self.doc.get(comp).and_then(|n| n.parent).filter(|p| matches!(self.doc.get(*p).map(|n| &n.kind), Some(NodeKind::ComponentSet(_)))).unwrap_or(comp)
     }
 
     fn comp_edit(&mut self, f: impl FnOnce(&mut Document) -> Command) {
@@ -417,7 +413,9 @@ impl App {
         let default = match &kind {
             PropKind::Boolean => PropValue::Bool(true),
             PropKind::Text => PropValue::Text("Text".into()),
-            PropKind::InstanceSwap { .. } => PropValue::Instance(self.doc.nodes.values().find(|n| matches!(n.kind, NodeKind::Component(_)) && n.id != owner).map(|n| n.id).unwrap_or(NodeId(0))),
+            PropKind::InstanceSwap { .. } => PropValue::Instance(
+                self.doc.nodes.values().find(|n| matches!(n.kind, NodeKind::Component(_)) && n.id != owner).map(|n| n.id).unwrap_or(NodeId(0)),
+            ),
             PropKind::Variant { options } => PropValue::Variant(options.first().cloned().unwrap_or_default()),
         };
         self.comp_edit(|d| add_prop(d, owner, ComponentPropDef { name, kind, default }));

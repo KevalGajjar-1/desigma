@@ -68,12 +68,7 @@ fn check(doc: &Document) {
     let NodeKind::Vector { paths } = &find(doc, "Tri").kind else { panic!() };
     assert_eq!(
         paths[0].cmds,
-        vec![
-            PathCmd::MoveTo(Vec2::new(0.0, 0.0)),
-            PathCmd::LineTo(Vec2::new(10.0, 0.0)),
-            PathCmd::LineTo(Vec2::new(5.0, 8.0)),
-            PathCmd::Close
-        ]
+        vec![PathCmd::MoveTo(Vec2::new(0.0, 0.0)), PathCmd::LineTo(Vec2::new(10.0, 0.0)), PathCmd::LineTo(Vec2::new(5.0, 8.0)), PathCmd::Close]
     );
 
     // Component + instance (childless instance gets a copy of the component's children).

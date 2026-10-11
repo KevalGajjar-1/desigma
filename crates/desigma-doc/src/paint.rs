@@ -88,12 +88,27 @@ pub enum PaintKind {
     Solid(Color),
     /// Handles in node-normalized space (0..1 of the node's size), Figma convention:
     /// [start, end, width-direction].
-    LinearGradient { handles: [Vec2; 3], stops: Vec<GradientStop> },
-    RadialGradient { handles: [Vec2; 3], stops: Vec<GradientStop> },
-    AngularGradient { handles: [Vec2; 3], stops: Vec<GradientStop> },
-    DiamondGradient { handles: [Vec2; 3], stops: Vec<GradientStop> },
+    LinearGradient {
+        handles: [Vec2; 3],
+        stops: Vec<GradientStop>,
+    },
+    RadialGradient {
+        handles: [Vec2; 3],
+        stops: Vec<GradientStop>,
+    },
+    AngularGradient {
+        handles: [Vec2; 3],
+        stops: Vec<GradientStop>,
+    },
+    DiamondGradient {
+        handles: [Vec2; 3],
+        stops: Vec<GradientStop>,
+    },
     /// `image_ref` keys into [`crate::Document::images`].
-    Image { image_ref: String, scale_mode: ImageScaleMode },
+    Image {
+        image_ref: String,
+        scale_mode: ImageScaleMode,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

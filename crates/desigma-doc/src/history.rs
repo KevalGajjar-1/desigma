@@ -7,18 +7,40 @@ use std::collections::BTreeMap;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Command {
     /// Insert subtree nodes (root first) under `parent` at `index`.
-    Insert { parent: NodeId, index: usize, nodes: Vec<Node> },
-    Remove { id: NodeId },
-    Reparent { id: NodeId, parent: NodeId, index: usize },
+    Insert {
+        parent: NodeId,
+        index: usize,
+        nodes: Vec<Node>,
+    },
+    Remove {
+        id: NodeId,
+    },
+    Reparent {
+        id: NodeId,
+        parent: NodeId,
+        index: usize,
+    },
     /// Replace a node's own properties (children/parent are preserved).
-    Update { node: Box<Node> },
+    Update {
+        node: Box<Node>,
+    },
     /// Insert a page subtree (page node first) at `index` in `Document::pages`.
-    InsertPage { index: usize, nodes: Vec<Node> },
-    RemovePage { id: NodeId },
+    InsertPage {
+        index: usize,
+        nodes: Vec<Node>,
+    },
+    RemovePage {
+        id: NodeId,
+    },
     /// Replace the document's prototype flow list (flow starting points).
-    SetFlows { flows: Vec<Flow> },
+    SetFlows {
+        flows: Vec<Flow>,
+    },
     /// Replace all variables and collections (variable edits).
-    SetVariables { variables: BTreeMap<String, Variable>, collections: BTreeMap<String, VariableCollection> },
+    SetVariables {
+        variables: BTreeMap<String, Variable>,
+        collections: BTreeMap<String, VariableCollection>,
+    },
     Batch(Vec<Command>),
 }
 

@@ -300,9 +300,7 @@ impl Schema {
 
     /// Picks the `Message` definition (Figma's root), falling back to the last message def.
     pub fn root_message(&self) -> Option<usize> {
-        self.find("Message")
-            .filter(|&i| self.defs[i].kind == DefKind::Message)
-            .or_else(|| self.defs.iter().rposition(|d| d.kind == DefKind::Message))
+        self.find("Message").filter(|&i| self.defs[i].kind == DefKind::Message).or_else(|| self.defs.iter().rposition(|d| d.kind == DefKind::Message))
     }
 
     fn decode_def(&self, idx: usize, r: &mut Reader, depth: usize) -> Result<KiwiValue> {
@@ -332,11 +330,7 @@ impl Schema {
                     if id == 0 {
                         break;
                     }
-                    let f = def
-                        .fields
-                        .iter()
-                        .find(|f| f.value == id)
-                        .ok_or_else(|| KiwiError::Bad(format!("unknown field id {id} in {}", def.name)))?;
+                    let f = def.fields.iter().find(|f| f.value == id).ok_or_else(|| KiwiError::Bad(format!("unknown field id {id} in {}", def.name)))?;
                     out.push((f.name.clone(), self.decode_field(f, r, depth)?));
                 }
                 Ok(KiwiValue::Message(out))
@@ -398,11 +392,7 @@ impl Schema {
             (DefKind::Enum, KiwiValue::EnumRaw(x)) => w.var_u64(*x as u64),
             (DefKind::Struct, KiwiValue::Struct(fs)) => {
                 for f in &def.fields {
-                    let fv = fs
-                        .iter()
-                        .find(|(n, _)| *n == f.name)
-                        .map(|(_, v)| v)
-                        .ok_or_else(|| KiwiError::Bad(format!("missing struct field {}", f.name)))?;
+                    let fv = fs.iter().find(|(n, _)| *n == f.name).map(|(_, v)| v).ok_or_else(|| KiwiError::Bad(format!("missing struct field {}", f.name)))?;
                     self.encode_field(f, fv, w, depth)?;
                 }
             }

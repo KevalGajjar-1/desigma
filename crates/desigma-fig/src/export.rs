@@ -1,8 +1,8 @@
 //! [`Document`] -> Figma REST-shaped JSON (the inverse of `import_rest_json`).
 
 use crate::kiwi::clean_f32;
-use crate::svgpath::write_path;
 use crate::rest_import::utf16_to_byte_offsets;
+use crate::svgpath::write_path;
 use desigma_doc::*;
 use serde_json::{json, Map, Value};
 
@@ -201,10 +201,7 @@ fn type_style(ts: &TextStyle, auto: Option<TextAutoResize>, max_lines: Option<u3
 /// REST geometry list: SVG path data plus winding rule.
 fn geometry(paths: &[Path]) -> Value {
     Value::Array(
-        paths
-            .iter()
-            .map(|p| json!({"path": write_path(p), "windingRule": if p.fill_rule == FillRule::EvenOdd { "EVENODD" } else { "NONZERO" }}))
-            .collect(),
+        paths.iter().map(|p| json!({"path": write_path(p), "windingRule": if p.fill_rule == FillRule::EvenOdd { "EVENODD" } else { "NONZERO" }})).collect(),
     )
 }
 
@@ -296,7 +293,10 @@ fn export_node(doc: &Document, id: NodeId, parent_abs: Option<&Affine>, depth: u
         _ => {
             m.insert("opacity".into(), n(node.opacity));
             m.insert("blendMode".into(), blend_name(node.blend).into());
-            m.insert("relativeTransform".into(), json!([[n(node.transform.a), n(node.transform.c), n(node.transform.tx)], [n(node.transform.b), n(node.transform.d), n(node.transform.ty)]]));
+            m.insert(
+                "relativeTransform".into(),
+                json!([[n(node.transform.a), n(node.transform.c), n(node.transform.tx)], [n(node.transform.b), n(node.transform.d), n(node.transform.ty)]]),
+            );
             m.insert("size".into(), v2(node.size));
             // Bounding box of the transformed rect in page space.
             let corners = [Vec2::ZERO, Vec2::new(node.size.x, 0.0), Vec2::new(0.0, node.size.y), node.size].map(|c| abs.apply(c));
@@ -332,9 +332,33 @@ fn export_node(doc: &Document, id: NodeId, parent_abs: Option<&Affine>, depth: u
             if let Some(w) = s.side_weights {
                 m.insert("individualStrokeWeights".into(), json!({"top": n(w[0]), "right": n(w[1]), "bottom": n(w[2]), "left": n(w[3])}));
             }
-            m.insert("strokeAlign".into(), match s.align { StrokeAlign::Inside => "INSIDE", StrokeAlign::Center => "CENTER", StrokeAlign::Outside => "OUTSIDE" }.into());
-            m.insert("strokeCap".into(), match s.cap { StrokeCap::None => "NONE", StrokeCap::Round => "ROUND", StrokeCap::Square => "SQUARE" }.into());
-            m.insert("strokeJoin".into(), match s.join { StrokeJoin::Miter => "MITER", StrokeJoin::Bevel => "BEVEL", StrokeJoin::Round => "ROUND" }.into());
+            m.insert(
+                "strokeAlign".into(),
+                match s.align {
+                    StrokeAlign::Inside => "INSIDE",
+                    StrokeAlign::Center => "CENTER",
+                    StrokeAlign::Outside => "OUTSIDE",
+                }
+                .into(),
+            );
+            m.insert(
+                "strokeCap".into(),
+                match s.cap {
+                    StrokeCap::None => "NONE",
+                    StrokeCap::Round => "ROUND",
+                    StrokeCap::Square => "SQUARE",
+                }
+                .into(),
+            );
+            m.insert(
+                "strokeJoin".into(),
+                match s.join {
+                    StrokeJoin::Miter => "MITER",
+                    StrokeJoin::Bevel => "BEVEL",
+                    StrokeJoin::Round => "ROUND",
+                }
+                .into(),
+            );
             if s.miter_limit >= 1.0 {
                 m.insert("strokeMiterLimit".into(), n(s.miter_limit));
                 m.insert("strokeMiterAngle".into(), n((2.0 * (1.0 / s.miter_limit).asin()).to_degrees()));

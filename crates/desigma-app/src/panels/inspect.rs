@@ -39,9 +39,8 @@ impl ColorEntry {
 
 fn push_paints(out: &mut Vec<ColorEntry>, paints: &[Paint], role: &'static str, style: Option<&String>) {
     for p in paints.iter().filter(|p| p.visible) {
-        let mut add = |c: &Color, role: &'static str| {
-            out.push(ColorEntry { color: *c, opacity: (c.a * p.opacity).clamp(0.0, 1.0), role, style: style.cloned() })
-        };
+        let mut add =
+            |c: &Color, role: &'static str| out.push(ColorEntry { color: *c, opacity: (c.a * p.opacity).clamp(0.0, 1.0), role, style: style.cloned() });
         match &p.kind {
             PaintKind::Solid(c) => add(c, role),
             PaintKind::LinearGradient { stops, .. }
@@ -302,7 +301,9 @@ fn download(app: &mut App, id: NodeId, asset: &Asset) {
             let ext = ext_for(data);
             (format!("{name}.{ext}"), data.clone(), "Image", ext)
         }
-        Asset::Svg => (format!("{name}.svg"), desigma_export::export_svg(&app.export_doc(), id, &desigma_export::SvgOptions::default()).into_bytes(), "SVG", "svg"),
+        Asset::Svg => {
+            (format!("{name}.svg"), desigma_export::export_svg(&app.export_doc(), id, &desigma_export::SvgOptions::default()).into_bytes(), "SVG", "svg")
+        }
         Asset::Png2x => (format!("{name}@2x.png"), desigma_export::export_png(&app.export_doc(), id, 2.0), "PNG", "png"),
     };
     if bytes.is_empty() {
@@ -329,7 +330,13 @@ pub fn show(app: &mut App, ui: &mut Ui, region: Rect) {
     let end = clipped(ui, region, |ui| {
         let mut c = Cur { x0: region.left() - theme::BORDER_WIDTH, oy: region.top() - scroll, y: 0.0, w: region.width() + theme::BORDER_WIDTH };
         let Some(&id) = sel.first() else {
-            ui.painter().text(Pos2::new(region.center().x, region.top() + 56.0), Align2::CENTER_CENTER, "Select a layer to inspect", theme::font_body(), theme::TEXT_TERTIARY);
+            ui.painter().text(
+                Pos2::new(region.center().x, region.top() + 56.0),
+                Align2::CENTER_CENTER,
+                "Select a layer to inspect",
+                theme::font_body(),
+                theme::TEXT_TERTIARY,
+            );
             return 80.0;
         };
         body(app, ui, &mut c, id, sel.len());
@@ -556,7 +563,7 @@ mod tests {
     fn disjoint_boxes_measure_the_space_between() {
         let g = measure(r(0.0, 0.0, 100.0, 50.0), r(120.0, 10.0, 30.0, 20.0));
         assert_eq!(g.len(), 3, "one horizontal gap, two vertical offsets");
-        let h =g.iter().find(|g| (g.from.1 - g.to.1).abs() < 1e-3).unwrap();
+        let h = g.iter().find(|g| (g.from.1 - g.to.1).abs() < 1e-3).unwrap();
         assert_eq!((h.from.0, h.to.0, h.value), (100.0, 120.0, 20.0));
         // vertical ranges overlap on 10..30 so the line sits in the middle at y = 20
         assert_eq!(h.from.1, 20.0);
@@ -640,7 +647,12 @@ mod tests {
         d.images.insert("abc".into(), vec![1, 2, 3]);
         let i = d.alloc_id();
         let mut n = Node::rectangle(i, desigma_doc::Rect::new(0.0, 0.0, 5.0, 5.0));
-        n.fills = vec![Paint { kind: PaintKind::Image { image_ref: "abc".into(), scale_mode: ImageScaleMode::Fill }, opacity: 1.0, visible: true, blend: BlendMode::Normal }];
+        n.fills = vec![Paint {
+            kind: PaintKind::Image { image_ref: "abc".into(), scale_mode: ImageScaleMode::Fill },
+            opacity: 1.0,
+            visible: true,
+            blend: BlendMode::Normal,
+        }];
         d.insert(page, n).unwrap();
         assert_eq!(collect_assets(&d, i), vec![Asset::Image("abc".into()), Asset::Svg, Asset::Png2x]);
     }

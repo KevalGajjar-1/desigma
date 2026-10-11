@@ -67,10 +67,7 @@ fn angular_gradient_sweeps_around_centre() {
 fn angular_gradient_loop_has_no_seam() {
     let mut t = T::new();
     let r = t.rect(None, Rect::new(0.0, 0.0, 100.0, 100.0), RED);
-    t.node(r).fills = vec![paint(PaintKind::AngularGradient {
-        handles: CENTRE,
-        stops: vec![stop(0.0, RED), stop(0.5, BLUE), stop(1.0, RED)],
-    })];
+    t.node(r).fills = vec![paint(PaintKind::AngularGradient { handles: CENTRE, stops: vec![stop(0.0, RED), stop(0.5, BLUE), stop(1.0, RED)] })];
     let pm = t.render(100, 100);
     let above = px(&pm, 90, 49);
     let below = px(&pm, 90, 51);

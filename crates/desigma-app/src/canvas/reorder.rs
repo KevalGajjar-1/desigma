@@ -47,11 +47,8 @@ pub fn insertion_at(doc: &Document, parent: NodeId, dragged: NodeId, page_pt: DV
     };
 
     let [pt, pr, pb, pl] = al.padding;
-    let (pad_start, pad_end, cross_start, cross_end, main_len) = if horiz {
-        (pl, pr, pt, pn.size.y - pb, pn.size.x)
-    } else {
-        (pt, pb, pl, pn.size.x - pr, pn.size.y)
-    };
+    let (pad_start, pad_end, cross_start, cross_end, main_len) =
+        if horiz { (pl, pr, pt, pn.size.y - pb, pn.size.x) } else { (pt, pb, pl, pn.size.x - pr, pn.size.y) };
     let half_gap = al.item_spacing.max(0.0) / 2.0;
     let at = match (k.checked_sub(1).map(|i| sibs[i]), sibs.get(k)) {
         (Some(prev), Some(next)) => (prev.2 + next.1) / 2.0,
@@ -76,7 +73,13 @@ mod tests {
         let fid = d.alloc_id();
         let mut f = Node::frame(fid, Rect::new(100.0, 50.0, 10.0, 10.0));
         f.kind = NodeKind::Frame(FrameProps {
-            auto_layout: Some(AutoLayout { item_spacing: 10.0, padding: [10.0; 4], primary_sizing: Sizing::Hug, counter_sizing: Sizing::Hug, ..Default::default() }),
+            auto_layout: Some(AutoLayout {
+                item_spacing: 10.0,
+                padding: [10.0; 4],
+                primary_sizing: Sizing::Hug,
+                counter_sizing: Sizing::Hug,
+                ..Default::default()
+            }),
             ..Default::default()
         });
         let f = d.insert(page, f).unwrap();

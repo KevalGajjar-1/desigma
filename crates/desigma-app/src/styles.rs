@@ -33,7 +33,9 @@ pub fn style_entries(doc: &Document, text: bool) -> Vec<StyleEntry> {
         })
         .collect();
     // Root-level styles first, then folders alphabetically.
-    out.sort_by(|a, b| (!a.folder.is_empty(), a.folder.to_lowercase(), a.leaf.to_lowercase()).cmp(&(!b.folder.is_empty(), b.folder.to_lowercase(), b.leaf.to_lowercase())));
+    out.sort_by(|a, b| {
+        (!a.folder.is_empty(), a.folder.to_lowercase(), a.leaf.to_lowercase()).cmp(&(!b.folder.is_empty(), b.folder.to_lowercase(), b.leaf.to_lowercase()))
+    });
     out
 }
 
@@ -145,7 +147,8 @@ pub fn replace_color(doc: &mut Document, ed: &mut Edit, roots: &[NodeId], old: C
         }
     };
     for id in ids {
-        let has = doc.get(id).map(|n| paint_lists(n).iter().any(|l| l.iter().any(|p| matches!(&p.kind, PaintKind::Solid(c) if same_rgb(c, &old))))).unwrap_or(false);
+        let has =
+            doc.get(id).map(|n| paint_lists(n).iter().any(|l| l.iter().any(|p| matches!(&p.kind, PaintKind::Solid(c) if same_rgb(c, &old))))).unwrap_or(false);
         if !has {
             continue;
         }
@@ -179,7 +182,12 @@ mod tests {
         r.stroke.paints = vec![Paint::solid(Color::rgb(0, 255, 0))];
         let r = d.insert(f, r).unwrap();
         let tid = d.alloc_id();
-        let t = d.insert(f, Node::text(tid, Rect::new(0.0, 100.0, 50.0, 20.0), "Hi", TextStyle { fills: vec![Paint::solid(Color::rgb(0, 0, 255))], ..Default::default() })).unwrap();
+        let t = d
+            .insert(
+                f,
+                Node::text(tid, Rect::new(0.0, 100.0, 50.0, 20.0), "Hi", TextStyle { fills: vec![Paint::solid(Color::rgb(0, 0, 255))], ..Default::default() }),
+            )
+            .unwrap();
         d.styles.insert("Brand/Primary".into(), Style::Fill(vec![Paint::solid(Color::rgb(1, 2, 3))]));
         d.styles.insert("s2".into(), Style::Text(TextStyle { font_size: 40.0, font_weight: 700, ..Default::default() }));
         d.style_meta.insert("s2".into(), StyleMeta { name: "Heading/Large".into(), ..Default::default() });

@@ -261,11 +261,7 @@ fn arc_to_cubics(out: &mut Vec<PathCmd>, p0: Vec2, rx: f32, ry: f32, rot_deg: f3
         let (bx, by) = pt(th2);
         let (bdx, bdy) = dpt(th2);
         let end = if i + 1 == segs { p1 } else { Vec2::new(bx as f32, by as f32) };
-        out.push(PathCmd::CubicTo(
-            Vec2::new((ax + t * adx) as f32, (ay + t * ady) as f32),
-            Vec2::new((bx - t * bdx) as f32, (by - t * bdy) as f32),
-            end,
-        ));
+        out.push(PathCmd::CubicTo(Vec2::new((ax + t * adx) as f32, (ay + t * ady) as f32), Vec2::new((bx - t * bdx) as f32, (by - t * bdy) as f32), end));
         th = th2;
     }
 }

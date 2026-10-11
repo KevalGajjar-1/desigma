@@ -247,7 +247,12 @@ fn wheel_pans_and_pinch_zooms() {
     let p = s.screen(600.0, 400.0);
     s.mv(p);
     let off0 = s.app().view.offset;
-    s.frame(vec![Event::MouseWheel { unit: egui::MouseWheelUnit::Point, delta: Vec2::new(0.0, -60.0), phase: egui::TouchPhase::Move, modifiers: Modifiers::NONE }]);
+    s.frame(vec![Event::MouseWheel {
+        unit: egui::MouseWheelUnit::Point,
+        delta: Vec2::new(0.0, -60.0),
+        phase: egui::TouchPhase::Move,
+        modifiers: Modifiers::NONE,
+    }]);
     s.frame(vec![]);
     assert!(s.app().view.offset.y > off0.y, "scrolling down moves the view down the page");
     let z0 = s.app().view.zoom;
@@ -739,7 +744,10 @@ fn inspector_edits_only_the_selected_range() {
     assert_eq!(sum.family, Some("Inter".to_string()));
     // Ctrl+B bolds only the selection (here: everything), Ctrl+Z inside the session undoes it
     s.cmd_key(Key::B);
-    let all = |s: &Sim| { let t = text_of(s, id); crate::richtext::summary(&t, 0..t.content.len()).weight };
+    let all = |s: &Sim| {
+        let t = text_of(s, id);
+        crate::richtext::summary(&t, 0..t.content.len()).weight
+    };
     assert_eq!(all(&s), Some(700));
     s.cmd_key(Key::Z);
     assert_eq!(all(&s), Some(400));

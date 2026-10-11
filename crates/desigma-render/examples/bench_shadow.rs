@@ -98,7 +98,13 @@ fn main() {
     ] {
         for zoom in [1.0f32, 4.0] {
             let count = 20;
-            let sk = if kind == "rounded shadow" { "rect" } else if kind == "ellipse shadow" { "ellipse" } else { kind };
+            let sk = if kind == "rounded shadow" {
+                "rect"
+            } else if kind == "ellipse shadow" {
+                "ellipse"
+            } else {
+                kind
+            };
             let (doc, page) = scene(sk, radius, count);
             let vp = Viewport { offset: Vec2::ZERO, zoom, dpr: 1.0 };
             let (w, h) = ((900.0 * zoom).min(2400.0) as u32, (560.0 * zoom).min(1500.0) as u32);

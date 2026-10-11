@@ -75,7 +75,19 @@ pub fn paragraph_at(s: &str, at: usize) -> std::ops::Range<usize> {
 
 /// Text with control characters removed (tabs become spaces, `\r\n` newlines), for paste.
 pub fn clean_input(s: &str) -> String {
-    s.replace("\r\n", "\n").replace('\r', "\n").chars().filter_map(|c| if c == '\t' { Some(' ') } else if c.is_control() && c != '\n' { None } else { Some(c) }).collect()
+    s.replace("\r\n", "\n")
+        .replace('\r', "\n")
+        .chars()
+        .filter_map(|c| {
+            if c == '\t' {
+                Some(' ')
+            } else if c.is_control() && c != '\n' {
+                None
+            } else {
+                Some(c)
+            }
+        })
+        .collect()
 }
 
 /// What kind of edit produced an undo step (decides coalescing).

@@ -224,7 +224,11 @@ pub fn overlays(app: &App, ui: &Ui, rect: ERect) {
                 // Tell the platform where the caret is so IME candidate windows follow it.
                 if let Some(cr) = super::textsession::caret_screen_rect(app, rect.min) {
                     ui.ctx().output_mut(|o| {
-                        o.ime = Some(egui::output::IMEOutput { rect: ERect::from_min_max(to_s(w.apply(v2(0.0, 0.0))), to_s(w.apply(v2(n.size.x, n.size.y)))), cursor_rect: cr, should_interrupt_composition: false })
+                        o.ime = Some(egui::output::IMEOutput {
+                            rect: ERect::from_min_max(to_s(w.apply(v2(0.0, 0.0))), to_s(w.apply(v2(n.size.x, n.size.y)))),
+                            cursor_rect: cr,
+                            should_interrupt_composition: false,
+                        })
                     });
                 }
                 let blink = sess.range().is_empty() && (ui.input(|i| i.time) * 2.0) as i64 % 2 == 0;

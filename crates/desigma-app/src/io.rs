@@ -17,8 +17,7 @@ pub fn load_path(path: &Path) -> Result<Document, String> {
             let text = std::fs::read_to_string(path).map_err(|e| format!("Cannot read {}: {e}", path.display()))?;
             match desigma_fig::import_rest_json(&text) {
                 Ok(d) => d,
-                Err(fig_err) => Document::from_json(&text)
-                    .map_err(|e| format!("Not a Figma REST file ({fig_err}) nor a desigma file ({e})"))?,
+                Err(fig_err) => Document::from_json(&text).map_err(|e| format!("Not a Figma REST file ({fig_err}) nor a desigma file ({e})"))?,
             }
         }
         _ => {

@@ -79,14 +79,7 @@ mod tests {
         }
         doc.insert(page, node).unwrap();
         let got: Vec<_> = requests_for(&doc).into_iter().collect();
-        assert_eq!(
-            got,
-            vec![
-                FontRequest::new("Georgia", 600, false),
-                FontRequest::new("Inter", 400, false),
-                FontRequest::new("Roboto", 700, true),
-            ]
-        );
+        assert_eq!(got, vec![FontRequest::new("Georgia", 600, false), FontRequest::new("Inter", 400, false), FontRequest::new("Roboto", 700, true),]);
     }
 
     #[test]

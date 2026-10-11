@@ -103,7 +103,8 @@ pub fn css_for(doc: &Document, node: NodeId) -> String {
         if al.wrap {
             push("flex-wrap", "wrap".into());
             if al.primary_align != LayoutAlign::SpaceBetween || al.counter_spacing > 0.0 {
-                let (row, col) = if al.direction == LayoutDirection::Horizontal { (al.counter_spacing, al.item_spacing) } else { (al.item_spacing, al.counter_spacing) };
+                let (row, col) =
+                    if al.direction == LayoutDirection::Horizontal { (al.counter_spacing, al.item_spacing) } else { (al.item_spacing, al.counter_spacing) };
                 if row > 0.0 || col > 0.0 {
                     push("gap", if (row - col).abs() < 1e-4 { format!("{}px", num(row)) } else { format!("{}px {}px", num(row), num(col)) });
                 }
@@ -135,10 +136,7 @@ pub fn css_for(doc: &Document, node: NodeId) -> String {
     let mut push = |p: &str, v: String| out.push(format!("{p}: {v};"));
 
     // radius
-    let rounded = matches!(
-        n.kind,
-        NodeKind::Frame(_) | NodeKind::Rectangle | NodeKind::Component(_) | NodeKind::ComponentSet(_) | NodeKind::Instance { .. }
-    );
+    let rounded = matches!(n.kind, NodeKind::Frame(_) | NodeKind::Rectangle | NodeKind::Component(_) | NodeKind::ComponentSet(_) | NodeKind::Instance { .. });
     if rounded {
         let r = n.corner_radii;
         if r.iter().any(|v| *v > 0.0) {
@@ -421,7 +419,14 @@ mod tests {
             n.stroke.paints = vec![Paint::solid(Color::rgb(0xE5, 0xE5, 0xE5))];
             n.stroke.weight = 1.0;
             n.effects = vec![
-                Effect::DropShadow { color: Color::rgba(0, 0, 0, 64), offset: Vec2::new(0.0, 4.0), radius: 4.0, spread: 0.0, visible: true, show_behind: false },
+                Effect::DropShadow {
+                    color: Color::rgba(0, 0, 0, 64),
+                    offset: Vec2::new(0.0, 4.0),
+                    radius: 4.0,
+                    spread: 0.0,
+                    visible: true,
+                    show_behind: false,
+                },
                 Effect::LayerBlur { radius: 10.0, visible: true },
             ];
             d.insert(page, n).unwrap();
@@ -454,10 +459,7 @@ mod tests {
             child.layout_child.horizontal = Sizing::Fill;
             d.insert(fr, child).unwrap();
         });
-        assert_eq!(
-            css_for(&d, id),
-            "display: flex;\nwidth: 300px;\nheight: 80px;\npadding: 8px 16px;\njustify-content: space-between;\nalign-items: center;"
-        );
+        assert_eq!(css_for(&d, id), "display: flex;\nwidth: 300px;\nheight: 80px;\npadding: 8px 16px;\njustify-content: space-between;\nalign-items: center;");
         let child = d.get(id).unwrap().children[0];
         assert_eq!(css_for(&d, child), "flex: 1 0 0;\nheight: 40px;\nbackground: #D9D9D9;");
     }
@@ -472,10 +474,7 @@ mod tests {
             n.fills = vec![Paint {
                 kind: PaintKind::LinearGradient {
                     handles: [Vec2::new(0.5, 0.0), Vec2::new(0.5, 1.0), Vec2::new(1.0, 0.0)],
-                    stops: vec![
-                        GradientStop { pos: 0.0, color: Color::rgb(255, 0, 0) },
-                        GradientStop { pos: 1.0, color: Color::rgb(0, 0, 255) },
-                    ],
+                    stops: vec![GradientStop { pos: 0.0, color: Color::rgb(255, 0, 0) }, GradientStop { pos: 1.0, color: Color::rgb(0, 0, 255) }],
                 },
                 opacity: 1.0,
                 visible: true,

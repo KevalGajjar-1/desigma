@@ -175,7 +175,13 @@ fn draw_sidebar(app: &mut App, ui: &mut Ui, body: Rect, fr: &mut Frame) {
         } else {
             let nm = widgets::elide(&p, &c.name, &theme::font_body(), name_rect.width());
             p.text(Pos2::new(name_rect.left() + 6.0, row.center().y), Align2::LEFT_CENTER, nm, theme::font_body(), theme::TEXT);
-            p.text(Pos2::new(row.right() - 12.0, row.center().y), Align2::RIGHT_CENTER, c.variables.len().to_string(), theme::font_body(), theme::TEXT_TERTIARY);
+            p.text(
+                Pos2::new(row.right() - 12.0, row.center().y),
+                Align2::RIGHT_CENTER,
+                c.variables.len().to_string(),
+                theme::font_body(),
+                theme::TEXT_TERTIARY,
+            );
         }
         if resp.clicked() && !selected {
             app.vars.collection = Some(id.clone());
@@ -225,7 +231,13 @@ fn draw_main(app: &mut App, ui: &mut Ui, body: Rect, fr: &mut Frame) {
     let p = ui.painter().clone();
     let Some(cid) = app.vars.collection.clone() else {
         p.text(main.center() - Vec2::new(0.0, 16.0), Align2::CENTER_CENTER, "No variables yet", theme::font_large_strong(), theme::TEXT);
-        p.text(main.center() + Vec2::new(0.0, 8.0), Align2::CENTER_CENTER, "Create a collection to start defining variables.", theme::font_body(), theme::TEXT_SECONDARY);
+        p.text(
+            main.center() + Vec2::new(0.0, 8.0),
+            Align2::CENTER_CENTER,
+            "Create a collection to start defining variables.",
+            theme::font_body(),
+            theme::TEXT_SECONDARY,
+        );
         return;
     };
     let Some(coll) = fr.view.collections.get(&cid).cloned() else { return };
@@ -290,7 +302,13 @@ fn draw_main(app: &mut App, ui: &mut Ui, body: Rect, fr: &mut Frame) {
             if coll.default_mode == mode.id && coll.modes.len() > 1 {
                 let w = widgets::text_width(&p, &mode.name, &theme::font_body_strong());
                 if w + 60.0 < name_r.width() {
-                    p.text(Pos2::new(name_r.left() + 6.0 + w + 6.0, name_r.center().y), Align2::LEFT_CENTER, "default", theme::font_small(), theme::TEXT_TERTIARY);
+                    p.text(
+                        Pos2::new(name_r.left() + 6.0 + w + 6.0, name_r.center().y),
+                        Align2::LEFT_CENTER,
+                        "default",
+                        theme::font_small(),
+                        theme::TEXT_TERTIARY,
+                    );
                 }
             }
             let more = Rect::from_center_size(Pos2::new(cell.right() - 16.0, cell.center().y), Vec2::splat(20.0));
@@ -298,7 +316,8 @@ fn draw_main(app: &mut App, ui: &mut Ui, body: Rect, fr: &mut Frame) {
             widgets::button_bg(&p, more, &mr, false, theme::cr(theme::RADIUS_MEDIUM));
             icons::paint(&p, Icon::ChevronDown, more.center(), 12.0, theme::ICON_SECONDARY);
             if mr.clicked() || secondary_click_in(ui, name_r).is_some() {
-                app.vars.menu = Some(VarMenu { kind: VarMenuKind::Mode(coll.id.clone(), mode.id.clone()), pos: more.left_bottom() + Vec2::new(0.0, 4.0), anchor: more });
+                app.vars.menu =
+                    Some(VarMenu { kind: VarMenuKind::Mode(coll.id.clone(), mode.id.clone()), pos: more.left_bottom() + Vec2::new(0.0, 4.0), anchor: more });
             }
         }
         // add mode
@@ -361,7 +380,11 @@ fn draw_main(app: &mut App, ui: &mut Ui, body: Rect, fr: &mut Frame) {
             let pointer = ui.input(|i| i.pointer.latest_pos());
             if let Some(py) = pointer.map(|p| p.y) {
                 let (before, line_y) = drop_target(&fr.rows, py, rows_rect);
-                ui.painter().rect_filled(Rect::from_min_size(Pos2::new(main.left() + 8.0, line_y - 1.0), Vec2::new(main.width() - 16.0, 2.0)), 1.0, theme::DROP_INDICATOR);
+                ui.painter().rect_filled(
+                    Rect::from_min_size(Pos2::new(main.left() + 8.0, line_y - 1.0), Vec2::new(main.width() - 16.0, 2.0)),
+                    1.0,
+                    theme::DROP_INDICATOR,
+                );
                 if ui.input(|i| i.pointer.any_released()) {
                     fr.work.move_variable(&d.var, before.as_deref());
                     app.vars.drag = None;
@@ -463,7 +486,18 @@ fn folder_row(app: &mut App, ui: &mut Ui, r: Rect, coll: &str, folder: &str, key
 }
 
 #[allow(clippy::too_many_arguments)]
-fn variable_row(app: &mut App, ui: &mut Ui, r: Rect, coll: &VariableCollection, v: &Variable, in_folder: bool, modes_left: f32, sx: f32, col_w: f32, fr: &mut Frame) {
+fn variable_row(
+    app: &mut App,
+    ui: &mut Ui,
+    r: Rect,
+    coll: &VariableCollection,
+    v: &Variable,
+    in_folder: bool,
+    modes_left: f32,
+    sx: f32,
+    col_w: f32,
+    fr: &mut Frame,
+) {
     let p = ui.painter().clone();
     let hovered = ui.rect_contains_pointer(r) || app.vars.drag.as_ref().is_some_and(|d| d.var == v.id);
     if hovered {
@@ -727,7 +761,17 @@ fn run_alias_picker(app: &mut App, ctx: &Context, fr: &mut Frame) {
         .filter(|t| fr.work.can_alias(&var.id, &t.id))
         .map(|t| doc_ro.item(t))
         .collect();
-    let res = picker(ctx, Id::new("vars-alias-picker"), ap.anchor.left_bottom() + Vec2::new(0.0, 4.0), Some(ap.anchor), "Alias of", &mut ap.query, &items, current.as_deref(), current.is_some());
+    let res = picker(
+        ctx,
+        Id::new("vars-alias-picker"),
+        ap.anchor.left_bottom() + Vec2::new(0.0, 4.0),
+        Some(ap.anchor),
+        "Alias of",
+        &mut ap.query,
+        &items,
+        current.as_deref(),
+        current.is_some(),
+    );
     match res {
         PickResult::Open => app.vars.alias_picker = Some(ap),
         PickResult::Closed => {}

@@ -127,7 +127,12 @@ fn eval_stops(stops: &[GradientStop], t: f32) -> Color {
         if t >= w[0].pos && t <= w[1].pos {
             let f = if w[1].pos > w[0].pos { (t - w[0].pos) / (w[1].pos - w[0].pos) } else { 0.0 };
             let l = |a: f32, b: f32| a + (b - a) * f;
-            return Color { r: l(w[0].color.r, w[1].color.r), g: l(w[0].color.g, w[1].color.g), b: l(w[0].color.b, w[1].color.b), a: l(w[0].color.a, w[1].color.a) };
+            return Color {
+                r: l(w[0].color.r, w[1].color.r),
+                g: l(w[0].color.g, w[1].color.g),
+                b: l(w[0].color.b, w[1].color.b),
+                a: l(w[0].color.a, w[1].color.a),
+            };
         }
     }
     last.color
@@ -262,7 +267,8 @@ impl Svg<'_> {
 
     fn body(&mut self, n: &Node, as_mask: bool) {
         let doc = self.doc;
-        let has_shadow = !as_mask && n.effects.iter().any(|e| matches!(e, Effect::DropShadow { visible: true, .. } | Effect::InnerShadow { visible: true, .. }));
+        let has_shadow =
+            !as_mask && n.effects.iter().any(|e| matches!(e, Effect::DropShadow { visible: true, .. } | Effect::InnerShadow { visible: true, .. }));
         let filter = if has_shadow { Some(self.shadow_filter(n)) } else { None };
         let geo = match &n.kind {
             NodeKind::BooleanOp(op) => self.bool_geo(n, *op),
@@ -334,13 +340,9 @@ impl Svg<'_> {
                 let rx = if *r > 0.0 { format!(" rx=\"{}\"", num(*r)) } else { String::new() };
                 vec![format!("<rect width=\"{}\" height=\"{}\"{rx}{attrs}{extra}/>", num(*w), num(*h))]
             }
-            GeoKind::Ellipse { w, h } => vec![format!(
-                "<ellipse cx=\"{}\" cy=\"{}\" rx=\"{}\" ry=\"{}\"{attrs}{extra}/>",
-                num(w / 2.0),
-                num(h / 2.0),
-                num(w / 2.0),
-                num(h / 2.0)
-            )],
+            GeoKind::Ellipse { w, h } => {
+                vec![format!("<ellipse cx=\"{}\" cy=\"{}\" rx=\"{}\" ry=\"{}\"{attrs}{extra}/>", num(w / 2.0), num(h / 2.0), num(w / 2.0), num(h / 2.0))]
+            }
             GeoKind::Path => geo
                 .paths
                 .iter()
@@ -419,7 +421,9 @@ impl Svg<'_> {
                 let id = self.uid(if linear { "linear" } else { "radial" });
                 let m = matrix_attr(&gradient_matrix(handles, size));
                 if linear {
-                    self.def(&format!("<linearGradient id=\"{id}\" x1=\"0\" y1=\"0\" x2=\"1\" y2=\"0\" gradientUnits=\"userSpaceOnUse\" gradientTransform=\"{m}\">"));
+                    self.def(&format!(
+                        "<linearGradient id=\"{id}\" x1=\"0\" y1=\"0\" x2=\"1\" y2=\"0\" gradientUnits=\"userSpaceOnUse\" gradientTransform=\"{m}\">"
+                    ));
                 } else {
                     self.def(&format!("<radialGradient id=\"{id}\" cx=\"0\" cy=\"0\" r=\"1\" gradientUnits=\"userSpaceOnUse\" gradientTransform=\"{m}\">"));
                 }
@@ -502,15 +506,7 @@ impl Svg<'_> {
                     for k in 0..N {
                         let t = 1.0 - k as f32 / N as f32;
                         let c = eval_stops(&sorted, t - 0.5 / N as f32);
-                        out.push(format!(
-                            "    <path d=\"M{} 0 L0 {} L-{} 0 L0 -{} Z\" fill=\"{}\"{}/>",
-                            num(t),
-                            num(t),
-                            num(t),
-                            num(t),
-                            hex(&c),
-                            op(&c)
-                        ));
+                        out.push(format!("    <path d=\"M{} 0 L0 {} L-{} 0 L0 -{} Z\" fill=\"{}\"{}/>", num(t), num(t), num(t), num(t), hex(&c), op(&c)));
                     }
                 }
                 out.push("  </g>".into());
@@ -965,10 +961,7 @@ mod tests {
             n.fills = vec![Paint {
                 kind: PaintKind::LinearGradient {
                     handles: [Vec2::new(0.0, 0.5), Vec2::new(1.0, 0.5), Vec2::new(0.0, 1.0)],
-                    stops: vec![
-                        GradientStop { pos: 0.0, color: Color::rgb(255, 0, 0) },
-                        GradientStop { pos: 1.0, color: Color::rgba(0, 0, 255, 128) },
-                    ],
+                    stops: vec![GradientStop { pos: 0.0, color: Color::rgb(255, 0, 0) }, GradientStop { pos: 1.0, color: Color::rgba(0, 0, 255, 128) }],
                 },
                 opacity: 1.0,
                 visible: true,
@@ -1024,7 +1017,14 @@ mod tests {
             let i = d.alloc_id();
             let mut n = Node::rectangle(i, Rect::new(0.0, 0.0, 10.0, 10.0));
             n.effects = vec![
-                Effect::DropShadow { color: Color::rgba(0, 0, 0, 64), offset: Vec2::new(0.0, 4.0), radius: 4.0, spread: 0.0, visible: true, show_behind: false },
+                Effect::DropShadow {
+                    color: Color::rgba(0, 0, 0, 64),
+                    offset: Vec2::new(0.0, 4.0),
+                    radius: 4.0,
+                    spread: 0.0,
+                    visible: true,
+                    show_behind: false,
+                },
                 Effect::InnerShadow { color: Color::WHITE, offset: Vec2::new(1.0, 1.0), radius: 2.0, spread: 0.0, visible: true },
                 Effect::LayerBlur { radius: 6.0, visible: true },
             ];
@@ -1078,12 +1078,20 @@ mod tests {
     fn star_vector_evenodd_and_image_fill() {
         let (d, id) = doc1(|d, page| {
             let i = d.alloc_id();
-            let mut n = Node::new(i, NodeKind::Vector {
-                paths: vec![Path {
-                    cmds: vec![PathCmd::MoveTo(Vec2::new(0.0, 0.0)), PathCmd::LineTo(Vec2::new(8.0, 0.0)), PathCmd::LineTo(Vec2::new(8.0, 8.0)), PathCmd::Close],
-                    fill_rule: FillRule::EvenOdd,
-                }],
-            });
+            let mut n = Node::new(
+                i,
+                NodeKind::Vector {
+                    paths: vec![Path {
+                        cmds: vec![
+                            PathCmd::MoveTo(Vec2::new(0.0, 0.0)),
+                            PathCmd::LineTo(Vec2::new(8.0, 0.0)),
+                            PathCmd::LineTo(Vec2::new(8.0, 8.0)),
+                            PathCmd::Close,
+                        ],
+                        fill_rule: FillRule::EvenOdd,
+                    }],
+                },
+            );
             n.size = Vec2::new(8.0, 8.0);
             n.fills = vec![Paint::solid(Color::rgb(1, 2, 3))];
             d.insert(page, n).unwrap();
@@ -1110,7 +1118,12 @@ mod tests {
             d.images.insert("h1".into(), png.clone());
             let i = d.alloc_id();
             let mut n = Node::rectangle(i, Rect::new(0.0, 0.0, 8.0, 8.0));
-            n.fills = vec![Paint { kind: PaintKind::Image { image_ref: "h1".into(), scale_mode: ImageScaleMode::Fill }, opacity: 1.0, visible: true, blend: BlendMode::Normal }];
+            n.fills = vec![Paint {
+                kind: PaintKind::Image { image_ref: "h1".into(), scale_mode: ImageScaleMode::Fill },
+                opacity: 1.0,
+                visible: true,
+                blend: BlendMode::Normal,
+            }];
             d.insert(page, n).unwrap();
         });
         let s = svg(&d, id);

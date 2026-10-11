@@ -2,9 +2,9 @@
 //! region pixmaps around the node and composited onto the target.
 
 use crate::blur::{gaussian_blur_at, Edges};
-use std::cell::Cell;
 use crate::paint::sk_color;
 use desigma_doc as d;
+use std::cell::Cell;
 use tiny_skia as sk;
 
 /// Draws the node silhouette into a pixmap: `(pixmap, dx, dy, grow, opaque)`.
@@ -83,7 +83,20 @@ pub fn drop_shadow(
     alpha: f32,
     sil: Sil,
 ) {
-    drop_shadow_with(&|pm, s, o| gaussian_blur_at(pm, s, o, Edges::Margined), target, clip, bbox, scale, color, offset, radius, spread, show_behind, alpha, sil);
+    drop_shadow_with(
+        &|pm, s, o| gaussian_blur_at(pm, s, o, Edges::Margined),
+        target,
+        clip,
+        bbox,
+        scale,
+        color,
+        offset,
+        radius,
+        spread,
+        show_behind,
+        alpha,
+        sil,
+    );
 }
 
 /// Blur function: `(pixmap, sigma, absolute origin of pixel (0, 0))`.
@@ -159,15 +172,7 @@ pub fn inner_shadow(
 /// drawing into an isolated layer, `backdrop` is what lies beneath the layer
 /// (it is sampled together with the layer's own content).
 #[allow(clippy::too_many_arguments)]
-pub fn background_blur(
-    target: &mut sk::Pixmap,
-    backdrop: Option<&sk::Pixmap>,
-    clip: Option<&sk::Mask>,
-    bbox: BBox,
-    scale: f32,
-    radius: f32,
-    sil: Sil,
-) {
+pub fn background_blur(target: &mut sk::Pixmap, backdrop: Option<&sk::Pixmap>, clip: Option<&sk::Mask>, bbox: BBox, scale: f32, radius: f32, sil: Sil) {
     let sigma = radius.max(0.0) * scale / 2.0;
     let (tw, th) = (target.width() as i32, target.height() as i32);
     let x0 = (bbox.0.floor() as i32).max(0);

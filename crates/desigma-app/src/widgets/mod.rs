@@ -105,7 +105,13 @@ pub fn icon_button(ui: &mut Ui, rect: Rect, id: impl crate::widgets::Key, icon: 
     let r = ui.interact(rect, ui.id().with(id), Sense::click());
     let p = ui.painter();
     button_bg(p, rect, &r, selected, theme::cr(theme::RADIUS_MEDIUM));
-    let col = if selected { theme::ICON_SELECTED } else if r.hovered() { theme::ICON } else { theme::ICON_SECONDARY };
+    let col = if selected {
+        theme::ICON_SELECTED
+    } else if r.hovered() {
+        theme::ICON
+    } else {
+        theme::ICON_SECONDARY
+    };
     icons::paint(p, icon, rect.center(), 16.0, col);
     if !tip.is_empty() {
         return r.on_hover_text(tip);

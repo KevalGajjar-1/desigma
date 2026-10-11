@@ -10,13 +10,25 @@ pub enum Trigger {
     OnDrag,
     WhileHovering,
     WhilePressing,
-    MouseEnter { delay_ms: u32 },
-    MouseLeave { delay_ms: u32 },
-    MouseDown { delay_ms: u32 },
-    MouseUp { delay_ms: u32 },
-    AfterDelay { delay_ms: u32 },
+    MouseEnter {
+        delay_ms: u32,
+    },
+    MouseLeave {
+        delay_ms: u32,
+    },
+    MouseDown {
+        delay_ms: u32,
+    },
+    MouseUp {
+        delay_ms: u32,
+    },
+    AfterDelay {
+        delay_ms: u32,
+    },
     /// Key or gamepad press, e.g. "Space", "Ctrl+K".
-    KeyPress { keys: String },
+    KeyPress {
+        keys: String,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -39,7 +51,11 @@ pub enum Easing {
     EaseInOutBack,
     /// CSS-style cubic-bezier control points.
     Bezier([f32; 4]),
-    Spring { mass: f32, stiffness: f32, damping: f32 },
+    Spring {
+        mass: f32,
+        stiffness: f32,
+        damping: f32,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -77,7 +93,10 @@ pub enum OverlayPosition {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Action {
     /// Go to another top-level frame. `preserve_scroll` keeps scroll position.
-    Navigate { dest: NodeId, preserve_scroll: bool },
+    Navigate {
+        dest: NodeId,
+        preserve_scroll: bool,
+    },
     OpenOverlay {
         dest: NodeId,
         position: OverlayPosition,
@@ -85,14 +104,24 @@ pub enum Action {
         close_on_click_outside: bool,
         background: Option<crate::Color>,
     },
-    SwapOverlay { dest: NodeId },
+    SwapOverlay {
+        dest: NodeId,
+    },
     CloseOverlay,
     Back,
     /// Scroll a scrollable ancestor so `dest` is visible.
-    ScrollTo { dest: NodeId, offset: Vec2 },
-    OpenUrl { url: String, new_tab: bool },
+    ScrollTo {
+        dest: NodeId,
+        offset: Vec2,
+    },
+    OpenUrl {
+        url: String,
+        new_tab: bool,
+    },
     /// Change an instance to another variant of its component set.
-    ChangeTo { dest: NodeId },
+    ChangeTo {
+        dest: NodeId,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

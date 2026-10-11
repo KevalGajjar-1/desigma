@@ -128,10 +128,13 @@ fn rrect_shadow_matches_generic() {
                         let d = delta(&run(&c, true), &run(&c, false), &c);
                         count += 1;
                         if d > 2 {
-                            eprintln!("delta {d}: w {w} h {h} r {r} radius {radius} spread {spread} alpha {fill_alpha} behind {show_behind} fx {fx} scale {scale}");
+                            eprintln!(
+                                "delta {d}: w {w} h {h} r {r} radius {radius} spread {spread} alpha {fill_alpha} behind {show_behind} fx {fx} scale {scale}"
+                            );
                         }
                         if d > worst.0 {
-                            worst = (d, format!("w {w} h {h} r {r} radius {radius} spread {spread} alpha {fill_alpha} behind {show_behind} fx {fx} scale {scale}"));
+                            worst =
+                                (d, format!("w {w} h {h} r {r} radius {radius} spread {spread} alpha {fill_alpha} behind {show_behind} fx {fx} scale {scale}"));
                         }
                     }
                 }
@@ -151,7 +154,19 @@ fn identical_shadows_hit_the_cache() {
     let (w, h, radius) = (101.0f32, 61.0f32, 13.0f32);
     let before = thread_patch_builds();
     for i in 0..20 {
-        let c = Case { x: 20.0 + i as f32 * 3.0, y: 30.0 + i as f32 * 2.0, w, h, r: 8.0, scale: 1.0, radius, spread: 0.0, off: (0.0, 4.0), fill_alpha: 1.0, show_behind: true };
+        let c = Case {
+            x: 20.0 + i as f32 * 3.0,
+            y: 30.0 + i as f32 * 2.0,
+            w,
+            h,
+            r: 8.0,
+            scale: 1.0,
+            radius,
+            spread: 0.0,
+            off: (0.0, 4.0),
+            fill_alpha: 1.0,
+            show_behind: true,
+        };
         let sil = sil_for(&c);
         let rr = RRect { x: c.x, y: c.y, w: c.w, h: c.h, r: c.r };
         assert!(drop_shadow_rrect(&mut target, None, rr, 1.0, &color, d::Vec2::new(0.0, 4.0), radius, 0.0, true, 1.0, 1.0, &sil));

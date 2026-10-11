@@ -250,12 +250,7 @@ pub fn drop_shadow_rrect(
     let mut lut = [[0u8; 4]; 256];
     for (m, out) in lut.iter_mut().enumerate() {
         let v = va * m as f32 / 255.0;
-        *out = [
-            (col.red() * v * 255.0 + 0.5) as u8,
-            (col.green() * v * 255.0 + 0.5) as u8,
-            (col.blue() * v * 255.0 + 0.5) as u8,
-            (v * 255.0 + 0.5) as u8,
-        ];
+        *out = [(col.red() * v * 255.0 + 0.5) as u8, (col.green() * v * 255.0 + 0.5) as u8, (col.blue() * v * 255.0 + 0.5) as u8, (v * 255.0 + 0.5) as u8];
     }
     let xmap: Vec<i32> = (rx..rx1).map(|x| ax.map(x).map_or(-1, |p| p as i32)).collect();
     let data = pm.data_mut();

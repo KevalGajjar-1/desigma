@@ -44,7 +44,9 @@ pub fn pill_field(app: &mut App, ui: &mut Ui, rect: Rect, sel: &[NodeId], keys: 
 
 /// Small hexagon button shown on hover that opens the variable picker.
 pub fn hover_button(app: &mut App, ui: &mut Ui, rect: Rect, sel: &[NodeId], keys: &[&str], kind: VariableKind) {
-    if app.doc.variables.is_empty() || !ui.rect_contains_pointer(rect) && app.vars.bind_picker.as_ref().is_none_or(|b| b.keys.first().map(String::as_str) != Some(keys[0])) {
+    if app.doc.variables.is_empty()
+        || !ui.rect_contains_pointer(rect) && app.vars.bind_picker.as_ref().is_none_or(|b| b.keys.first().map(String::as_str) != Some(keys[0]))
+    {
         return;
     }
     let b = Rect::from_center_size(Pos2::new(rect.right() - 14.0, rect.center().y), Vec2::splat(20.0));

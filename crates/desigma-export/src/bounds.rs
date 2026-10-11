@@ -13,12 +13,7 @@ pub fn render_bounds(doc: &Document, id: NodeId) -> Rect {
 }
 
 fn transform_rect(t: &Affine, r: Rect) -> Rect {
-    let pts = [
-        t.apply(Vec2::new(r.x, r.y)),
-        t.apply(Vec2::new(r.x + r.w, r.y)),
-        t.apply(Vec2::new(r.x + r.w, r.y + r.h)),
-        t.apply(Vec2::new(r.x, r.y + r.h)),
-    ];
+    let pts = [t.apply(Vec2::new(r.x, r.y)), t.apply(Vec2::new(r.x + r.w, r.y)), t.apply(Vec2::new(r.x + r.w, r.y + r.h)), t.apply(Vec2::new(r.x, r.y + r.h))];
     let x0 = pts.iter().map(|p| p.x).fold(f32::MAX, f32::min);
     let y0 = pts.iter().map(|p| p.y).fold(f32::MAX, f32::min);
     let x1 = pts.iter().map(|p| p.x).fold(f32::MIN, f32::max);
@@ -105,14 +100,7 @@ mod tests {
         let page = d.add_page("p");
         let id = d.alloc_id();
         let mut n = Node::rectangle(id, Rect::new(50.0, 50.0, 100.0, 40.0));
-        n.effects.push(Effect::DropShadow {
-            color: Color::BLACK,
-            offset: Vec2::new(0.0, 4.0),
-            radius: 8.0,
-            spread: 0.0,
-            visible: true,
-            show_behind: false,
-        });
+        n.effects.push(Effect::DropShadow { color: Color::BLACK, offset: Vec2::new(0.0, 4.0), radius: 8.0, spread: 0.0, visible: true, show_behind: false });
         d.insert(page, n).unwrap();
         (d, id)
     }

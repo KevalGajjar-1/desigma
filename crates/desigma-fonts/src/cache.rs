@@ -18,11 +18,7 @@ struct UreqFetch {
 impl UreqFetch {
     fn new() -> Self {
         use std::time::Duration;
-        let agent = ureq::AgentBuilder::new()
-            .timeout_connect(Duration::from_secs(10))
-            .timeout(Duration::from_secs(60))
-            .user_agent("desigma-fonts")
-            .build();
+        let agent = ureq::AgentBuilder::new().timeout_connect(Duration::from_secs(10)).timeout(Duration::from_secs(60)).user_agent("desigma-fonts").build();
         Self { agent }
     }
 }
@@ -139,10 +135,7 @@ impl FontCache {
         if let Some(bytes) = self.cached(req) {
             return Ok(bytes);
         }
-        let fetcher = self
-            .fetcher
-            .as_deref()
-            .ok_or_else(|| FontError::Offline(format!("'{}' is not cached and fetching is disabled", req.family)))?;
+        let fetcher = self.fetcher.as_deref().ok_or_else(|| FontError::Offline(format!("'{}' is not cached and fetching is disabled", req.family)))?;
         let meta_bytes = fetcher.get(&metadata_url(&req.family)).map_err(|e| match e {
             FontError::NotFound(_) => FontError::NotFound(req.family.clone()),
             other => other,
@@ -156,14 +149,18 @@ impl FontCache {
         if bytes.len() < 12 || !matches!(&bytes[..4], [0, 1, 0, 0] | b"OTTO" | b"true" | b"ttcf") {
             return Err(FontError::Metadata(format!("{} is not a TTF/OTF file", pick.url)));
         }
-        self.store(req, &bytes, &Sidecar {
-            family: meta.family,
-            license: meta.license,
-            requested_weight: req.weight,
-            weight: pick.weight,
-            italic: pick.italic,
-            source_url: pick.url,
-        })?;
+        self.store(
+            req,
+            &bytes,
+            &Sidecar {
+                family: meta.family,
+                license: meta.license,
+                requested_weight: req.weight,
+                weight: pick.weight,
+                italic: pick.italic,
+                source_url: pick.url,
+            },
+        )?;
         Ok(bytes)
     }
 

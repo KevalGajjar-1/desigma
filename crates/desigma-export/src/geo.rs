@@ -9,9 +9,16 @@ const KAPPA: f32 = 0.552_284_8;
 #[derive(Clone, Debug, PartialEq)]
 pub enum GeoKind {
     /// Plain rectangle with one corner radius (0 = square).
-    Rect { w: f32, h: f32, r: f32 },
+    Rect {
+        w: f32,
+        h: f32,
+        r: f32,
+    },
     /// Full ellipse filling the box.
-    Ellipse { w: f32, h: f32 },
+    Ellipse {
+        w: f32,
+        h: f32,
+    },
     Path,
 }
 
@@ -37,13 +44,7 @@ pub fn rounded_rect(w: f32, h: f32, radii: [f32; 4]) -> Vec<PathCmd> {
     let [tl, tr, br, bl] = radii.map(|r| r.max(0.0).min(lim));
     let k = KAPPA;
     if tl + tr + br + bl <= 0.0 {
-        return vec![
-            PathCmd::MoveTo(v(0.0, 0.0)),
-            PathCmd::LineTo(v(w, 0.0)),
-            PathCmd::LineTo(v(w, h)),
-            PathCmd::LineTo(v(0.0, h)),
-            PathCmd::Close,
-        ];
+        return vec![PathCmd::MoveTo(v(0.0, 0.0)), PathCmd::LineTo(v(w, 0.0)), PathCmd::LineTo(v(w, h)), PathCmd::LineTo(v(0.0, h)), PathCmd::Close];
     }
     let mut out = vec![PathCmd::MoveTo(v(tl, 0.0)), PathCmd::LineTo(v(w - tr, 0.0))];
     // square corners need no curve
@@ -219,12 +220,7 @@ pub fn node_geo(n: &Node) -> Option<Geo> {
         mask: None,
     };
     match &n.kind {
-        NodeKind::Frame(_)
-        | NodeKind::Component(_)
-        | NodeKind::ComponentSet(_)
-        | NodeKind::Instance { .. }
-        | NodeKind::Section
-        | NodeKind::Rectangle => {
+        NodeKind::Frame(_) | NodeKind::Component(_) | NodeKind::ComponentSet(_) | NodeKind::Instance { .. } | NodeKind::Section | NodeKind::Rectangle => {
             if w <= 0.0 || h <= 0.0 {
                 return None;
             }
@@ -245,9 +241,7 @@ pub fn node_geo(n: &Node) -> Option<Geo> {
             Some(single(cmds, GeoKind::Path, false, false, false))
         }
         NodeKind::Polygon { count } => Some(single(poly_cmds(w, h, &polygon_points(*count))?, GeoKind::Path, true, true, false)),
-        NodeKind::Star { count, inner_ratio } => {
-            Some(single(poly_cmds(w, h, &star_points(*count, *inner_ratio))?, GeoKind::Path, true, true, false))
-        }
+        NodeKind::Star { count, inner_ratio } => Some(single(poly_cmds(w, h, &star_points(*count, *inner_ratio))?, GeoKind::Path, true, true, false)),
         NodeKind::Vector { paths } => {
             let g = from_doc_paths(paths);
             (!g.paths.is_empty()).then_some(g)

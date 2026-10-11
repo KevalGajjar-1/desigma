@@ -288,7 +288,17 @@ fn paint_thumb(p: &egui::Painter, thumbs: &mut Thumbs, ctx: &Context, doc: &Docu
 }
 
 #[allow(clippy::too_many_arguments)]
-fn list_item(ui: &mut Ui, p: &egui::Painter, thumbs: &mut Thumbs, doc: &Document, e: &AssetEntry, row: Rect, dragging: Option<NodeId>, now: f64, out: &mut Outcome) {
+fn list_item(
+    ui: &mut Ui,
+    p: &egui::Painter,
+    thumbs: &mut Thumbs,
+    doc: &Document,
+    e: &AssetEntry,
+    row: Rect,
+    dragging: Option<NodeId>,
+    now: f64,
+    out: &mut Outcome,
+) {
     let r = ui.interact(row, ui.id().with(("asset", e.id.0)), Sense::click_and_drag());
     widgets::record(ui, &format!("asset:{}", e.name), row);
     let inset = row.shrink2(Vec2::new(8.0, 0.0));
@@ -311,7 +321,17 @@ fn list_item(ui: &mut Ui, p: &egui::Painter, thumbs: &mut Thumbs, doc: &Document
 }
 
 #[allow(clippy::too_many_arguments)]
-fn grid_cell(ui: &mut Ui, p: &egui::Painter, thumbs: &mut Thumbs, doc: &Document, e: &AssetEntry, cell: Rect, dragging: Option<NodeId>, now: f64, out: &mut Outcome) {
+fn grid_cell(
+    ui: &mut Ui,
+    p: &egui::Painter,
+    thumbs: &mut Thumbs,
+    doc: &Document,
+    e: &AssetEntry,
+    cell: Rect,
+    dragging: Option<NodeId>,
+    now: f64,
+    out: &mut Outcome,
+) {
     let r = ui.interact(cell, ui.id().with(("asset", e.id.0)), Sense::click_and_drag());
     let preview = Rect::from_min_size(cell.min, Vec2::new(cell.width(), GRID_PREVIEW_H));
     widgets::record(ui, &format!("asset:{}", e.name), preview);
@@ -340,7 +360,13 @@ fn view_toggle(ui: &mut Ui, at: Pos2, grid: &mut bool) {
         let selected = *grid == is_grid;
         widgets::button_bg(ui.painter(), rect, &r, selected, theme::cr(theme::RADIUS_MEDIUM));
         widgets::record(ui, if is_grid { "assets-view-grid" } else { "assets-view-list" }, rect);
-        let col = if selected { theme::ICON_SELECTED } else if r.hovered() { theme::ICON } else { theme::ICON_SECONDARY };
+        let col = if selected {
+            theme::ICON_SELECTED
+        } else if r.hovered() {
+            theme::ICON
+        } else {
+            theme::ICON_SECONDARY
+        };
         let p = ui.painter();
         let c = rect.center();
         if is_grid {
@@ -398,7 +424,13 @@ pub fn show(app: &mut App, ui: &mut Ui, region: Rect) {
     app.assets.scroll = scroll;
     if entries.is_empty() {
         p.text(Pos2::new(list.center().x, list.top() + 48.0), Align2::CENTER_CENTER, "No components yet", theme::font_body(), theme::TEXT_TERTIARY);
-        p.text(Pos2::new(list.center().x, list.top() + 68.0), Align2::CENTER_CENTER, "Select a frame and press Ctrl+Alt+K", theme::font_small(), theme::TEXT_TERTIARY);
+        p.text(
+            Pos2::new(list.center().x, list.top() + 68.0),
+            Align2::CENTER_CENTER,
+            "Select a frame and press Ctrl+Alt+K",
+            theme::font_small(),
+            theme::TEXT_TERTIARY,
+        );
     } else if shown.is_empty() {
         p.text(Pos2::new(list.center().x, list.top() + 48.0), Align2::CENTER_CENTER, "No results", theme::font_body(), theme::TEXT_TERTIARY);
     }
@@ -422,18 +454,33 @@ pub fn show(app: &mut App, ui: &mut Ui, region: Rect) {
                 }
                 match l {
                     Line::Page(name) => {
-                        p.text(Pos2::new(row.left() + theme::PANEL_PADDING_X, row.center().y), Align2::LEFT_CENTER, name, theme::font_body_strong(), theme::TEXT);
+                        p.text(
+                            Pos2::new(row.left() + theme::PANEL_PADDING_X, row.center().y),
+                            Align2::LEFT_CENTER,
+                            name,
+                            theme::font_body_strong(),
+                            theme::TEXT,
+                        );
                     }
                     Line::Container(name) => {
                         let s = widgets::elide(&p, name, &theme::font_body(), row.width() - 40.0);
-                        p.text(Pos2::new(row.left() + theme::PANEL_PADDING_X + 8.0, row.center().y), Align2::LEFT_CENTER, s, theme::font_body(), theme::TEXT_SECONDARY);
+                        p.text(
+                            Pos2::new(row.left() + theme::PANEL_PADDING_X + 8.0, row.center().y),
+                            Align2::LEFT_CENTER,
+                            s,
+                            theme::font_body(),
+                            theme::TEXT_SECONDARY,
+                        );
                     }
                     Line::Item(i) => list_item(ui, &p, &mut thumbs, doc, &entries[*i], row, dragging, now, &mut out),
                     Line::Cells(ix) => {
                         let n = cols.unwrap_or(1) as f32;
                         let cw = (list.width() - 16.0 - GRID_GAP * (n - 1.0)) / n;
                         for (k, i) in ix.iter().enumerate() {
-                            let cell = Rect::from_min_size(Pos2::new(list.left() + 8.0 + k as f32 * (cw + GRID_GAP), row.top()), Vec2::new(cw, GRID_PREVIEW_H + GRID_LABEL_H));
+                            let cell = Rect::from_min_size(
+                                Pos2::new(list.left() + 8.0 + k as f32 * (cw + GRID_GAP), row.top()),
+                                Vec2::new(cw, GRID_PREVIEW_H + GRID_LABEL_H),
+                            );
                             grid_cell(ui, &p, &mut thumbs, doc, &entries[*i], cell, dragging, now, &mut out);
                         }
                     }

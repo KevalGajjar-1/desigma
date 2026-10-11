@@ -211,7 +211,14 @@ pub fn popup_tree(ctx: &egui::Context, id: Id, pos: Pos2, min_w: f32, items: &[M
     // ---- keyboard
     let (down, up, right, left, enter, esc) = ctx.input_mut(|i| {
         let n = Modifiers::NONE;
-        (i.consume_key(n, Key::ArrowDown), i.consume_key(n, Key::ArrowUp), i.consume_key(n, Key::ArrowRight), i.consume_key(n, Key::ArrowLeft), i.consume_key(n, Key::Enter) || i.consume_key(n, Key::Space), i.consume_key(n, Key::Escape))
+        (
+            i.consume_key(n, Key::ArrowDown),
+            i.consume_key(n, Key::ArrowUp),
+            i.consume_key(n, Key::ArrowRight),
+            i.consume_key(n, Key::ArrowLeft),
+            i.consume_key(n, Key::Enter) || i.consume_key(n, Key::Space),
+            i.consume_key(n, Key::Escape),
+        )
     });
     {
         let lv = levels(items, &mut st);
@@ -297,7 +304,10 @@ pub fn popup_tree(ctx: &egui::Context, id: Id, pos: Pos2, min_w: f32, items: &[M
             for (i, it) in list.iter().enumerate() {
                 let top = rect.top() + lay.tops[i];
                 let row = Rect::from_min_size(Pos2::new(rect.left(), top), Vec2::new(rect.width(), theme::MENU_ITEM_HEIGHT));
-                let pill = Rect::from_min_size(Pos2::new(rect.left() + theme::MENU_PILL_INSET, top), Vec2::new(rect.width() - theme::MENU_PILL_INSET * 2.0, theme::MENU_ITEM_HEIGHT));
+                let pill = Rect::from_min_size(
+                    Pos2::new(rect.left() + theme::MENU_PILL_INSET, top),
+                    Vec2::new(rect.width() - theme::MENU_PILL_INSET * 2.0, theme::MENU_ITEM_HEIGHT),
+                );
                 let resp = ui.interact(row, id.with(("row", k, i)), if it.disabled { Sense::hover() } else { Sense::click() });
                 let lit = st.hl.get(k).copied().flatten() == Some(i) && !it.disabled;
                 if owner == Some(k) && ptr.is_some_and(|p| row.contains(p)) {
@@ -320,10 +330,28 @@ pub fn popup_tree(ctx: &egui::Context, id: Id, pos: Pos2, min_w: f32, items: &[M
                 }
                 p.text(Pos2::new(rect.left() + label_x(it, lay.has_check), cy), Align2::LEFT_CENTER, &it.label, font.clone(), col);
                 if it.has_sub() {
-                    let c = if it.disabled { theme::TEXT_DISABLED } else if lit { theme::MENU_SHORTCUT_HIGHLIGHT } else { theme::ICON_SECONDARY };
-                    icons::paint(&p, Icon::ChevronRight, Pos2::new(rect.right() - theme::MENU_CHEVRON_PAD - theme::MENU_CHEVRON_BOX / 2.0, cy), theme::MENU_CHEVRON_SIZE, c);
+                    let c = if it.disabled {
+                        theme::TEXT_DISABLED
+                    } else if lit {
+                        theme::MENU_SHORTCUT_HIGHLIGHT
+                    } else {
+                        theme::ICON_SECONDARY
+                    };
+                    icons::paint(
+                        &p,
+                        Icon::ChevronRight,
+                        Pos2::new(rect.right() - theme::MENU_CHEVRON_PAD - theme::MENU_CHEVRON_BOX / 2.0, cy),
+                        theme::MENU_CHEVRON_SIZE,
+                        c,
+                    );
                 } else if !it.shortcut.is_empty() {
-                    let c = if it.disabled { theme::TEXT_DISABLED } else if lit { theme::MENU_SHORTCUT_HIGHLIGHT } else { theme::TEXT_SECONDARY };
+                    let c = if it.disabled {
+                        theme::TEXT_DISABLED
+                    } else if lit {
+                        theme::MENU_SHORTCUT_HIGHLIGHT
+                    } else {
+                        theme::TEXT_SECONDARY
+                    };
                     p.text(Pos2::new(rect.right() - theme::MENU_SHORTCUT_PAD, cy), Align2::RIGHT_CENTER, &it.shortcut, font.clone(), c);
                 }
                 if it.separator_after {

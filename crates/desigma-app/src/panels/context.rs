@@ -11,8 +11,12 @@ fn items(app: &App) -> Vec<(MenuItem, Action)> {
     let has = !app.selection.is_empty();
     let insts = app.selected_instances();
     let has_inst = !insts.is_empty();
-    let any_container = app.selection.iter().any(|id| app.doc.get(*id).is_some_and(|n| matches!(n.kind, NodeKind::Group | NodeKind::Frame(_) | NodeKind::Section)));
-    let can_create = app.selection.iter().any(|id| app.doc.get(*id).is_some_and(|n| !matches!(n.kind, NodeKind::Component(_) | NodeKind::ComponentSet(_) | NodeKind::Page { .. })));
+    let any_container =
+        app.selection.iter().any(|id| app.doc.get(*id).is_some_and(|n| matches!(n.kind, NodeKind::Group | NodeKind::Frame(_) | NodeKind::Section)));
+    let can_create = app
+        .selection
+        .iter()
+        .any(|id| app.doc.get(*id).is_some_and(|n| !matches!(n.kind, NodeKind::Component(_) | NodeKind::ComponentSet(_) | NodeKind::Page { .. })));
     vec![
         (MenuItem::new("Duplicate").shortcut("Ctrl+D").disabled(!has), Action::Duplicate),
         (MenuItem::new("Group selection").shortcut("Ctrl+G").disabled(!has), Action::Group),

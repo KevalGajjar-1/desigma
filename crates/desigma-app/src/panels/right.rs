@@ -15,7 +15,10 @@ pub fn show(app: &mut App, ui: &mut Ui, rect: Rect) {
     let left = rect.left();
 
     // Avatar pill.
-    let av = Rect::from_min_size(Pos2::new(left + theme::RIGHT_AVATAR_X, rect.top() + theme::RIGHT_AVATAR_Y), Vec2::new(theme::RIGHT_AVATAR_W, theme::RIGHT_AVATAR_H));
+    let av = Rect::from_min_size(
+        Pos2::new(left + theme::RIGHT_AVATAR_X, rect.top() + theme::RIGHT_AVATAR_Y),
+        Vec2::new(theme::RIGHT_AVATAR_W, theme::RIGHT_AVATAR_H),
+    );
     let ar = ui.interact(av, ui.id().with("avatar"), Sense::click());
     // 24px user-colour circle + 16px chevron inside a 50x24 pill that shows a hover background.
     if ar.hovered() {
@@ -48,7 +51,10 @@ pub fn show(app: &mut App, ui: &mut Ui, rect: Rect) {
     }
 
     // Share button.
-    let sb = Rect::from_min_size(Pos2::new(right - theme::RIGHT_SHARE_FROM_RIGHT, rect.top() + theme::RIGHT_BTN_Y), Vec2::new(theme::RIGHT_SHARE_W, theme::RIGHT_BTN_SIZE));
+    let sb = Rect::from_min_size(
+        Pos2::new(right - theme::RIGHT_SHARE_FROM_RIGHT, rect.top() + theme::RIGHT_BTN_Y),
+        Vec2::new(theme::RIGHT_SHARE_W, theme::RIGHT_BTN_SIZE),
+    );
     let sr = ui.interact(sb, ui.id().with("share"), Sense::click());
     let bg = if sr.is_pointer_button_down_on() {
         theme::BG_BRAND_PRESSED

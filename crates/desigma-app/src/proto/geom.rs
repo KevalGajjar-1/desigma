@@ -179,7 +179,9 @@ pub fn poses(kind: TransitionKind, p: f32, size: Vec2) -> Poses {
     let at = |v: Vec2| Pose { offset: v, alpha: 1.0 };
     match kind {
         // SmartAnimate is rendered from interpolated layers; this is its fallback.
-        TransitionKind::Dissolve | TransitionKind::SmartAnimate => Poses { from: still, to: Pose { offset: Vec2::ZERO, alpha: p.clamp(0.0, 1.0) }, to_on_top: true },
+        TransitionKind::Dissolve | TransitionKind::SmartAnimate => {
+            Poses { from: still, to: Pose { offset: Vec2::ZERO, alpha: p.clamp(0.0, 1.0) }, to_on_top: true }
+        }
         TransitionKind::MoveIn(d) => {
             let v = dir_vec(d);
             Poses { from: still, to: at(mul(v, -(1.0 - p) * size.x, -(1.0 - p) * size.y)), to_on_top: true }

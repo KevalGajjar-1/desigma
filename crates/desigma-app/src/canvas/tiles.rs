@@ -138,10 +138,7 @@ pub fn paint(app: &mut App, ui: &Ui, rect: ERect) {
         let y0 = (oy as f32 / s - offset.y) * a;
         let x1 = ((ox as f32 + side) / s - offset.x) * a;
         let y1 = ((oy as f32 + side) / s - offset.y) * a;
-        let r = ERect::from_min_max(
-            egui::pos2(rect.min.x + to_pt(x0), rect.min.y + to_pt(y0)),
-            egui::pos2(rect.min.x + to_pt(x1), rect.min.y + to_pt(y1)),
-        );
+        let r = ERect::from_min_max(egui::pos2(rect.min.x + to_pt(x0), rect.min.y + to_pt(y0)), egui::pos2(rect.min.x + to_pt(x1), rect.min.y + to_pt(y1)));
         if !r.intersects(rect) {
             continue;
         }

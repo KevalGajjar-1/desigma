@@ -696,9 +696,11 @@ fn swap_main(c: &mut Ctx, i: NodeId, new_comp: NodeId) {
     }
     let mut n = c.s.get(i).cloned().unwrap_or(inode.clone());
     let same_family = instance_component(&inode)
-            .and_then(|o| c.s.get(o))
-            .map(|o| o.parent.is_some() && o.parent == comp.parent && c.s.get(comp.parent.unwrap()).map(|p| matches!(p.kind, NodeKind::ComponentSet(_))).unwrap_or(false))
-            .unwrap_or(false);
+        .and_then(|o| c.s.get(o))
+        .map(|o| {
+            o.parent.is_some() && o.parent == comp.parent && c.s.get(comp.parent.unwrap()).map(|p| matches!(p.kind, NodeKind::ComponentSet(_))).unwrap_or(false)
+        })
+        .unwrap_or(false);
     if let NodeKind::Instance { component, component_key, frame } = &mut n.kind {
         *component = Some(new_comp);
         *component_key = None;
@@ -790,8 +792,7 @@ fn sync_pair(c: &mut Ctx, r: NodeId, i: NodeId, top: bool, holder: NodeId) {
     let rkids = c.s.get(ref_id).map(|x| x.children.clone()).unwrap_or_default();
     let ikids = c.s.get(i).map(|x| x.children.clone()).unwrap_or_default();
     let child_holder = if matches!(inode.kind, NodeKind::Instance { .. }) { i } else { holder };
-    let by_src: BTreeMap<NodeId, NodeId> =
-        ikids.iter().filter_map(|k| c.s.get(*k).and_then(|x| x.component.source).map(|s| (s, *k))).collect();
+    let by_src: BTreeMap<NodeId, NodeId> = ikids.iter().filter_map(|k| c.s.get(*k).and_then(|x| x.component.source).map(|s| (s, *k))).collect();
     let rset: BTreeSet<NodeId> = rkids.iter().copied().collect();
     for k in &ikids {
         if let Some(s) = c.s.get(*k).and_then(|x| x.component.source) {
@@ -975,11 +976,7 @@ pub fn bind_prop(doc: &mut Document, node: NodeId, field: OverrideField, prop: O
 /// set gets a Variant property definition per distinct property and the
 /// variants are laid out in a grid.
 pub fn combine_as_variants(doc: &mut Document, components: &[NodeId]) -> Command {
-    let comps: Vec<NodeId> = components
-        .iter()
-        .copied()
-        .filter(|c| matches!(doc.get(*c).map(|n| &n.kind), Some(NodeKind::Component(_))))
-        .collect();
+    let comps: Vec<NodeId> = components.iter().copied().filter(|c| matches!(doc.get(*c).map(|n| &n.kind), Some(NodeKind::Component(_)))).collect();
     let Some(&first) = comps.first() else { return nothing() };
     let Some(parent) = doc.get(first).and_then(|n| n.parent) else { return nothing() };
     let index = doc.get(parent).and_then(|p| p.children.iter().position(|c| *c == first)).unwrap_or(0);
@@ -1295,10 +1292,7 @@ mod tests {
         let mut f = fx();
         let i = inst(&mut f, (200.0, 0.0));
         let j = inst(&mut f, (400.0, 0.0));
-        for (name, kind, default) in [
-            ("Show icon", PropKind::Boolean, PropValue::Bool(true)),
-            ("Label", PropKind::Text, PropValue::Text("Label".into())),
-        ] {
+        for (name, kind, default) in [("Show icon", PropKind::Boolean, PropValue::Bool(true)), ("Label", PropKind::Text, PropValue::Text("Label".into()))] {
             let c = add_prop(&mut f.d, f.comp, ComponentPropDef { name: name.into(), kind, default });
             apply(&mut f.d, c);
         }
@@ -1464,7 +1458,11 @@ mod tests {
         let c = create_instance(&mut f.d, f.comp, card, Vec2::ZERO);
         apply(&mut f.d, c);
         let slot = *f.d.get(card).unwrap().children.last().unwrap();
-        let c = add_prop(&mut f.d, card, ComponentPropDef { name: "Icon".into(), kind: PropKind::InstanceSwap { preferred: vec![] }, default: PropValue::Instance(f.comp) });
+        let c = add_prop(
+            &mut f.d,
+            card,
+            ComponentPropDef { name: "Icon".into(), kind: PropKind::InstanceSwap { preferred: vec![] }, default: PropValue::Instance(f.comp) },
+        );
         apply(&mut f.d, c);
         let c = bind_prop(&mut f.d, slot, OverrideField::MainComponent, Some("Icon"));
         apply(&mut f.d, c);
@@ -1553,10 +1551,7 @@ mod tests {
             t.style.font_size = 99.0;
         }
         let s = record_override(&a, &b);
-        assert_eq!(
-            s,
-            BTreeSet::from([OverrideField::Opacity, OverrideField::Fills, OverrideField::Name, OverrideField::Characters, OverrideField::TextStyle])
-        );
+        assert_eq!(s, BTreeSet::from([OverrideField::Opacity, OverrideField::Fills, OverrideField::Name, OverrideField::Characters, OverrideField::TextStyle]));
         assert!(record_override(&a, &a).is_empty());
     }
 

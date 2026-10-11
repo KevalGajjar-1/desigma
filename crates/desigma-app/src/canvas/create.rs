@@ -41,11 +41,8 @@ pub fn draw_geom(tool: Tool, start: Vec2, cur: Vec2, shift: bool, alt: bool) -> 
         dx = s * if dx < 0.0 { -1.0 } else { 1.0 };
         dy = s * if dy < 0.0 { -1.0 } else { 1.0 };
     }
-    let rect = if alt {
-        Rect::new(start.x - dx.abs(), start.y - dy.abs(), dx.abs() * 2.0, dy.abs() * 2.0)
-    } else {
-        rect_from_points(start, add(start, v2(dx, dy)))
-    };
+    let rect =
+        if alt { Rect::new(start.x - dx.abs(), start.y - dy.abs(), dx.abs() * 2.0, dy.abs() * 2.0) } else { rect_from_points(start, add(start, v2(dx, dy))) };
     DrawGeom { rect, line: None }
 }
 
@@ -244,10 +241,8 @@ pub fn commit_pen(app: &mut App, tx: &mut Tx, pts: &[PenPoint], closed: bool) ->
     }
     let parent = container_at(&app.doc, app.page, pts[0].pos, &[]);
     let inv = app.doc.world_transform(parent).invert()?;
-    let local_pts: Vec<PenPoint> = pts
-        .iter()
-        .map(|p| PenPoint { pos: inv.apply(p.pos), hin: p.hin.map(|h| inv.apply(h)), hout: p.hout.map(|h| inv.apply(h)) })
-        .collect();
+    let local_pts: Vec<PenPoint> =
+        pts.iter().map(|p| PenPoint { pos: inv.apply(p.pos), hin: p.hin.map(|h| inv.apply(h)), hout: p.hout.map(|h| inv.apply(h)) }).collect();
     let bb = pen_bounds(&local_pts, closed);
     let origin = v2(bb.x, bb.y);
     let id = app.doc.alloc_id();

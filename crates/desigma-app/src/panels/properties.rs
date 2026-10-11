@@ -11,8 +11,8 @@ use crate::util::v2;
 use crate::widgets::field::{self, Prefix};
 use crate::widgets::menu::dropdown;
 use crate::widgets::{self, fmt_num};
-use desigma_doc::*;
 use desigma_doc::Vec2 as DVec2;
+use desigma_doc::*;
 use egui::{Align2, Color32, Pos2, Rect, Sense, Stroke, StrokeKind, Ui, Vec2};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -126,7 +126,13 @@ pub(super) fn segmented(ui: &mut Ui, pane: &Pane, x: f32, key: &str, items: &[Ic
         };
         let resp = ui.interact(r, ui.id().with(("seg", key, i)), Sense::click());
         let sel = selected == Some(i);
-        let bg = if sel { theme::BG_TERTIARY } else if resp.hovered() { theme::BG_TERTIARY.gamma_multiply(0.6) } else { theme::BG_SECONDARY };
+        let bg = if sel {
+            theme::BG_TERTIARY
+        } else if resp.hovered() {
+            theme::BG_TERTIARY.gamma_multiply(0.6)
+        } else {
+            theme::BG_SECONDARY
+        };
         ui.painter().rect_filled(r, radius, bg);
         icons::paint(ui.painter(), *icon, r.center(), 16.0, if sel { theme::ICON } else { theme::ICON_SECONDARY });
         if i > 0 {
@@ -232,7 +238,16 @@ fn page_section(app: &mut App, ui: &mut Ui, pane: &mut Pane) {
     // Visibility toggle: hiding sets the background opacity to 0 and remembers the old value.
     let eye = pane.rect(theme::SECTION_TRAILING_X, theme::PAGE_FIELD_DY, theme::PANEL_ACTION_BUTTON, theme::PANEL_ACTION_BUTTON);
     let hidden = bg.a <= 0.0;
-    if widgets::icon_button(ui, eye, "page-visible", if hidden { Icon::EyeOff } else { Icon::Eye }, false, if hidden { "Show background" } else { "Hide background" }).clicked() {
+    if widgets::icon_button(
+        ui,
+        eye,
+        "page-visible",
+        if hidden { Icon::EyeOff } else { Icon::Eye },
+        false,
+        if hidden { "Show background" } else { "Hide background" },
+    )
+    .clicked()
+    {
         let page = app.page;
         let a = if hidden { app.props.page_alpha_prev.max(0.01) } else { 0.0 };
         if !hidden {
@@ -260,9 +275,10 @@ fn styles_section(app: &mut App, ui: &mut Ui, pane: &mut Pane) {
 fn paint_colors(p: &Paint) -> Vec<Color32> {
     match &p.kind {
         PaintKind::Solid(c) => vec![to_c32(*c, p.opacity)],
-        PaintKind::LinearGradient { stops, .. } | PaintKind::RadialGradient { stops, .. } | PaintKind::AngularGradient { stops, .. } | PaintKind::DiamondGradient { stops, .. } => {
-            stops.iter().map(|g| to_c32(g.color, p.opacity)).collect()
-        }
+        PaintKind::LinearGradient { stops, .. }
+        | PaintKind::RadialGradient { stops, .. }
+        | PaintKind::AngularGradient { stops, .. }
+        | PaintKind::DiamondGradient { stops, .. } => stops.iter().map(|g| to_c32(g.color, p.opacity)).collect(),
         PaintKind::Image { .. } => vec![Color32::GRAY],
     }
 }
@@ -294,7 +310,13 @@ fn styles_list(app: &mut App, ui: &mut Ui, pane: &mut Pane, target: &[NodeId]) {
                     ui.painter().rect_filled(r, theme::cr(theme::RADIUS_MEDIUM), theme::BG_HOVER);
                 }
                 let open = !app.props.folded.contains(&folder_key);
-                icons::paint(ui.painter(), if open { Icon::ChevronDown } else { Icon::ChevronRight }, Pos2::new(r.left() + 14.0, r.center().y), 12.0, theme::ICON_TERTIARY);
+                icons::paint(
+                    ui.painter(),
+                    if open { Icon::ChevronDown } else { Icon::ChevronRight },
+                    Pos2::new(r.left() + 14.0, r.center().y),
+                    12.0,
+                    theme::ICON_TERTIARY,
+                );
                 ui.painter().text(Pos2::new(r.left() + 28.0, r.center().y), Align2::LEFT_CENTER, &e.folder, theme::font_body(), theme::TEXT_SECONDARY);
                 if resp.clicked() {
                     if open {
@@ -329,7 +351,13 @@ fn styles_list(app: &mut App, ui: &mut Ui, pane: &mut Pane, target: &[NodeId]) {
                     LineHeight::Percent(p) => fmt_num(t.font_size * p / 100.0),
                     LineHeight::Auto => fmt_num(t.font_size),
                 };
-                ui.painter().text(Pos2::new(r.right() - 10.0, r.center().y), Align2::RIGHT_CENTER, format!("{}/{}", fmt_num(t.font_size), lh), theme::font_body(), theme::TEXT_TERTIARY);
+                ui.painter().text(
+                    Pos2::new(r.right() - 10.0, r.center().y),
+                    Align2::RIGHT_CENTER,
+                    format!("{}/{}", fmt_num(t.font_size), lh),
+                    theme::font_body(),
+                    theme::TEXT_TERTIARY,
+                );
             } else {
                 let Some(Style::Fill(paints)) = app.doc.styles.get(&e.key).cloned() else { continue };
                 let c = Pos2::new(r.left() + theme::STYLE_SWATCH_CX + indent, r.center().y);
@@ -383,19 +411,20 @@ fn selection_ui(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[NodeId]) {
     let is_text = matches!(n0.kind, NodeKind::Text(_));
     let is_frame = n0.kind.frame_props().is_some();
     let is_line = matches!(n0.kind, NodeKind::Line);
-    let parent_al = n0
-        .parent
-        .and_then(|p| app.doc.get(p))
-        .and_then(|p| p.kind.frame_props())
-        .map(|f| f.auto_layout.is_some())
-        .unwrap_or(false);
+    let parent_al = n0.parent.and_then(|p| app.doc.get(p)).and_then(|p| p.kind.frame_props()).map(|f| f.auto_layout.is_some()).unwrap_or(false);
     let parent_frame = n0.parent.and_then(|p| app.doc.get(p)).map(|p| p.kind.frame_props().is_some()).unwrap_or(false);
 
     // ---- header: name + quick toggles
     pane.y += theme::RIGHT_SELECTION_HEADER_Y - theme::RIGHT_CONTENT_TOP;
     let name_r = pane.rect(theme::RIGHT_NAME_FIELD_X - 1.0, 0.0, theme::RIGHT_NAME_FIELD_W, theme::FIELD_HEIGHT);
     if multi {
-        ui.painter().text(Pos2::new(name_r.left() + 8.0, name_r.center().y), Align2::LEFT_CENTER, format!("{} layers", sel.len()), theme::font_large(), theme::TEXT);
+        ui.painter().text(
+            Pos2::new(name_r.left() + 8.0, name_r.center().y),
+            Align2::LEFT_CENTER,
+            format!("{} layers", sel.len()),
+            theme::font_large(),
+            theme::TEXT,
+        );
     } else {
         let id = ui.id().with("sel-name");
         if ui.rect_contains_pointer(name_r) || ui.memory(|m| m.has_focus(id)) {
@@ -603,7 +632,8 @@ fn selection_ui(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[NodeId]) {
     // ---- Effects
     section_sep(ui, pane, false);
     if title(ui, pane, "Effects", Some(Icon::Plus), n0.effects.is_empty()) {
-        let e = Effect::DropShadow { color: Color::rgba(0, 0, 0, 64), offset: DVec2::new(0.0, 4.0), radius: 4.0, spread: 0.0, visible: true, show_behind: false };
+        let e =
+            Effect::DropShadow { color: Color::rgba(0, 0, 0, 64), offset: DVec2::new(0.0, 4.0), radius: 4.0, spread: 0.0, visible: true, show_behind: false };
         app.edit_nodes(sel, |n| n.effects.push(e.clone()));
     }
     effect_rows(app, ui, pane, sel, &n0.effects);
@@ -740,7 +770,9 @@ fn auto_layout_ui(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[NodeId], a
         });
     }
     let gap_r = pane.col(1, 0.0);
-    if let Some(v) = var_bind::numeric(app, ui, gap_r, sel, &["itemSpacing"], |ui| field::num_field(ui, gap_r, "al-gap", Prefix::Icon(Icon::Spacing), Some(a.item_spacing), "")) {
+    if let Some(v) = var_bind::numeric(app, ui, gap_r, sel, &["itemSpacing"], |ui| {
+        field::num_field(ui, gap_r, "al-gap", Prefix::Icon(Icon::Spacing), Some(a.item_spacing), "")
+    }) {
         update_al(app, sel, |al| al.item_spacing = v);
     }
     row_end(pane);
@@ -751,14 +783,18 @@ fn auto_layout_ui(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[NodeId], a
     let ph = a.padding[1].max(a.padding[3]);
     let pv = a.padding[0].max(a.padding[2]);
     let ph_r = pane.col(0, 0.0);
-    if let Some(v) = var_bind::numeric(app, ui, ph_r, sel, &["paddingLeft", "paddingRight"], |ui| field::num_field(ui, ph_r, "al-ph", Prefix::Icon(Icon::PaddingH), Some(ph), "")) {
+    if let Some(v) = var_bind::numeric(app, ui, ph_r, sel, &["paddingLeft", "paddingRight"], |ui| {
+        field::num_field(ui, ph_r, "al-ph", Prefix::Icon(Icon::PaddingH), Some(ph), "")
+    }) {
         update_al(app, sel, |al| {
             al.padding[1] = v;
             al.padding[3] = v;
         });
     }
     let pv_r = pane.col(1, 0.0);
-    if let Some(v) = var_bind::numeric(app, ui, pv_r, sel, &["paddingTop", "paddingBottom"], |ui| field::num_field(ui, pv_r, "al-pv", Prefix::Icon(Icon::PaddingV), Some(pv), "")) {
+    if let Some(v) = var_bind::numeric(app, ui, pv_r, sel, &["paddingTop", "paddingBottom"], |ui| {
+        field::num_field(ui, pv_r, "al-pv", Prefix::Icon(Icon::PaddingV), Some(pv), "")
+    }) {
         update_al(app, sel, |al| {
             al.padding[0] = v;
             al.padding[2] = v;
@@ -817,9 +853,10 @@ fn paint_label(p: &Paint) -> String {
 fn paint_preview(p: &Paint) -> Color32 {
     match &p.kind {
         PaintKind::Solid(c) => to_c32(*c, p.opacity),
-        PaintKind::LinearGradient { stops, .. } | PaintKind::RadialGradient { stops, .. } | PaintKind::AngularGradient { stops, .. } | PaintKind::DiamondGradient { stops, .. } => {
-            stops.first().map(|s| to_c32(s.color, p.opacity)).unwrap_or(Color32::GRAY)
-        }
+        PaintKind::LinearGradient { stops, .. }
+        | PaintKind::RadialGradient { stops, .. }
+        | PaintKind::AngularGradient { stops, .. }
+        | PaintKind::DiamondGradient { stops, .. } => stops.first().map(|s| to_c32(s.color, p.opacity)).unwrap_or(Color32::GRAY),
         PaintKind::Image { .. } => Color32::from_gray(150),
     }
 }
@@ -1010,21 +1047,30 @@ fn effect_rows(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[NodeId], effe
 
 fn set_shadow(e: &mut Effect, f: impl FnOnce(&mut Color, &mut DVec2, &mut f32, &mut f32)) {
     match e {
-        Effect::DropShadow { color, offset, radius, spread, .. } | Effect::InnerShadow { color, offset, radius, spread, .. } => f(color, offset, radius, spread),
+        Effect::DropShadow { color, offset, radius, spread, .. } | Effect::InnerShadow { color, offset, radius, spread, .. } => {
+            f(color, offset, radius, spread)
+        }
         _ => {}
     }
 }
 
 fn set_effect_visible(e: &mut Effect, v: bool) {
     match e {
-        Effect::DropShadow { visible, .. } | Effect::InnerShadow { visible, .. } | Effect::LayerBlur { visible, .. } | Effect::BackgroundBlur { visible, .. } => *visible = v,
+        Effect::DropShadow { visible, .. }
+        | Effect::InnerShadow { visible, .. }
+        | Effect::LayerBlur { visible, .. }
+        | Effect::BackgroundBlur { visible, .. } => *visible = v,
     }
 }
 
 fn convert_effect(e: &Effect, kind: usize) -> Effect {
     let (color, offset, radius, spread, visible) = match e {
-        Effect::DropShadow { color, offset, radius, spread, visible, .. } | Effect::InnerShadow { color, offset, radius, spread, visible } => (*color, *offset, *radius, *spread, *visible),
-        Effect::LayerBlur { radius, visible } | Effect::BackgroundBlur { radius, visible } => (Color::rgba(0, 0, 0, 64), DVec2::new(0.0, 4.0), *radius, 0.0, *visible),
+        Effect::DropShadow { color, offset, radius, spread, visible, .. } | Effect::InnerShadow { color, offset, radius, spread, visible } => {
+            (*color, *offset, *radius, *spread, *visible)
+        }
+        Effect::LayerBlur { radius, visible } | Effect::BackgroundBlur { radius, visible } => {
+            (Color::rgba(0, 0, 0, 64), DVec2::new(0.0, 4.0), *radius, 0.0, *visible)
+        }
     };
     match kind {
         0 => Effect::DropShadow { color, offset, radius, spread, visible, show_behind: false },

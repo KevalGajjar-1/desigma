@@ -24,7 +24,9 @@ use desigma_doc::{resolve_node, Document, Effect, Node, NodeId, NodeKind, Vec2};
 use geom::{node_shape, to_sk_transform, transformed_bounds, Shape};
 pub use index::SceneIndex;
 use paint::{blend_mode, fill_paths, stroke_paths, PaintEnv};
-pub use text::{available_families, font_generation, load_font_data, register_font, resolve_font, text_geometry, GlyphSpan, LineGeom, ResolvedFont, TextGeometry};
+pub use text::{
+    available_families, font_generation, load_font_data, register_font, resolve_font, text_geometry, GlyphSpan, LineGeom, ResolvedFont, TextGeometry,
+};
 pub use tiles::{Tile, TileBudget, TileCache, TileFrame, TileKey, TILE_SIZE};
 pub use tiny_skia;
 use tiny_skia as sk;
@@ -115,12 +117,7 @@ pub(crate) fn render_with_transform(doc: &Document, page: NodeId, ts: sk::Transf
     let cull = index.map(|index| {
         // page-space window covered by the target (1 device px of slack)
         let (w, h) = (target.width() as f32, target.height() as f32);
-        let win = (
-            (-1.0 - ts.tx) / ts.sx,
-            (-1.0 - ts.ty) / ts.sy,
-            (w + 1.0 - ts.tx) / ts.sx,
-            (h + 1.0 - ts.ty) / ts.sy,
-        );
+        let win = ((-1.0 - ts.tx) / ts.sx, (-1.0 - ts.ty) / ts.sy, (w + 1.0 - ts.tx) / ts.sx, (h + 1.0 - ts.ty) / ts.sy);
         Cull { index, win }
     });
     let r = Renderer { doc, env: PaintEnv { doc }, cull };
@@ -238,9 +235,7 @@ impl Renderer<'_> {
                 // Masks use the shape's alpha regardless of its paints.
                 mask_node.effects.clear();
                 mask_node.stroke.paints.clear();
-                if !matches!(mask_node.kind, NodeKind::Text(_) | NodeKind::Group)
-                    && !mask_node.fills.iter().any(|p| p.visible)
-                {
+                if !matches!(mask_node.kind, NodeKind::Text(_) | NodeKind::Group) && !mask_node.fills.iter().any(|p| p.visible) {
                     mask_node.fills = vec![desigma_doc::Paint::solid(desigma_doc::Color::BLACK)];
                 }
                 self.draw_node(&mask_node, ts, &mut mask_layer, None, None);
@@ -302,12 +297,7 @@ impl Renderer<'_> {
         }
         let paints = self.visible_fills(n).len() + self.visible_strokes(n).len();
         let has_effects = n.effects.iter().any(|e| {
-            matches!(
-                e,
-                Effect::DropShadow { visible: true, .. }
-                    | Effect::InnerShadow { visible: true, .. }
-                    | Effect::BackgroundBlur { visible: true, .. }
-            )
+            matches!(e, Effect::DropShadow { visible: true, .. } | Effect::InnerShadow { visible: true, .. } | Effect::BackgroundBlur { visible: true, .. })
         });
         let layer_blur = n
             .effects

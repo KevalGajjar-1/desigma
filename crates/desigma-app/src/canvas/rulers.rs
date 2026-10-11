@@ -345,7 +345,10 @@ pub fn overlay(app: &App, ui: &Ui, rect: ERect) {
             lp.rect_filled(r, 2.0, bg);
             let galley = lp.layout_no_wrap(text, font.clone(), theme::CANVAS_SELECTION);
             let (gw, gh) = (galley.size().x, galley.size().y);
-            lp.add(egui::epaint::TextShape::new(Pos2::new(r.center().x - gh / 2.0, r.center().y + gw / 2.0), galley, theme::CANVAS_SELECTION).with_angle(-std::f32::consts::FRAC_PI_2));
+            lp.add(
+                egui::epaint::TextShape::new(Pos2::new(r.center().x - gh / 2.0, r.center().y + gw / 2.0), galley, theme::CANVAS_SELECTION)
+                    .with_angle(-std::f32::consts::FRAC_PI_2),
+            );
         }
     }
 }

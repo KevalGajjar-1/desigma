@@ -136,7 +136,8 @@ fn main() {
     for (i, mode) in [ImageScaleMode::Fill, ImageScaleMode::Fit, ImageScaleMode::Tile].into_iter().enumerate() {
         let x = 400.0 + i as f32 * 90.0;
         let r = b.add(None, |id| Node::rectangle(id, Rect::new(x, 130.0, 80.0, 70.0)));
-        b.node(r).fills = vec![Paint { kind: PaintKind::Image { image_ref: "checker".into(), scale_mode: mode }, opacity: 1.0, visible: true, blend: BlendMode::Normal }];
+        b.node(r).fills =
+            vec![Paint { kind: PaintKind::Image { image_ref: "checker".into(), scale_mode: mode }, opacity: 1.0, visible: true, blend: BlendMode::Normal }];
         b.label(x, 204.0, &format!("image {mode:?}"));
     }
 
@@ -248,7 +249,8 @@ fn main() {
     b.node(mask).size = Vec2::new(70.0, 70.0);
     b.node(mask).is_mask = true;
     let masked = b.add(Some(mgroup), |id| Node::rectangle(id, Rect::new(150.0, 495.0, 70.0, 70.0)));
-    b.node(masked).fills = vec![grad(|h, s| PaintKind::LinearGradient { handles: h, stops: s }, c0, c1, [Vec2::new(0.0, 0.0), Vec2::new(1.0, 1.0), Vec2::new(0.0, 1.0)])];
+    b.node(masked).fills =
+        vec![grad(|h, s| PaintKind::LinearGradient { handles: h, stops: s }, c0, c1, [Vec2::new(0.0, 0.0), Vec2::new(1.0, 1.0), Vec2::new(0.0, 1.0)])];
     b.label(150.0, 570.0, "mask");
 
     let ops = [BooleanOp::Union, BooleanOp::Subtract, BooleanOp::Intersect, BooleanOp::Exclude];
@@ -278,7 +280,12 @@ fn main() {
         ..Default::default()
     };
     let wrapped = b.add(None, |id| {
-        Node::text(id, Rect::new(30.0, 650.0, 220.0, 70.0), "Text wraps inside a fixed width box, with explicit line height and letter spacing applied.", t2.clone())
+        Node::text(
+            id,
+            Rect::new(30.0, 650.0, 220.0, 70.0),
+            "Text wraps inside a fixed width box, with explicit line height and letter spacing applied.",
+            t2.clone(),
+        )
     });
     if let NodeKind::Text(p) = &mut b.node(wrapped).kind {
         p.auto_resize = TextAutoResize::Height;
@@ -288,11 +295,22 @@ fn main() {
     if let NodeKind::Text(p) = &mut b.node(c).kind {
         p.auto_resize = TextAutoResize::None;
     }
-    let upper = TextStyle { case: TextCase::Upper, font_size: 12.0, letter_spacing: 1.5, fills: vec![grad(|h, s| PaintKind::LinearGradient { handles: h, stops: s }, c0, c1, h)], ..Default::default() };
+    let upper = TextStyle {
+        case: TextCase::Upper,
+        font_size: 12.0,
+        letter_spacing: 1.5,
+        fills: vec![grad(|h, s| PaintKind::LinearGradient { handles: h, stops: s }, c0, c1, h)],
+        ..Default::default()
+    };
     b.add(None, |id| Node::text(id, Rect::new(280.0, 675.0, 200.0, 16.0), "gradient uppercase", upper));
-    let rich = b.add(None, |id| Node::text(id, Rect::new(500.0, 610.0, 200.0, 24.0), "bold red and regular", TextStyle { font_size: 16.0, ..Default::default() }));
+    let rich =
+        b.add(None, |id| Node::text(id, Rect::new(500.0, 610.0, 200.0, 24.0), "bold red and regular", TextStyle { font_size: 16.0, ..Default::default() }));
     if let NodeKind::Text(p) = &mut b.node(rich).kind {
-        p.runs.push(TextRun { start: 0, end: 8, style: TextStyle { font_size: 16.0, font_weight: 700, fills: vec![Paint::solid(Color::rgb(0xE0, 0x20, 0x20))], ..Default::default() } });
+        p.runs.push(TextRun {
+            start: 0,
+            end: 8,
+            style: TextStyle { font_size: 16.0, font_weight: 700, fills: vec![Paint::solid(Color::rgb(0xE0, 0x20, 0x20))], ..Default::default() },
+        });
     }
 
     // looping angular gradient: first and last stop match, so the sweep has no seam
@@ -300,11 +318,7 @@ fn main() {
     b.node(ring).fills = vec![Paint {
         kind: PaintKind::AngularGradient {
             handles: hc,
-            stops: vec![
-                GradientStop { pos: 0.0, color: c0 },
-                GradientStop { pos: 0.5, color: c1 },
-                GradientStop { pos: 1.0, color: c0 },
-            ],
+            stops: vec![GradientStop { pos: 0.0, color: c0 }, GradientStop { pos: 0.5, color: c1 }, GradientStop { pos: 1.0, color: c0 }],
         },
         opacity: 1.0,
         visible: true,
@@ -322,7 +336,8 @@ fn main() {
         b.label(x, 856.0, &format!("smoothing {smoothing}"));
     }
     let long = "Truncated text keeps the first lines and ends the last visible one with an ellipsis like Figma does.";
-    let tstyle = TextStyle { font_size: 13.0, line_height: LineHeight::Pixels(18.0), fills: vec![Paint::solid(Color::rgb(0x22, 0x22, 0x22))], ..Default::default() };
+    let tstyle =
+        TextStyle { font_size: 13.0, line_height: LineHeight::Pixels(18.0), fills: vec![Paint::solid(Color::rgb(0x22, 0x22, 0x22))], ..Default::default() };
     for (i, (h, lines)) in [(54.0f32, Some(2u32)), (40.0, None)].into_iter().enumerate() {
         let x = 350.0 + i as f32 * 170.0;
         let t = b.add(None, |id| Node::text(id, Rect::new(x, 770.0, 150.0, h), long, tstyle.clone()));
@@ -332,9 +347,8 @@ fn main() {
         }
         b.label(x, 856.0, if lines.is_some() { "truncate, max 2 lines" } else { "truncate, box height" });
     }
-    for (i, (kind, name)) in [(NodeKind::Polygon { count: 6 }, "polygon radius"), (NodeKind::Star { count: 5, inner_ratio: 0.5 }, "star radius")]
-        .into_iter()
-        .enumerate()
+    for (i, (kind, name)) in
+        [(NodeKind::Polygon { count: 6 }, "polygon radius"), (NodeKind::Star { count: 5, inner_ratio: 0.5 }, "star radius")].into_iter().enumerate()
     {
         let x = 30.0 + i as f32 * 100.0;
         b.add(None, |id| {

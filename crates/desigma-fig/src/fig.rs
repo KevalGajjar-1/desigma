@@ -43,13 +43,7 @@ pub fn decode_fig_to_json(bytes: &[u8]) -> Result<Value, FigError> {
 /// Imports a `.fig` file (raw fig-kiwi or zip-wrapped) from bytes.
 pub fn import_fig(bytes: &[u8]) -> Result<Document, FigError> {
     let d = decode(bytes)?;
-    let name = d
-        .archive
-        .meta
-        .as_ref()
-        .and_then(|m| fstr(m, "file_name").or_else(|| fstr(m, "name")))
-        .unwrap_or("Untitled")
-        .to_string();
+    let name = d.archive.meta.as_ref().and_then(|m| fstr(m, "file_name").or_else(|| fstr(m, "name"))).unwrap_or("Untitled").to_string();
     let rest = message_to_rest(&d.message, &name);
     let mut doc = rest_import::import_rest_value(&rest, true)?;
     doc.images = d.archive.images;
@@ -140,12 +134,7 @@ fn style_table(entries: &[Entry]) -> Value {
     for e in entries {
         let j = &e.json;
         let Some(ty) = fstr(j, "styleType").filter(|t| matches!(*t, "FILL" | "TEXT" | "EFFECT" | "GRID")) else { continue };
-        let key = j
-            .get("sharedStyleMasterData")
-            .and_then(|d| fstr(d, "styleKey"))
-            .or_else(|| fstr(j, "styleKey"))
-            .or_else(|| fstr(j, "key"))
-            .unwrap_or("");
+        let key = j.get("sharedStyleMasterData").and_then(|d| fstr(d, "styleKey")).or_else(|| fstr(j, "styleKey")).or_else(|| fstr(j, "key")).unwrap_or("");
         let mut m = Map::new();
         if !key.is_empty() {
             m.insert("key".into(), key.into());
@@ -158,23 +147,14 @@ fn style_table(entries: &[Entry]) -> Value {
     Value::Object(out)
 }
 
-fn build(
-    entries: &[Entry],
-    children: &HashMap<usize, Vec<usize>>,
-    blobs: &[&[u8]],
-    i: usize,
-    visited: &mut HashSet<usize>,
-    depth: usize,
-) -> Option<Value> {
+fn build(entries: &[Entry], children: &HashMap<usize, Vec<usize>>, blobs: &[&[u8]], i: usize, visited: &mut HashSet<usize>, depth: usize) -> Option<Value> {
     if depth > 250 || !visited.insert(i) {
         return None;
     }
     let e = &entries[i];
     let mut m = convert_node(&e.json, &e.id, blobs)?;
-    let kids: Vec<Value> = children
-        .get(&i)
-        .map(|c| c.iter().filter_map(|&k| build(entries, children, blobs, k, visited, depth + 1)).collect())
-        .unwrap_or_default();
+    let kids: Vec<Value> =
+        children.get(&i).map(|c| c.iter().filter_map(|&k| build(entries, children, blobs, k, visited, depth + 1)).collect()).unwrap_or_default();
     if !kids.is_empty() || matches!(fstr(&e.json, "type"), Some("CANVAS" | "FRAME" | "GROUP" | "SYMBOL" | "INSTANCE" | "SECTION" | "BOOLEAN_OPERATION")) {
         m.insert("children".into(), Value::Array(kids));
     }
@@ -253,7 +233,12 @@ fn convert_node(nc: &Value, id: &str, blobs: &[&[u8]]) -> Option<Map<String, Val
         let g = |k: &str| fnum(nc, k).unwrap_or(base);
         m.insert(
             "rectangleCornerRadii".into(),
-            json!([g("rectangleTopLeftCornerRadius"), g("rectangleTopRightCornerRadius"), g("rectangleBottomRightCornerRadius"), g("rectangleBottomLeftCornerRadius")]),
+            json!([
+                g("rectangleTopLeftCornerRadius"),
+                g("rectangleTopRightCornerRadius"),
+                g("rectangleBottomRightCornerRadius"),
+                g("rectangleBottomLeftCornerRadius")
+            ]),
         );
     }
 

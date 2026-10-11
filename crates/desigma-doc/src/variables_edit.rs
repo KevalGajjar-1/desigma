@@ -252,7 +252,17 @@ impl VariableStore {
         c.variables.push(id.clone());
         self.variables.insert(
             id.clone(),
-            Variable { id: id.clone(), name, collection: coll.to_string(), kind, values, description: String::new(), scopes: Vec::new(), hidden_from_publishing: false, key: None },
+            Variable {
+                id: id.clone(),
+                name,
+                collection: coll.to_string(),
+                kind,
+                values,
+                description: String::new(),
+                scopes: Vec::new(),
+                hidden_from_publishing: false,
+                key: None,
+            },
         );
         Some(id)
     }
@@ -372,12 +382,12 @@ impl VariableStore {
         let affected: Vec<(String, String)> = self
             .variables
             .values()
-            .flat_map(|v| v.values.iter().filter(|(_, x)| matches!(x, VariableValue::Alias(t) if t == id)).map(|(m, _)| (v.id.clone(), m.clone())).collect::<Vec<_>>())
+            .flat_map(|v| {
+                v.values.iter().filter(|(_, x)| matches!(x, VariableValue::Alias(t) if t == id)).map(|(m, _)| (v.id.clone(), m.clone())).collect::<Vec<_>>()
+            })
             .collect();
         for (vid, mode) in affected {
-            let lit = self
-                .resolve(id, &mode)
-                .or_else(|| gone.values.values().find(|x| !matches!(x, VariableValue::Alias(_))).cloned());
+            let lit = self.resolve(id, &mode).or_else(|| gone.values.values().find(|x| !matches!(x, VariableValue::Alias(_))).cloned());
             if let Some(v) = self.variables.get_mut(&vid) {
                 match lit {
                     Some(l) => {

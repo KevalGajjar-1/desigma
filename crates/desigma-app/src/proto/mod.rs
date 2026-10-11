@@ -45,18 +45,8 @@ pub const DEVICES: &[(&str, f32, f32, f32)] = &[
 
 // ------------------------------------------------------------------ labels
 
-pub const TRIGGERS: &[&str] = &[
-    "On click",
-    "On drag",
-    "While hovering",
-    "While pressing",
-    "Mouse enter",
-    "Mouse leave",
-    "Mouse down",
-    "Mouse up",
-    "After delay",
-    "Key/Gamepad",
-];
+pub const TRIGGERS: &[&str] =
+    &["On click", "On drag", "While hovering", "While pressing", "Mouse enter", "Mouse leave", "Mouse down", "Mouse up", "After delay", "Key/Gamepad"];
 
 pub fn trigger_index(t: &Trigger) -> usize {
     match t {
@@ -95,7 +85,11 @@ pub fn trigger_of_index(i: usize, prev: &Trigger) -> Trigger {
 
 pub fn trigger_delay(t: &Trigger) -> Option<u32> {
     match t {
-        Trigger::MouseEnter { delay_ms } | Trigger::MouseLeave { delay_ms } | Trigger::MouseDown { delay_ms } | Trigger::MouseUp { delay_ms } | Trigger::AfterDelay { delay_ms } => Some(*delay_ms),
+        Trigger::MouseEnter { delay_ms }
+        | Trigger::MouseLeave { delay_ms }
+        | Trigger::MouseDown { delay_ms }
+        | Trigger::MouseUp { delay_ms }
+        | Trigger::AfterDelay { delay_ms } => Some(*delay_ms),
         _ => None,
     }
 }
@@ -136,7 +130,11 @@ pub fn action_index(a: &Action) -> usize {
 
 pub fn action_dest(a: &Action) -> Option<NodeId> {
     match a {
-        Action::Navigate { dest, .. } | Action::OpenOverlay { dest, .. } | Action::SwapOverlay { dest } | Action::ScrollTo { dest, .. } | Action::ChangeTo { dest } => Some(*dest),
+        Action::Navigate { dest, .. }
+        | Action::OpenOverlay { dest, .. }
+        | Action::SwapOverlay { dest }
+        | Action::ScrollTo { dest, .. }
+        | Action::ChangeTo { dest } => Some(*dest),
         _ => None,
     }
 }
@@ -246,7 +244,12 @@ pub fn position_name(p: OverlayPosition) -> &'static str {
     }
 }
 
-pub const OVERFLOWS: &[(&str, Overflow)] = &[("No scrolling", Overflow::None), ("Horizontal scrolling", Overflow::Horizontal), ("Vertical scrolling", Overflow::Vertical), ("Horizontal & vertical", Overflow::Both)];
+pub const OVERFLOWS: &[(&str, Overflow)] = &[
+    ("No scrolling", Overflow::None),
+    ("Horizontal scrolling", Overflow::Horizontal),
+    ("Vertical scrolling", Overflow::Vertical),
+    ("Horizontal & vertical", Overflow::Both),
+];
 
 // ------------------------------------------------------------------ queries
 
@@ -329,11 +332,8 @@ impl App {
     pub fn proto_default_reaction(&self, src: NodeId) -> Reaction {
         let frames = destination_frames(&self.doc, src);
         let own = top_frame(&self.doc, src);
-        let dest = own
-            .and_then(|o| frames.iter().position(|f| *f == o))
-            .map(|i| frames[(i + 1) % frames.len()])
-            .or_else(|| frames.first().copied())
-            .unwrap_or(src);
+        let dest =
+            own.and_then(|o| frames.iter().position(|f| *f == o)).map(|i| frames[(i + 1) % frames.len()]).or_else(|| frames.first().copied()).unwrap_or(src);
         Reaction {
             trigger: Trigger::OnClick,
             actions: vec![Action::Navigate { dest, preserve_scroll: false }],
@@ -445,7 +445,8 @@ mod tests {
     fn connections_lists_destination_frames_once() {
         let (mut d, _a, b, c, btn) = doc3();
         let r = |dest| Reaction { trigger: Trigger::OnClick, actions: vec![Action::Navigate { dest, preserve_scroll: false }], transition: None };
-        d.get_mut(btn).unwrap().prototype.reactions = vec![r(b), r(b), r(c), Reaction { trigger: Trigger::OnClick, actions: vec![Action::Back], transition: None }];
+        d.get_mut(btn).unwrap().prototype.reactions =
+            vec![r(b), r(b), r(c), Reaction { trigger: Trigger::OnClick, actions: vec![Action::Back], transition: None }];
         assert_eq!(connections(&d, btn), vec![b, c]);
         assert!(has_interactions(&d, btn));
         assert!(connections(&d, b).is_empty());

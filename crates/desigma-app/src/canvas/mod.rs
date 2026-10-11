@@ -81,7 +81,11 @@ pub enum Interaction {
     None,
     Pan,
     Pending(Pending),
-    Marquee { start: DV, cur: DV, base: Vec<NodeId> },
+    Marquee {
+        start: DV,
+        cur: DV,
+        base: Vec<NodeId>,
+    },
     Move(MoveState),
     Resize(ResizeState),
     Rotate(RotateState),
@@ -99,7 +103,6 @@ pub use textsession::TextSession;
 pub struct PenState {
     pub pts: Vec<create::PenPoint>,
 }
-
 
 #[derive(Default)]
 pub struct CanvasState {

@@ -51,7 +51,12 @@ pub fn toolbar_width() -> f32 {
             w += theme::TOOL_CHEVRON_GAP + theme::TOOL_CHEVRON_W;
         }
     }
-    w + theme::TOOL_GROUP_GAP + theme::TOOL_BUTTON + theme::TOOLBAR_DIVIDER_GAP_BEFORE + theme::BORDER_WIDTH + theme::TOOLBAR_DIVIDER_GAP_AFTER + mode_switch_width()
+    w + theme::TOOL_GROUP_GAP
+        + theme::TOOL_BUTTON
+        + theme::TOOLBAR_DIVIDER_GAP_BEFORE
+        + theme::BORDER_WIDTH
+        + theme::TOOLBAR_DIVIDER_GAP_AFTER
+        + mode_switch_width()
 }
 
 pub fn toolbar_rect(screen: Rect) -> Rect {
@@ -118,7 +123,13 @@ pub fn show(app: &mut App, ui: &mut Ui, screen: Rect) {
         let resp = ui.interact(br, ui.id().with(("tool", gi)), Sense::click());
         let has_chev = has_chevron(group);
         // Only the 32x32 icon button takes the selected fill.
-        let fill = if selected { theme::BG_TOOLBAR_SELECTED } else if resp.hovered() { theme::BG_TOOLBAR_HOVER } else { Color32::TRANSPARENT };
+        let fill = if selected {
+            theme::BG_TOOLBAR_SELECTED
+        } else if resp.hovered() {
+            theme::BG_TOOLBAR_HOVER
+        } else {
+            Color32::TRANSPARENT
+        };
         if fill != Color32::TRANSPARENT {
             p.rect_filled(br, theme::cr(theme::RADIUS_MEDIUM), fill);
         }
@@ -176,7 +187,13 @@ pub fn show(app: &mut App, ui: &mut Ui, screen: Rect) {
         );
         let resp = ui.interact(r, ui.id().with(("mode", i)), Sense::click());
         let proto_mode = app.ui.right_tab == Some(crate::app::RightTab::Prototype);
-        let sel = if app.ui.dev_mode { i == 3 } else if proto_mode { i == 2 } else { i == 1 };
+        let sel = if app.ui.dev_mode {
+            i == 3
+        } else if proto_mode {
+            i == 2
+        } else {
+            i == 1
+        };
         if sel {
             // Active segment: darker inset tile.
             p.rect_filled(r, theme::cr(theme::MODE_TILE_RADIUS), theme::BG_TOOLBAR);

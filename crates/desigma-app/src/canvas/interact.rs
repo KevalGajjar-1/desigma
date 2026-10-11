@@ -4,11 +4,11 @@ use super::create::{self, PenPoint};
 use super::handles::{self, Handle, HandleHit};
 use super::hit;
 use super::reorder;
-use super::vector;
 use super::snap;
-pub use super::textsession::{begin_text_edit, finish_text};
 use super::textsession as ts;
+pub use super::textsession::{begin_text_edit, finish_text};
 use super::tools::{press_action, PressAction, PressTarget, Tool};
+use super::vector;
 use super::*;
 use crate::edit::Tx;
 use crate::layout;
@@ -274,7 +274,8 @@ fn on_press(app: &mut App, rect: ERect, inp: &Inp) {
                     app.select_only(id);
                 }
             }
-            app.canvas.inter = Interaction::Pending(Pending { node: id, start_screen: pos, start_page: page, shift: inp.mods.shift, was_selected: !select_first });
+            app.canvas.inter =
+                Interaction::Pending(Pending { node: id, start_screen: pos, start_page: page, shift: inp.mods.shift, was_selected: !select_first });
         }
         PressAction::Marquee => {
             let base = if inp.mods.shift { app.selection.clone() } else { vec![] };
@@ -358,7 +359,10 @@ fn start_draw(app: &mut App, tool: Tool, page: DV) {
     app.clear_selection();
     let targets = snap_targets(app, &[]);
     let (start, sr) = snap_point(page, &targets, app.view.zoom);
-    let start = v2(if snapped_on(&sr.guides, snap::GuideAxis::X) { start.x } else { px(app, start.x) }, if snapped_on(&sr.guides, snap::GuideAxis::Y) { start.y } else { px(app, start.y) });
+    let start = v2(
+        if snapped_on(&sr.guides, snap::GuideAxis::X) { start.x } else { px(app, start.x) },
+        if snapped_on(&sr.guides, snap::GuideAxis::Y) { start.y } else { px(app, start.y) },
+    );
     let parent = create::container_at(&app.doc, app.page, start, &[]);
     let node = create::new_shape(app, tool);
     let id = node.id;
@@ -905,7 +909,6 @@ fn text_press(app: &mut App, page: DV) {
     app.changed();
 }
 
-
 // ------------------------------------------------------------------ hover / cursor
 fn update_hover_and_cursor(app: &mut App, rect: ERect, inp: &Inp, hovered: bool) {
     let mut cursor = egui::CursorIcon::Default;
@@ -1007,7 +1010,16 @@ mod tests {
         app.selection = vec![a];
         let mut m = start_move(&mut app, a, v2(0.0, 0.0), true).unwrap();
         assert_ne!(m.ids[0], a, "alt-drag moves a duplicate");
-        let inp = Inp { pos: None, pressed: false, down: true, released: false, mid_pressed: false, mid_down: false, mods: Modifiers { shift: true, command: true, ..Modifiers::NONE }, space: false };
+        let inp = Inp {
+            pos: None,
+            pressed: false,
+            down: true,
+            released: false,
+            mid_pressed: false,
+            mid_down: false,
+            mods: Modifiers { shift: true, command: true, ..Modifiers::NONE },
+            space: false,
+        };
         update_move(&mut app, &mut m, v2(80.0, 10.0), &inp);
         let dup = app.doc.get(m.ids[0]).unwrap();
         assert_eq!(dup.transform.tx, 80.0);
@@ -1029,7 +1041,16 @@ mod tests {
             kind: ResizeKind::Single { id: a, world0, t0: app.doc.get(a).unwrap().transform, size0: v2(100.0, 100.0) },
             targets: vec![],
         };
-        let inp = Inp { pos: None, pressed: false, down: true, released: false, mid_pressed: false, mid_down: false, mods: Modifiers { command: true, ..Modifiers::NONE }, space: false };
+        let inp = Inp {
+            pos: None,
+            pressed: false,
+            down: true,
+            released: false,
+            mid_pressed: false,
+            mid_down: false,
+            mods: Modifiers { command: true, ..Modifiers::NONE },
+            space: false,
+        };
         // local (150, 120) maps to page via world0
         let target = world0.apply(v2(150.0, 120.0));
         update_resize(&mut app, &mut r, target, &inp);

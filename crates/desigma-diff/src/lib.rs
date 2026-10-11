@@ -170,8 +170,7 @@ impl Plane<'_> {
             return false;
         }
         (self.has_many_siblings(min_xy.0, min_xy.1) && other.has_many_siblings(min_xy.0, min_xy.1))
-            || (self.has_many_siblings(max_xy.0, max_xy.1)
-                && other.has_many_siblings(max_xy.0, max_xy.1))
+            || (self.has_many_siblings(max_xy.0, max_xy.1) && other.has_many_siblings(max_xy.0, max_xy.1))
     }
 }
 
@@ -212,8 +211,7 @@ fn ssim_gray(a: &[f64], b: &[f64], w: usize, h: usize) -> f64 {
             }
             let (ma, mb) = (sa / n, sb / n);
             let (va, vb, cov) = (saa / n - ma * ma, sbb / n - mb * mb, sab / n - ma * mb);
-            total += ((2.0 * ma * mb + C1) * (2.0 * cov + C2))
-                / ((ma * ma + mb * mb + C1) * (va + vb + C2));
+            total += ((2.0 * ma * mb + C1) * (2.0 * cov + C2)) / ((ma * ma + mb * mb + C1) * (va + vb + C2));
             count += 1;
         }
     }
@@ -266,11 +264,7 @@ fn analyze(a: &RgbaImage, b: &RgbaImage, opts: &DiffOptions) -> (DiffReport, Vec
         let mut v = Vec::with_capacity((ow * oh) as usize);
         for y in 0..oh {
             for x in 0..ow {
-                v.push(if opts.ignore.iter().any(|r| r.contains(x, y)) {
-                    0.0
-                } else {
-                    luma(p.at(x, y))
-                });
+                v.push(if opts.ignore.iter().any(|r| r.contains(x, y)) { 0.0 } else { luma(p.at(x, y)) });
             }
         }
         v
@@ -329,9 +323,7 @@ pub fn diff_image(a: &RgbaImage, b: &RgbaImage, opts: &DiffOptions) -> (DiffRepo
             let px = match class {
                 CLASS_MISMATCH => Rgba([255, 0, 0, 255]),
                 CLASS_AA => Rgba([255, 221, 0, 255]),
-                CLASS_IGNORED => {
-                    Rgba([faded.saturating_sub(40), faded.saturating_sub(20), faded, 255])
-                }
+                CLASS_IGNORED => Rgba([faded.saturating_sub(40), faded.saturating_sub(20), faded, 255]),
                 _ => Rgba([faded, faded, faded, 255]),
             };
             out.put_pixel(x, y, px);

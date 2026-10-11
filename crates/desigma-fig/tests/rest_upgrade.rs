@@ -91,7 +91,10 @@ fn geometry_round_trips_through_export() {
 fn style_metadata_and_property_per_use() {
     let doc = import_rest_json(FILE).unwrap();
     let m = &doc.style_meta;
-    assert_eq!(m["S:1"], StyleMeta { name: "Brand/Primary".into(), key: Some("abc123".into()), description: "Main brand fill".into(), property: StyleProperty::Fill });
+    assert_eq!(
+        m["S:1"],
+        StyleMeta { name: "Brand/Primary".into(), key: Some("abc123".into()), description: "Main brand fill".into(), property: StyleProperty::Fill }
+    );
     // S:2 is a FILL style that is only referenced as a stroke.
     assert_eq!(m["S:2"].property, StyleProperty::Stroke);
     assert_eq!(m["S:2"].name, "Border/Strong");

@@ -6,9 +6,9 @@ use super::properties::{row_end, section_sep, sublabel, title, Pane};
 use crate::app::App;
 use crate::icons::Icon;
 use crate::theme;
+use crate::widgets;
 use crate::widgets::field;
 use crate::widgets::menu::{dropdown, popup_menu, MenuItem, MenuResult};
-use crate::widgets;
 use desigma_doc::*;
 use egui::{Align2, Pos2, Rect, Sense, Ui, Vec2};
 
@@ -53,7 +53,17 @@ fn toggle(ui: &mut Ui, rect: Rect, key: &str, on: bool) -> Option<bool> {
     widgets::record(ui, &format!("toggle:{key}"), rect);
     let sw = Rect::from_min_size(Pos2::new(rect.left(), rect.center().y - 8.0), Vec2::new(28.0, 16.0));
     let p = ui.painter();
-    p.rect_filled(sw, theme::cr(8), if on { theme::BG_BRAND } else if r.hovered() { theme::BG_TERTIARY } else { theme::BG_SECONDARY });
+    p.rect_filled(
+        sw,
+        theme::cr(8),
+        if on {
+            theme::BG_BRAND
+        } else if r.hovered() {
+            theme::BG_TERTIARY
+        } else {
+            theme::BG_SECONDARY
+        },
+    );
     let kx = if on { sw.right() - 8.0 } else { sw.left() + 8.0 };
     p.circle_filled(Pos2::new(kx, sw.center().y), 6.0, egui::Color32::WHITE);
     r.clicked().then_some(!on)
@@ -72,7 +82,12 @@ fn instance_header(app: &mut App, ui: &mut Ui, pane: &mut Pane, inst: NodeId) {
     if let Some(i) = dropdown(ui, dd, "instance-swap", &label, &names) {
         app.swap_instance(inst, comps[i]);
     }
-    ui.painter().rect_stroke(dd, theme::cr(theme::RADIUS_MEDIUM), egui::Stroke::new(1.0, theme::CANVAS_COMPONENT.gamma_multiply(0.55)), egui::StrokeKind::Inside);
+    ui.painter().rect_stroke(
+        dd,
+        theme::cr(theme::RADIUS_MEDIUM),
+        egui::Stroke::new(1.0, theme::CANVAS_COMPONENT.gamma_multiply(0.55)),
+        egui::StrokeKind::Inside,
+    );
     let go = pane.rect(181.0, row_y, theme::PANEL_ACTION_BUTTON, theme::PANEL_ACTION_BUTTON);
     widgets::record(ui, "go-to-main", go);
     if widgets::icon_button(ui, go, "go-main", Icon::Component, false, "Go to main component").clicked() {
@@ -130,7 +145,13 @@ fn instance_props(app: &mut App, ui: &mut Ui, pane: &mut Pane, inst: NodeId) {
         let lab = pane.rect(theme::SECTION_CONTENT_X, 0.0, 92.0, theme::FIELD_HEIGHT);
         let is_set = app.doc.get(inst).is_some_and(|n| n.component.values.contains_key(&def.name));
         let shown = widgets::elide(ui.painter(), &def.name, &theme::font_body(), lab.width() - 4.0);
-        ui.painter().text(Pos2::new(lab.left(), lab.center().y), Align2::LEFT_CENTER, shown, theme::font_body(), if is_set { theme::TEXT } else { theme::TEXT_SECONDARY });
+        ui.painter().text(
+            Pos2::new(lab.left(), lab.center().y),
+            Align2::LEFT_CENTER,
+            shown,
+            theme::font_body(),
+            if is_set { theme::TEXT } else { theme::TEXT_SECONDARY },
+        );
         let ctl = pane.col(1, 0.0);
         let key = format!("prop:{}", def.name);
         widgets::record(ui, &key, ctl);
@@ -310,18 +331,14 @@ fn layer_bindings(app: &mut App, ui: &mut Ui, pane: &mut Pane, id: NodeId) {
     let Some(n) = app.doc.get(id).cloned() else { return };
     let defs = prop_defs(&app.doc, comp);
     #[allow(clippy::type_complexity)] // local row table of (label, field, predicate)
-    let mut rows: Vec<(&'static str, OverrideField, fn(&PropKind) -> bool)> =
-        vec![("Visibility", OverrideField::Visible, |k| matches!(k, PropKind::Boolean))];
+    let mut rows: Vec<(&'static str, OverrideField, fn(&PropKind) -> bool)> = vec![("Visibility", OverrideField::Visible, |k| matches!(k, PropKind::Boolean))];
     if matches!(n.kind, NodeKind::Text(_)) {
         rows.push(("Text", OverrideField::Characters, |k| matches!(k, PropKind::Text)));
     }
     if matches!(n.kind, NodeKind::Instance { .. }) {
         rows.push(("Instance", OverrideField::MainComponent, |k| matches!(k, PropKind::InstanceSwap { .. })));
     }
-    let rows: Vec<_> = rows
-        .into_iter()
-        .filter(|(_, f, accepts)| n.component.bindings.contains_key(f) || defs.iter().any(|d| accepts(&d.kind)))
-        .collect();
+    let rows: Vec<_> = rows.into_iter().filter(|(_, f, accepts)| n.component.bindings.contains_key(f) || defs.iter().any(|d| accepts(&d.kind))).collect();
     if rows.is_empty() {
         return;
     }

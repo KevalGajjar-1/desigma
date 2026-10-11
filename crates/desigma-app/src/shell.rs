@@ -128,7 +128,8 @@ impl Shell {
                 let (w, h) = (image.width() as u32, image.height() as u32);
                 let raw: Vec<u8> = image.pixels.iter().flat_map(|c| c.to_array()).collect();
                 if let Some(buf) = image::RgbaImage::from_raw(w, h, raw) {
-                    let buf = if (w, h) != shot.size { image::imageops::resize(&buf, shot.size.0, shot.size.1, image::imageops::FilterType::Lanczos3) } else { buf };
+                    let buf =
+                        if (w, h) != shot.size { image::imageops::resize(&buf, shot.size.0, shot.size.1, image::imageops::FilterType::Lanczos3) } else { buf };
                     if let Some(dir) = shot.path.parent() {
                         let _ = std::fs::create_dir_all(dir);
                     }
@@ -359,7 +360,10 @@ impl Shell {
         let p = ui.painter();
         let font = theme::font_body();
         let w = widgets::text_width(p, &t.text, &font) + 48.0;
-        let r = Rect::from_center_size(Pos2::new(screen.center().x, screen.bottom() - theme::TOAST_BOTTOM - theme::TOAST_HEIGHT / 2.0), Vec2::new(w, theme::TOAST_HEIGHT));
+        let r = Rect::from_center_size(
+            Pos2::new(screen.center().x, screen.bottom() - theme::TOAST_BOTTOM - theme::TOAST_HEIGHT / 2.0),
+            Vec2::new(w, theme::TOAST_HEIGHT),
+        );
         widgets::elevation_shadow(p, r, theme::TOAST_RADIUS);
         p.rect_filled(r, theme::cr(theme::TOAST_RADIUS), theme::BG_MENU);
         p.circle_filled(Pos2::new(r.left() + 16.0, r.center().y), 4.0, if t.error { theme::DANGER } else { theme::BG_BRAND });

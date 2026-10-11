@@ -147,7 +147,17 @@ const PICK_HEAD: f32 = 40.0;
 /// Searchable variable picker floating at `pos`. `query` is the live search
 /// text; `current` is highlighted; `detach` adds a "Detach variable" row.
 #[allow(clippy::too_many_arguments)]
-pub fn picker(ctx: &egui::Context, id: Id, pos: Pos2, anchor: Option<Rect>, title: &str, query: &mut String, items: &[PickItem], current: Option<&str>, detach: bool) -> PickResult {
+pub fn picker(
+    ctx: &egui::Context,
+    id: Id,
+    pos: Pos2,
+    anchor: Option<Rect>,
+    title: &str,
+    query: &mut String,
+    items: &[PickItem],
+    current: Option<&str>,
+    detach: bool,
+) -> PickResult {
     let q = query.to_lowercase();
     let shown: Vec<&PickItem> = items.iter().filter(|i| q.is_empty() || i.name.to_lowercase().contains(&q) || i.group.to_lowercase().contains(&q)).collect();
     // rows: (group header | item)
@@ -172,7 +182,8 @@ pub fn picker(ctx: &egui::Context, id: Id, pos: Pos2, anchor: Option<Rect>, titl
             rows.push(Row::Item(i));
         }
     }
-    let content_h: f32 = rows.iter().map(|r| if matches!(r, Row::Group(_)) { PICK_GROUP } else { PICK_ROW }).sum::<f32>() + if detach { PICK_ROW + 9.0 } else { 0.0 };
+    let content_h: f32 =
+        rows.iter().map(|r| if matches!(r, Row::Group(_)) { PICK_GROUP } else { PICK_ROW }).sum::<f32>() + if detach { PICK_ROW + 9.0 } else { 0.0 };
     let empty_h = if rows.is_empty() { 40.0 } else { 0.0 };
     let body_h = (content_h + empty_h + 8.0).min(PICK_MAX_H);
     let size = Vec2::new(PICK_W, PICK_HEAD + body_h);
@@ -192,7 +203,10 @@ pub fn picker(ctx: &egui::Context, id: Id, pos: Pos2, anchor: Option<Rect>, titl
         widgets::menu_panel(&p, full, theme::MENU_RADIUS);
         p.text(Pos2::new(full.left() + 14.0, full.top() + 20.0), Align2::LEFT_CENTER, title, theme::font_body_strong(), theme::TEXT_SECONDARY);
         // search
-        let sr = Rect::from_min_size(Pos2::new(full.left() + 8.0 + 90.0_f32.min(full.width() * 0.38), full.top() + 8.0), Vec2::new(full.width() - 16.0 - 90.0_f32.min(full.width() * 0.38), 24.0));
+        let sr = Rect::from_min_size(
+            Pos2::new(full.left() + 8.0 + 90.0_f32.min(full.width() * 0.38), full.top() + 8.0),
+            Vec2::new(full.width() - 16.0 - 90.0_f32.min(full.width() * 0.38), 24.0),
+        );
         p.rect_filled(sr, theme::cr(theme::RADIUS_MEDIUM), theme::BG_SECONDARY);
         let te = egui::TextEdit::singleline(query)
             .id(id.with("q"))
@@ -240,7 +254,13 @@ pub fn picker(ctx: &egui::Context, id: Id, pos: Pos2, anchor: Option<Rect>, titl
             for row in &rows {
                 match row {
                     Row::Group(g) => {
-                        p.text(Pos2::new(list.left() + 14.0, y + PICK_GROUP / 2.0 + 2.0), Align2::LEFT_CENTER, g, theme::font_small_strong(), theme::TEXT_TERTIARY);
+                        p.text(
+                            Pos2::new(list.left() + 14.0, y + PICK_GROUP / 2.0 + 2.0),
+                            Align2::LEFT_CENTER,
+                            g,
+                            theme::font_small_strong(),
+                            theme::TEXT_TERTIARY,
+                        );
                         y += PICK_GROUP;
                     }
                     Row::Item(it) => {

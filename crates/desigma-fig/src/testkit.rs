@@ -23,8 +23,25 @@ pub fn figma_like_schema() -> Schema {
         &mut b,
         "NodeType",
         &[
-            "NONE", "DOCUMENT", "CANVAS", "GROUP", "FRAME", "BOOLEAN_OPERATION", "VECTOR", "STAR", "LINE", "ELLIPSE", "RECTANGLE",
-            "REGULAR_POLYGON", "ROUNDED_RECTANGLE", "TEXT", "SLICE", "SYMBOL", "INSTANCE", "SECTION", "STICKY",
+            "NONE",
+            "DOCUMENT",
+            "CANVAS",
+            "GROUP",
+            "FRAME",
+            "BOOLEAN_OPERATION",
+            "VECTOR",
+            "STAR",
+            "LINE",
+            "ELLIPSE",
+            "RECTANGLE",
+            "REGULAR_POLYGON",
+            "ROUNDED_RECTANGLE",
+            "TEXT",
+            "SLICE",
+            "SYMBOL",
+            "INSTANCE",
+            "SECTION",
+            "STICKY",
         ],
     );
     enum_def(&mut b, "PaintType", &["SOLID", "GRADIENT_LINEAR", "GRADIENT_RADIAL", "GRADIENT_ANGULAR", "GRADIENT_DIAMOND", "IMAGE"]);
@@ -47,8 +64,25 @@ pub fn figma_like_schema() -> Schema {
         &mut b,
         "BlendMode",
         &[
-            "PASS_THROUGH", "NORMAL", "DARKEN", "MULTIPLY", "LINEAR_BURN", "COLOR_BURN", "LIGHTEN", "SCREEN", "LINEAR_DODGE", "COLOR_DODGE", "OVERLAY",
-            "SOFT_LIGHT", "HARD_LIGHT", "DIFFERENCE", "EXCLUSION", "HUE", "SATURATION", "COLOR", "LUMINOSITY",
+            "PASS_THROUGH",
+            "NORMAL",
+            "DARKEN",
+            "MULTIPLY",
+            "LINEAR_BURN",
+            "COLOR_BURN",
+            "LIGHTEN",
+            "SCREEN",
+            "LINEAR_DODGE",
+            "COLOR_DODGE",
+            "OVERLAY",
+            "SOFT_LIGHT",
+            "HARD_LIGHT",
+            "DIFFERENCE",
+            "EXCLUSION",
+            "HUE",
+            "SATURATION",
+            "COLOR",
+            "LUMINOSITY",
         ],
     );
     enum_def(&mut b, "TextTruncation", &["DISABLED", "ENDING"]);
@@ -357,14 +391,17 @@ pub fn sample_message() -> V {
             ("transform", matrix(40.0, 50.0)),
             ("fillPaints", V::Array(vec![solid(1.0, 1.0, 1.0)])),
             ("cornerRadius", fl(12.0)),
-            ("effects", V::Array(vec![msg(vec![
-                ("type", en("DROP_SHADOW")),
-                ("color", color(0.0, 0.0, 0.0, 0.25)),
-                ("offset", vec2(0.0, 4.0)),
-                ("radius", fl(8.0)),
-                ("spread", fl(0.0)),
-                ("visible", V::Bool(true)),
-            ])])),
+            (
+                "effects",
+                V::Array(vec![msg(vec![
+                    ("type", en("DROP_SHADOW")),
+                    ("color", color(0.0, 0.0, 0.0, 0.25)),
+                    ("offset", vec2(0.0, 4.0)),
+                    ("radius", fl(8.0)),
+                    ("spread", fl(0.0)),
+                    ("visible", V::Bool(true)),
+                ])]),
+            ),
             ("stackMode", en("VERTICAL")),
             ("stackSpacing", fl(8.0)),
             ("stackHorizontalPadding", fl(16.0)),
@@ -382,11 +419,10 @@ pub fn sample_message() -> V {
         vec![
             ("size", vec2(100.0, 40.0)),
             ("transform", matrix(16.0, 12.0)),
-            ("fillPaints", V::Array(vec![msg(vec![
-                ("type", en("IMAGE")),
-                ("image", msg(vec![("hash", V::Bytes(IMAGE_HASH.to_vec()))])),
-                ("imageScaleMode", en("FILL")),
-            ])])),
+            (
+                "fillPaints",
+                V::Array(vec![msg(vec![("type", en("IMAGE")), ("image", msg(vec![("hash", V::Bytes(IMAGE_HASH.to_vec()))])), ("imageScaleMode", en("FILL"))])]),
+            ),
             ("strokePaints", V::Array(vec![solid(1.0, 0.0, 0.0)])),
             ("strokeWeight", fl(2.0)),
             ("strokeAlign", en("OUTSIDE")),
@@ -405,22 +441,38 @@ pub fn sample_message() -> V {
             ("transform", matrix(16.0, 60.0)),
             ("fillPaints", V::Array(vec![solid(0.1, 0.2, 0.3)])),
             ("fontSize", fl(16.0)),
-            ("fontName", st(vec![("family", V::String("Inter".into())), ("style", V::String("Medium".into())), ("postscript", V::String("Inter-Medium".into()))])),
+            (
+                "fontName",
+                st(vec![("family", V::String("Inter".into())), ("style", V::String("Medium".into())), ("postscript", V::String("Inter-Medium".into()))]),
+            ),
             ("letterSpacing", st(vec![("value", fl(10.0)), ("units", en("PERCENT"))])),
             ("lineHeight", st(vec![("value", fl(24.0)), ("units", en("PIXELS"))])),
             ("textAlignHorizontal", en("CENTER")),
             ("textAutoResize", en("WIDTH_AND_HEIGHT")),
-            ("textData", msg(vec![
-                ("characters", V::String("Hi \u{1F600}!".into())),
-                // 'H','i',' ', surrogate pair (2 units), '!' -> UTF-16 length 6
-                ("characterStyleIDs", V::Array([0u32, 0, 0, 1, 1, 0].iter().map(|x| V::Uint(*x)).collect())),
-                ("styleOverrideTable", V::Array(vec![msg(vec![
-                    ("styleID", V::Uint(1)),
-                    ("fontName", st(vec![("family", V::String("Inter".into())), ("style", V::String("Bold Italic".into())), ("postscript", V::String("".into()))])),
-                    ("fillPaints", V::Array(vec![solid(1.0, 0.0, 0.0)])),
-                    ("textDecoration", en("UNDERLINE")),
-                ])])),
-            ])),
+            (
+                "textData",
+                msg(vec![
+                    ("characters", V::String("Hi \u{1F600}!".into())),
+                    // 'H','i',' ', surrogate pair (2 units), '!' -> UTF-16 length 6
+                    ("characterStyleIDs", V::Array([0u32, 0, 0, 1, 1, 0].iter().map(|x| V::Uint(*x)).collect())),
+                    (
+                        "styleOverrideTable",
+                        V::Array(vec![msg(vec![
+                            ("styleID", V::Uint(1)),
+                            (
+                                "fontName",
+                                st(vec![
+                                    ("family", V::String("Inter".into())),
+                                    ("style", V::String("Bold Italic".into())),
+                                    ("postscript", V::String("".into())),
+                                ]),
+                            ),
+                            ("fillPaints", V::Array(vec![solid(1.0, 0.0, 0.0)])),
+                            ("textDecoration", en("UNDERLINE")),
+                        ])]),
+                    ),
+                ]),
+            ),
         ],
     );
     let vector = node(
@@ -436,7 +488,14 @@ pub fn sample_message() -> V {
             ("fillGeometry", V::Array(vec![msg(vec![("windingRule", en("NONZERO")), ("commandsBlob", V::Uint(0))])])),
         ],
     );
-    let comp = node((1, 5), (1, 1), "d", "SYMBOL", "Button", vec![("size", vec2(80.0, 30.0)), ("transform", matrix(0.0, 120.0)), ("fillPaints", V::Array(vec![solid(0.0, 0.5, 1.0)]))]);
+    let comp = node(
+        (1, 5),
+        (1, 1),
+        "d",
+        "SYMBOL",
+        "Button",
+        vec![("size", vec2(80.0, 30.0)), ("transform", matrix(0.0, 120.0)), ("fillPaints", V::Array(vec![solid(0.0, 0.5, 1.0)]))],
+    );
     let comp_child = node((1, 6), (1, 5), "a", "RECTANGLE", "Bg", vec![("size", vec2(80.0, 30.0)), ("fillPaints", V::Array(vec![solid(0.2, 0.2, 0.2)]))]);
     let inst = node(
         (1, 7),
@@ -552,7 +611,14 @@ pub fn upgrade_message() -> V {
             (
                 "layoutGrids",
                 V::Array(vec![
-                    msg(vec![("pattern", en("COLUMNS")), ("count", V::Uint(4)), ("gutterSize", fl(8.0)), ("offset", fl(2.0)), ("color", color(1.0, 0.0, 0.0, 0.1)), ("visible", V::Bool(true))]),
+                    msg(vec![
+                        ("pattern", en("COLUMNS")),
+                        ("count", V::Uint(4)),
+                        ("gutterSize", fl(8.0)),
+                        ("offset", fl(2.0)),
+                        ("color", color(1.0, 0.0, 0.0, 0.1)),
+                        ("visible", V::Bool(true)),
+                    ]),
                     msg(vec![("pattern", en("GRID")), ("sectionSize", fl(10.0)), ("color", color(0.0, 0.0, 1.0, 0.2))]),
                     msg(vec![("pattern", en("ROWS")), ("count", V::Uint(3)), ("gutterSize", fl(4.0)), ("visible", V::Bool(false))]),
                 ]),
@@ -576,13 +642,25 @@ pub fn upgrade_message() -> V {
             ("strokePaints", V::Array(vec![solid(0.0, 0.0, 0.0)])),
         ],
     );
-    let star = node((2, 3), (0, 1), "c", "STAR", "Star", vec![size(10.0, 10.0), ("count", V::Uint(5)), ("fillGeometry", geo("NONZERO", 0)), ("blendMode", en("LINEAR_DODGE"))]);
+    let star = node(
+        (2, 3),
+        (0, 1),
+        "c",
+        "STAR",
+        "Star",
+        vec![size(10.0, 10.0), ("count", V::Uint(5)), ("fillGeometry", geo("NONZERO", 0)), ("blendMode", en("LINEAR_DODGE"))],
+    );
     let text = |l: u32, pos: &str, name: &str, mut extra: Vec<(&str, V)>| {
         let mut f = vec![size(80.0, 40.0), ("fontSize", fl(10.0)), ("textData", text_data(name))];
         f.append(&mut extra);
         node((2, l), (0, 1), pos, "TEXT", name, f)
     };
-    let clamp = text(4, "d", "Clamp", vec![("textTruncation", en("ENDING")), ("maxLines", V::Uint(2)), ("lineHeight", num(100.0, "PERCENT")), ("styleIdForText", sref(102))]);
+    let clamp = text(
+        4,
+        "d",
+        "Clamp",
+        vec![("textTruncation", en("ENDING")), ("maxLines", V::Uint(2)), ("lineHeight", num(100.0, "PERCENT")), ("styleIdForText", sref(102))],
+    );
     let lh_auto = text(5, "e", "LhAuto", vec![("lineHeight", num(1.0, "RAW"))]);
     let lh_pct = text(6, "f", "LhPct", vec![("lineHeight", num(150.0, "PERCENT"))]);
     let lh_none = text(7, "g", "LhNone", vec![]);
@@ -613,7 +691,10 @@ pub fn upgrade_message() -> V {
         "CardIn",
         vec![
             size(100.0, 50.0),
-            ("symbolData", msg(vec![("symbolID", guid(2, 10)), ("symbolOverrides", V::Array(vec![ov(&[(2, 11)], vec![("textData", text_data("Inner text"))])]))])),
+            (
+                "symbolData",
+                msg(vec![("symbolID", guid(2, 10)), ("symbolOverrides", V::Array(vec![ov(&[(2, 11)], vec![("textData", text_data("Inner text"))])]))]),
+            ),
         ],
     );
     let wrap_inst = node(
@@ -625,7 +706,10 @@ pub fn upgrade_message() -> V {
         vec![
             size(100.0, 50.0),
             ("transform", matrix(400.0, 300.0)),
-            ("symbolData", msg(vec![("symbolID", guid(2, 20)), ("symbolOverrides", V::Array(vec![ov(&[(2, 21), (2, 11)], vec![("textData", text_data("Deep"))])]))])),
+            (
+                "symbolData",
+                msg(vec![("symbolID", guid(2, 20)), ("symbolOverrides", V::Array(vec![ov(&[(2, 21), (2, 11)], vec![("textData", text_data("Deep"))])]))]),
+            ),
         ],
     );
 
@@ -664,13 +748,28 @@ pub fn upgrade_message() -> V {
             (
                 "derivedSymbolData",
                 V::Array(vec![
-                    ov(&[(2, 12)], vec![size(200.0, 80.0), ("transform", matrix(5.0, 6.0)), ("fillGeometry", geo("NONZERO", 1)), ("name", V::String("ignored by derived".into()))]),
+                    ov(
+                        &[(2, 12)],
+                        vec![
+                            size(200.0, 80.0),
+                            ("transform", matrix(5.0, 6.0)),
+                            ("fillGeometry", geo("NONZERO", 1)),
+                            ("name", V::String("ignored by derived".into())),
+                        ],
+                    ),
                     ov(&[], vec![size(200.0, 80.0)]),
                 ]),
             ),
         ],
     );
-    let card_b = node((2, 41), (0, 1), "n", "INSTANCE", "Card B", vec![size(100.0, 50.0), ("transform", matrix(300.0, 400.0)), ("symbolData", msg(vec![("symbolID", guid(2, 10))]))]);
+    let card_b = node(
+        (2, 41),
+        (0, 1),
+        "n",
+        "INSTANCE",
+        "Card B",
+        vec![size(100.0, 50.0), ("transform", matrix(300.0, 400.0)), ("symbolData", msg(vec![("symbolID", guid(2, 10))]))],
+    );
 
     let mut nodes = vec![doc, page, internal];
     nodes.extend(styles);

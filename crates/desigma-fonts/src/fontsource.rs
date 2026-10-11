@@ -53,12 +53,7 @@ pub fn nearest_weight(available: &[u16], wanted: u16) -> Option<u16> {
         above_asc(0).next().or_else(|| below_desc().next())
     } else {
         // 400..=500: first try weights between wanted and 500, then below, then above 500.
-        sorted
-            .iter()
-            .copied()
-            .find(|w| *w > wanted && *w <= 500)
-            .or_else(|| below_desc().next())
-            .or_else(|| above_asc(501).next())
+        sorted.iter().copied().find(|w| *w > wanted && *w <= 500).or_else(|| below_desc().next()).or_else(|| above_asc(501).next())
     }
 }
 
@@ -95,15 +90,8 @@ impl FontMeta {
             Some(Value::Object(o)) => o.get("type").and_then(Value::as_str).unwrap_or_default().to_string(),
             _ => String::new(),
         };
-        let subsets = v
-            .get("subsets")
-            .and_then(Value::as_array)
-            .map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect())
-            .unwrap_or_default();
-        let variants = v
-            .get("variants")
-            .and_then(Value::as_object)
-            .ok_or_else(|| FontError::Metadata("missing variants".into()))?;
+        let subsets = v.get("subsets").and_then(Value::as_array).map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect()).unwrap_or_default();
+        let variants = v.get("variants").and_then(Value::as_object).ok_or_else(|| FontError::Metadata("missing variants".into()))?;
         let mut ttf: BTreeMap<u16, BTreeMap<String, BTreeMap<String, String>>> = BTreeMap::new();
         for (w, styles) in variants {
             let Ok(w) = w.parse::<u16>() else { continue };

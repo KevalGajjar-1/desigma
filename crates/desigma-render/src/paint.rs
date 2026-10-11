@@ -10,8 +10,7 @@ use std::rc::Rc;
 use tiny_skia as sk;
 
 pub fn sk_color(c: &d::Color, alpha: f32) -> sk::Color {
-    sk::Color::from_rgba(c.r.clamp(0.0, 1.0), c.g.clamp(0.0, 1.0), c.b.clamp(0.0, 1.0), (c.a * alpha).clamp(0.0, 1.0))
-        .unwrap_or(sk::Color::TRANSPARENT)
+    sk::Color::from_rgba(c.r.clamp(0.0, 1.0), c.g.clamp(0.0, 1.0), c.b.clamp(0.0, 1.0), (c.a * alpha).clamp(0.0, 1.0)).unwrap_or(sk::Color::TRANSPARENT)
 }
 
 pub fn blend_mode(b: d::BlendMode) -> sk::BlendMode {
@@ -212,13 +211,7 @@ fn eval_stops(stops: &[d::GradientStop], t: f32, alpha: f32) -> [f32; 4] {
 }
 
 /// Rasterises an angular or diamond gradient into a device-space pixmap.
-fn raster_gradient(
-    kind: &PaintKind,
-    size: Vec2,
-    ts: &sk::Transform,
-    alpha: f32,
-    region: (i32, i32, i32, i32),
-) -> Option<sk::Pixmap> {
+fn raster_gradient(kind: &PaintKind, size: Vec2, ts: &sk::Transform, alpha: f32, region: (i32, i32, i32, i32)) -> Option<sk::Pixmap> {
     let (x0, y0, x1, y1) = region;
     let (w, h) = ((x1 - x0).max(0) as u32, (y1 - y0).max(0) as u32);
     let mut pm = sk::Pixmap::new(w.max(1), h.max(1))?;
@@ -294,22 +287,9 @@ pub fn with_paint<R>(
             }
             let tr = gradient_to_local(handles, size);
             let shader = if radial {
-                sk::RadialGradient::new(
-                    sk::Point::from_xy(0.0, 0.0),
-                    sk::Point::from_xy(0.0, 0.0),
-                    1.0,
-                    st,
-                    sk::SpreadMode::Pad,
-                    tr,
-                )
+                sk::RadialGradient::new(sk::Point::from_xy(0.0, 0.0), sk::Point::from_xy(0.0, 0.0), 1.0, st, sk::SpreadMode::Pad, tr)
             } else {
-                sk::LinearGradient::new(
-                    sk::Point::from_xy(0.0, 0.0),
-                    sk::Point::from_xy(1.0, 0.0),
-                    st,
-                    sk::SpreadMode::Pad,
-                    tr,
-                )
+                sk::LinearGradient::new(sk::Point::from_xy(0.0, 0.0), sk::Point::from_xy(1.0, 0.0), st, sk::SpreadMode::Pad, tr)
             }?;
             paint.shader = shader;
             Some(f(&paint))

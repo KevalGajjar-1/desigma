@@ -126,7 +126,9 @@ pub enum PressAction {
     Rotate(usize),
     /// Select (unless already selected) then drag-move. `select_first` is false
     /// when pressing on an already selected node (so multi-selection survives).
-    MoveNode { select_first: bool },
+    MoveNode {
+        select_first: bool,
+    },
     Marquee,
     Draw(Tool),
     PenPoint,
@@ -181,10 +183,7 @@ mod tests {
         assert_eq!(press_action(Tool::Move, PressTarget::Empty, false, false), PressAction::Marquee);
         assert_eq!(press_action(Tool::Move, PressTarget::Node(n), false, false), PressAction::MoveNode { select_first: true });
         assert_eq!(press_action(Tool::Move, PressTarget::SelectedNode(n), false, false), PressAction::MoveNode { select_first: false });
-        assert_eq!(
-            press_action(Tool::Move, PressTarget::Handle(HandleHit::Resize(Handle::BR)), false, false),
-            PressAction::Resize(Handle::BR)
-        );
+        assert_eq!(press_action(Tool::Move, PressTarget::Handle(HandleHit::Resize(Handle::BR)), false, false), PressAction::Resize(Handle::BR));
         assert_eq!(press_action(Tool::Move, PressTarget::Handle(HandleHit::Rotate(1)), false, false), PressAction::Rotate(1));
     }
 

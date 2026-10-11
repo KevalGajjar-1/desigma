@@ -3,8 +3,8 @@
 //! writer can emit either `<text>` lines or outlined glyph paths.
 
 use cosmic_text::{
-    fontdb, Align, Attrs, Buffer, CacheKeyFlags, Command, Family, FontSystem, Hinting, Metrics, Shaping, Style, SwashCache,
-    TextDecoration as CtDecoration, UnderlineStyle, Weight, Wrap,
+    fontdb, Align, Attrs, Buffer, CacheKeyFlags, Command, Family, FontSystem, Hinting, Metrics, Shaping, Style, SwashCache, TextDecoration as CtDecoration,
+    UnderlineStyle, Weight, Wrap,
 };
 use desigma_doc as d;
 use desigma_doc::{PathCmd, TextAutoResize, TextProps, Vec2};
@@ -41,11 +41,8 @@ fn init_fonts() -> Fonts {
         bundled.extend(db.load_font_source(fontdb::Source::Binary(Arc::new(asset.data))));
     }
     db.load_system_fonts();
-    let shadowed: Vec<fontdb::ID> = db
-        .faces()
-        .filter(|f| !bundled.contains(&f.id) && f.families.iter().any(|(n, _)| owned.contains(&n.to_lowercase())))
-        .map(|f| f.id)
-        .collect();
+    let shadowed: Vec<fontdb::ID> =
+        db.faces().filter(|f| !bundled.contains(&f.id) && f.families.iter().any(|(n, _)| owned.contains(&n.to_lowercase()))).map(|f| f.id).collect();
     for id in shadowed {
         db.remove_face(id);
     }

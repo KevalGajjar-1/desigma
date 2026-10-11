@@ -228,11 +228,7 @@ impl App {
 
     /// Selected nodes that have no selected ancestor, in z/document order.
     pub fn top_selection(&self) -> Vec<NodeId> {
-        self.selection
-            .iter()
-            .copied()
-            .filter(|id| !self.selection.iter().any(|o| o != id && self.doc.is_ancestor(*o, *id)))
-            .collect()
+        self.selection.iter().copied().filter(|id| !self.selection.iter().any(|o| o != id && self.doc.is_ancestor(*o, *id))).collect()
     }
 
     pub fn selection_bounds(&self) -> Option<Rect> {

@@ -13,20 +13,20 @@
 pub mod container;
 mod export;
 mod fig;
-mod proto;
 pub mod kiwi;
+mod proto;
 #[cfg(feature = "net")]
 pub mod rest;
 mod rest_import;
-mod variables;
 pub mod svgpath;
 #[doc(hidden)]
 pub mod testkit;
+mod variables;
 
 pub use desigma_doc::Document;
 pub use export::export_rest_json;
-pub use proto::{key_code, key_name};
 pub use fig::{commands_blob_to_path, decode_fig_to_json, import_fig};
+pub use proto::{key_code, key_name};
 pub use rest_import::{image_refs, import_rest_json};
 pub use variables::{export_variables_json, export_variables_meta, import_variables_json, import_variables_value};
 

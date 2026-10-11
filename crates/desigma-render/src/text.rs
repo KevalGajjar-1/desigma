@@ -3,8 +3,8 @@
 //! style they belong to so fills (solid / gradient / image) apply uniformly.
 
 use cosmic_text::{
-    fontdb, Align, Attrs, Buffer, CacheKeyFlags, Command, Family, FontSystem, Hinting, Metrics, Shaping, Style, SwashCache,
-    TextDecoration as CtDecoration, UnderlineStyle, Weight, Wrap,
+    fontdb, Align, Attrs, Buffer, CacheKeyFlags, Command, Family, FontSystem, Hinting, Metrics, Shaping, Style, SwashCache, TextDecoration as CtDecoration,
+    UnderlineStyle, Weight, Wrap,
 };
 use desigma_doc as d;
 use desigma_doc::{TextAutoResize, TextProps, Vec2};
@@ -64,11 +64,8 @@ fn base_db() -> &'static (fontdb::Database, HashSet<fontdb::ID>) {
             bundled.extend(db.load_font_source(fontdb::Source::Binary(Arc::new(asset.data))));
         }
         db.load_system_fonts();
-        let shadowed: Vec<fontdb::ID> = db
-            .faces()
-            .filter(|f| !bundled.contains(&f.id) && f.families.iter().any(|(n, _)| owned.contains(&n.to_lowercase())))
-            .map(|f| f.id)
-            .collect();
+        let shadowed: Vec<fontdb::ID> =
+            db.faces().filter(|f| !bundled.contains(&f.id) && f.families.iter().any(|(n, _)| owned.contains(&n.to_lowercase()))).map(|f| f.id).collect();
         for id in shadowed {
             db.remove_face(id);
         }
@@ -491,9 +488,7 @@ fn compute_layout(fonts: &mut Fonts, props: &TextProps, size: Vec2) -> TextLayou
                     Command::MoveTo(p) => pb.move_to(gx + p.x, gy - p.y),
                     Command::LineTo(p) => pb.line_to(gx + p.x, gy - p.y),
                     Command::QuadTo(c1, p) => pb.quad_to(gx + c1.x, gy - c1.y, gx + p.x, gy - p.y),
-                    Command::CurveTo(c1, c2, p) => {
-                        pb.cubic_to(gx + c1.x, gy - c1.y, gx + c2.x, gy - c2.y, gx + p.x, gy - p.y)
-                    }
+                    Command::CurveTo(c1, c2, p) => pb.cubic_to(gx + c1.x, gy - c1.y, gx + c2.x, gy - c2.y, gx + p.x, gy - p.y),
                     Command::Close => pb.close(),
                 }
             }

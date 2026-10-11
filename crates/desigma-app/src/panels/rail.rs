@@ -57,7 +57,8 @@ pub fn show(app: &mut App, ui: &mut Ui, rect: Rect) {
         }
         let ir = Rect::from_min_size(Pos2::new(rect.left(), y), Vec2::new(inner_w, theme::RAIL_ITEM_SIZE));
         let resp = ui.interact(ir, ui.id().with(("rail", *label)), Sense::click());
-        let selected = app.ui.rail == Some(*item) || (*item == RailItem::File && (app.ui.menu == Some(MenuKind::FileMenu) || (app.ui.rail.is_none() && !app.ui.left_collapsed)));
+        let selected = app.ui.rail == Some(*item)
+            || (*item == RailItem::File && (app.ui.menu == Some(MenuKind::FileMenu) || (app.ui.rail.is_none() && !app.ui.left_collapsed)));
         // Active item: 32x32 rounded tile behind the icon.
         let ic = Pos2::new(ir.center().x, ir.top() + theme::RAIL_ICON_CENTER_Y);
         if selected {

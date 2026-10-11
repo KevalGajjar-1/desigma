@@ -119,7 +119,11 @@ fn trigger(t: &Value) -> Option<Trigger> {
         "MOUSE_DOWN" => Trigger::MouseDown { delay_ms: delay() },
         "MOUSE_UP" => Trigger::MouseUp { delay_ms: delay() },
         "ON_KEY_DOWN" => {
-            let mut keys: Vec<String> = t.get("keyCodes").and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_u64).map(|c| key_name(c as u32)).collect()).unwrap_or_default();
+            let mut keys: Vec<String> = t
+                .get("keyCodes")
+                .and_then(Value::as_array)
+                .map(|a| a.iter().filter_map(Value::as_u64).map(|c| key_name(c as u32)).collect())
+                .unwrap_or_default();
             if keys.is_empty() {
                 if let Some(k) = s(t, "keys") {
                     keys.push(k.into());
@@ -152,7 +156,12 @@ fn easing(e: Option<&Value>) -> Easing {
         "EASE_IN_AND_OUT_BACK" | "EASE_IN_OUT_BACK" => Easing::EaseInOutBack,
         "CUSTOM_CUBIC_BEZIER" => {
             let c = e.get("easingFunctionCubicBezier").unwrap_or(&Value::Null);
-            Easing::Bezier([f(c, "x1").unwrap_or(0.0) as f32, f(c, "y1").unwrap_or(0.0) as f32, f(c, "x2").unwrap_or(1.0) as f32, f(c, "y2").unwrap_or(1.0) as f32])
+            Easing::Bezier([
+                f(c, "x1").unwrap_or(0.0) as f32,
+                f(c, "y1").unwrap_or(0.0) as f32,
+                f(c, "x2").unwrap_or(1.0) as f32,
+                f(c, "y2").unwrap_or(1.0) as f32,
+            ])
         }
         "CUSTOM_SPRING" => {
             let c = e.get("easingFunctionSpring").unwrap_or(&Value::Null);
@@ -215,7 +224,10 @@ impl Resolver<'_> {
                     "SWAP" => Action::SwapOverlay { dest },
                     "OVERLAY" => {
                         let o = self.overlay.get(&sid).unwrap_or(&Value::Null);
-                        let offset = a.get("overlayRelativePosition").map(|p| Vec2::new(f(p, "x").unwrap_or(0.0) as f32, f(p, "y").unwrap_or(0.0) as f32)).unwrap_or(Vec2::ZERO);
+                        let offset = a
+                            .get("overlayRelativePosition")
+                            .map(|p| Vec2::new(f(p, "x").unwrap_or(0.0) as f32, f(p, "y").unwrap_or(0.0) as f32))
+                            .unwrap_or(Vec2::ZERO);
                         let background = o
                             .get("overlayBackground")
                             .filter(|bg| s(bg, "type") == Some("COLOR"))
@@ -229,7 +241,13 @@ impl Resolver<'_> {
                             background,
                         }
                     }
-                    "SCROLL_TO" => Action::ScrollTo { dest, offset: a.get("scrollOffset").map(|p| Vec2::new(f(p, "x").unwrap_or(0.0) as f32, f(p, "y").unwrap_or(0.0) as f32)).unwrap_or(Vec2::ZERO) },
+                    "SCROLL_TO" => Action::ScrollTo {
+                        dest,
+                        offset: a
+                            .get("scrollOffset")
+                            .map(|p| Vec2::new(f(p, "x").unwrap_or(0.0) as f32, f(p, "y").unwrap_or(0.0) as f32))
+                            .unwrap_or(Vec2::ZERO),
+                    },
                     "CHANGE_TO" => Action::ChangeTo { dest },
                     _ => return None,
                 })
@@ -262,7 +280,8 @@ impl Resolver<'_> {
     /// Reactions from a collected node subset, including the legacy
     /// `transitionNodeID` form.
     pub(crate) fn reactions(&self, raw: &Value) -> Vec<Reaction> {
-        let mut out: Vec<Reaction> = raw.get("reactions").and_then(Value::as_array).map(|a| a.iter().filter_map(|r| self.reaction(r)).collect()).unwrap_or_default();
+        let mut out: Vec<Reaction> =
+            raw.get("reactions").and_then(Value::as_array).map(|a| a.iter().filter_map(|r| self.reaction(r)).collect()).unwrap_or_default();
         if out.is_empty() {
             if let Some((dest, _)) = self.dest(raw) {
                 let dur = f(raw, "transitionDuration").unwrap_or(0.0).max(0.0) as u32;
@@ -336,7 +355,9 @@ fn easing_json(e: &Easing) -> Value {
         Easing::EaseInBack => json!({"type": "EASE_IN_BACK"}),
         Easing::EaseOutBack => json!({"type": "EASE_OUT_BACK"}),
         Easing::EaseInOutBack => json!({"type": "EASE_IN_AND_OUT_BACK"}),
-        Easing::Bezier(c) => json!({"type": "CUSTOM_CUBIC_BEZIER", "easingFunctionCubicBezier": {"x1": num(c[0]), "y1": num(c[1]), "x2": num(c[2]), "y2": num(c[3])}}),
+        Easing::Bezier(c) => {
+            json!({"type": "CUSTOM_CUBIC_BEZIER", "easingFunctionCubicBezier": {"x1": num(c[0]), "y1": num(c[1]), "x2": num(c[2]), "y2": num(c[3])}})
+        }
         Easing::Spring { mass, stiffness, damping } => {
             json!({"type": "CUSTOM_SPRING", "easingFunctionSpring": {"mass": num(*mass), "stiffness": num(*stiffness), "damping": num(*damping)}})
         }
@@ -604,7 +625,12 @@ pub(crate) fn lift_flow_starts(page: &mut Value) {
         let Some(obj) = v.as_object_mut() else { return };
         if let Some(name) = obj.remove("_flowStart") {
             let id = obj.get("id").cloned().unwrap_or(Value::Null);
-            let nm = name.as_str().filter(|n| !n.is_empty()).map(String::from).or_else(|| obj.get("name").and_then(Value::as_str).map(String::from)).unwrap_or_default();
+            let nm = name
+                .as_str()
+                .filter(|n| !n.is_empty())
+                .map(String::from)
+                .or_else(|| obj.get("name").and_then(Value::as_str).map(String::from))
+                .unwrap_or_default();
             out.push(json!({"nodeId": id, "name": nm}));
         }
         if let Some(kids) = obj.get_mut("children").and_then(Value::as_array_mut) {

@@ -330,10 +330,15 @@ pub(crate) fn from_fig_entries(entries: &[&Value]) -> Option<Value> {
         }
         let Some(gid) = e.get("guid").and_then(guid) else { continue };
         let id = format!("VariableCollectionId:{gid}");
-        let modes: Vec<Value> =
-            farr(e, "variableSetModes").iter().filter_map(|m| Some(json!({"modeId": guid(m.get("id")?)?, "name": fstr(m, "name").unwrap_or("Mode")}))).collect();
+        let modes: Vec<Value> = farr(e, "variableSetModes")
+            .iter()
+            .filter_map(|m| Some(json!({"modeId": guid(m.get("id")?)?, "name": fstr(m, "name").unwrap_or("Mode")})))
+            .collect();
         let default = modes.first().and_then(|m| m.get("modeId")).cloned().unwrap_or(Value::Null);
-        colls.insert(id.clone(), json!({"id": id, "name": fstr(e, "name").unwrap_or("Collection"), "modes": modes, "defaultModeId": default, "variableIds": []}));
+        colls.insert(
+            id.clone(),
+            json!({"id": id, "name": fstr(e, "name").unwrap_or("Collection"), "modes": modes, "defaultModeId": default, "variableIds": []}),
+        );
     }
     for e in entries {
         if fstr(e, "type") != Some("VARIABLE") {

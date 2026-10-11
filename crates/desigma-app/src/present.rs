@@ -92,7 +92,12 @@ impl PresentState {
     pub fn screen_center_of(&self, node: NodeId) -> Option<Pos2> {
         let frame = self.player.top_frame_of(node)?;
         let r = crate::proto::player::rect_in_frame(&self.player.doc, node, frame);
-        let scroll = if self.player.doc.get(frame).is_some_and(|f| f.prototype.fixed_children.iter().any(|c| *c == node || self.player.doc.is_ancestor(*c, node))) { Vec2::ZERO } else { self.player.scroll_of(frame) };
+        let scroll =
+            if self.player.doc.get(frame).is_some_and(|f| f.prototype.fixed_children.iter().any(|c| *c == node || self.player.doc.is_ancestor(*c, node))) {
+                Vec2::ZERO
+            } else {
+                self.player.scroll_of(frame)
+            };
         Some(self.stage.min + EV::new((r.x + r.w / 2.0 - scroll.x) * self.scale, (r.y + r.h / 2.0 - scroll.y) * self.scale))
     }
 }
@@ -119,7 +124,12 @@ fn upload(ctx: &Context, pm: &desigma_render::tiny_skia::Pixmap, name: String) -
 }
 
 /// Renders the scrolling content (and the fixed layer, if any) of a frame.
-fn render_layers(doc: &Document, frame: NodeId, scale: f32, max_side: f32) -> Option<(desigma_render::tiny_skia::Pixmap, Option<desigma_render::tiny_skia::Pixmap>, Vec2)> {
+fn render_layers(
+    doc: &Document,
+    frame: NodeId,
+    scale: f32,
+    max_side: f32,
+) -> Option<(desigma_render::tiny_skia::Pixmap, Option<desigma_render::tiny_skia::Pixmap>, Vec2)> {
     let n = doc.get(frame)?;
     let ext = content_extent(doc, frame);
     let (sx, sy) = match n.prototype.overflow {
@@ -337,7 +347,8 @@ pub fn show(app: &mut App, ui: &mut Ui) {
 
     // ---- input
     let over_widget = widgets::pointer_over_popup(&ctx);
-    let (pos, pressed, down, wheel, events) = ctx.input(|i| (i.pointer.latest_pos(), i.pointer.primary_pressed(), i.pointer.primary_down(), i.smooth_scroll_delta, i.events.clone()));
+    let (pos, pressed, down, wheel, events) =
+        ctx.input(|i| (i.pointer.latest_pos(), i.pointer.primary_pressed(), i.pointer.primary_down(), i.smooth_scroll_delta, i.events.clone()));
     let in_area = pos.filter(|q| area.contains(*q) && !over_widget);
     let target = in_area.and_then(|q| target_at(&st, q, now));
     st.player.pointer_move(target);
@@ -477,7 +488,11 @@ fn paint_stage(st: &mut PresentState, ctx: &Context, p: &egui::Painter, stage: E
             if !smart_ok {
                 let size_px = Vec2::new(stage.width(), stage.height());
                 let poses = geom::poses(if kind == TransitionKind::SmartAnimate { TransitionKind::Dissolve } else { kind }, e, size_px);
-                let from_units = if snap.is_some() { st.player.anim.as_ref().and_then(|a| a.snapshot.as_ref()).and_then(|s| s.doc.get(from)).map(|n| n.size).unwrap_or(Vec2::ZERO) } else { st.player.size_of(from) };
+                let from_units = if snap.is_some() {
+                    st.player.anim.as_ref().and_then(|a| a.snapshot.as_ref()).and_then(|s| s.doc.get(from)).map(|n| n.size).unwrap_or(Vec2::ZERO)
+                } else {
+                    st.player.size_of(from)
+                };
                 let from_rect = ERect::from_center_size(stage.center(), EV::new(from_units.x * scale, from_units.y * scale));
                 let mut draws: Vec<(bool, geom::Pose)> = vec![(true, poses.from), (false, poses.to)];
                 if !poses.to_on_top {
@@ -519,7 +534,10 @@ fn paint_stage(st: &mut PresentState, ctx: &Context, p: &egui::Painter, stage: E
         }
         let sz = st.player.size_of(o.frame);
         let pose = geom::overlay_pose(o.transition.map(|t| t.kind).unwrap_or(TransitionKind::Dissolve), shown, sz);
-        let rect = ERect::from_min_size(stage.min + EV::new((o.origin.x + pose.offset.x) * scale, (o.origin.y + pose.offset.y) * scale), EV::new(sz.x * scale, sz.y * scale));
+        let rect = ERect::from_min_size(
+            stage.min + EV::new((o.origin.x + pose.offset.x) * scale, (o.origin.y + pose.offset.y) * scale),
+            EV::new(sz.x * scale, sz.y * scale),
+        );
         if let Some(l) = st.layers(ctx, None, 0, o.frame, px) {
             draw_layers(&pc, &l, rect, scroll_of(st, o.frame), pose.alpha);
         }

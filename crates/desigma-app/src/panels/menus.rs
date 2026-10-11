@@ -1,14 +1,14 @@
 //! Application menus and the shared action dispatcher (menus + shortcuts).
 
 use crate::app::{App, MenuKind};
+use crate::canvas::textsession::{text_command, TextCmd};
 use crate::canvas::tools::{Tool, GROUPS};
 use crate::icons::{self, Icon};
 use crate::ops::Align;
+use crate::richtext::ListKind;
 use crate::theme;
 use crate::widgets::menu::{popup_menu, popup_tree, preset_path, MenuItem, MenuResult, TreeResult};
 use crate::widgets::{self, menu_panel};
-use crate::canvas::textsession::{text_command, TextCmd};
-use crate::richtext::ListKind;
 use desigma_doc::NodeKind;
 use egui::{Align2, Context, Id, Key, Modifiers, Pos2, Rect, Sense, Vec2};
 
@@ -316,7 +316,14 @@ fn main_nodes(app: &App) -> Vec<Node> {
 }
 
 fn tool_nodes(app: &App, g: usize) -> Vec<Node> {
-    GROUPS[g].iter().map(|t| leaf(tool_menu_label(*t), t.shortcut(), Action::Tool(*t)).on(app.group_pick[g].min(GROUPS[g].len() - 1) == GROUPS[g].iter().position(|x| x == t).unwrap_or(0)).icon(super::toolbar::tool_icon(*t))).collect()
+    GROUPS[g]
+        .iter()
+        .map(|t| {
+            leaf(tool_menu_label(*t), t.shortcut(), Action::Tool(*t))
+                .on(app.group_pick[g].min(GROUPS[g].len() - 1) == GROUPS[g].iter().position(|x| x == t).unwrap_or(0))
+                .icon(super::toolbar::tool_icon(*t))
+        })
+        .collect()
 }
 
 /// Id under which a menu keeps its highlight state.
@@ -331,7 +338,8 @@ pub fn preset_menu(ctx: &Context, app: &mut App, spec: &str, screen: Rect) -> bo
     match name {
         "main" => {
             app.ui.menu = Some(MenuKind::Main);
-            app.ui.menu_anchor = Some(Rect::from_min_size(Pos2::new(theme::RAIL_MENU_BUTTON_X, theme::RAIL_MENU_BUTTON_Y), Vec2::splat(theme::RAIL_MENU_BUTTON_SIZE)));
+            app.ui.menu_anchor =
+                Some(Rect::from_min_size(Pos2::new(theme::RAIL_MENU_BUTTON_X, theme::RAIL_MENU_BUTTON_Y), Vec2::splat(theme::RAIL_MENU_BUTTON_SIZE)));
             let path = find_path(&main_nodes(app), &labels);
             if !path.is_empty() {
                 preset_path(ctx, menu_id(MenuKind::Main), &path);
@@ -459,7 +467,9 @@ struct Command {
 fn collect(nodes: &[Node], out: &mut Vec<Command>) {
     for n in nodes {
         match n.act {
-            Some(act) if !matches!(act, Action::OpenPalette) => out.push(Command { label: n.item.label.clone(), shortcut: n.item.shortcut.clone(), act, disabled: n.item.disabled }),
+            Some(act) if !matches!(act, Action::OpenPalette) => {
+                out.push(Command { label: n.item.label.clone(), shortcut: n.item.shortcut.clone(), act, disabled: n.item.disabled })
+            }
             _ => collect(&n.kids, out),
         }
     }
@@ -472,10 +482,20 @@ fn commands(app: &App) -> Vec<Command> {
     out.retain(|c| c.label != "Back to files" && c.label != "About desigma" && c.label != "Libraries" && c.label != "Not available");
     for g in GROUPS {
         for t in *g {
-            out.push(Command { label: tool_menu_label(*t).trim_end_matches('…').into(), shortcut: t.shortcut().into(), act: Action::Tool(*t), disabled: false });
+            out.push(Command {
+                label: tool_menu_label(*t).trim_end_matches('…').into(),
+                shortcut: t.shortcut().into(),
+                act: Action::Tool(*t),
+                disabled: false,
+            });
         }
     }
-    out.push(Command { label: "Combine as variants".into(), shortcut: "Ctrl+Shift+K".into(), act: Action::CombineVariants, disabled: app.selection.is_empty() });
+    out.push(Command {
+        label: "Combine as variants".into(),
+        shortcut: "Ctrl+Shift+K".into(),
+        act: Action::CombineVariants,
+        disabled: app.selection.is_empty(),
+    });
     out
 }
 
@@ -510,7 +530,8 @@ fn palette(app: &mut App, ctx: &Context) {
     let screen = ctx.content_rect();
     let list_h = if n == 0 { theme::MENU_ITEM_HEIGHT } else { shown as f32 * theme::MENU_ITEM_HEIGHT };
     let h = theme::MENU_PADDING + PALETTE_SEARCH_H + widgets::menu::SEP_H + list_h + theme::MENU_PADDING;
-    let rect = Rect::from_min_size(Pos2::new(screen.center().x - theme::PALETTE_WIDTH / 2.0, screen.top() + theme::PALETTE_TOP), Vec2::new(theme::PALETTE_WIDTH, h));
+    let rect =
+        Rect::from_min_size(Pos2::new(screen.center().x - theme::PALETTE_WIDTH / 2.0, screen.top() + theme::PALETTE_TOP), Vec2::new(theme::PALETTE_WIDTH, h));
     let font = theme::font_body();
     let mut pick: Option<usize> = None;
     let mut hover: Option<usize> = None;
@@ -521,7 +542,13 @@ fn palette(app: &mut App, ctx: &Context) {
         let p = ui.painter().clone();
         menu_panel(&p, rect, theme::MENU_RADIUS);
         let srow = Rect::from_min_size(Pos2::new(rect.left(), rect.top() + theme::MENU_PADDING), Vec2::new(rect.width(), PALETTE_SEARCH_H));
-        icons::paint(&p, Icon::Search, Pos2::new(srow.left() + theme::MENU_ICON_X_PLAIN + theme::MENU_ICON_BOX / 2.0, srow.center().y), theme::MENU_ICON_SIZE, theme::ICON_SECONDARY);
+        icons::paint(
+            &p,
+            Icon::Search,
+            Pos2::new(srow.left() + theme::MENU_ICON_X_PLAIN + theme::MENU_ICON_BOX / 2.0, srow.center().y),
+            theme::MENU_ICON_SIZE,
+            theme::ICON_SECONDARY,
+        );
         let field = Rect::from_min_max(
             Pos2::new(srow.left() + theme::MENU_ICON_X_PLAIN + theme::MENU_ICON_BOX + theme::MENU_ICON_LABEL_GAP, srow.top()),
             Pos2::new(srow.right() - theme::MENU_SHORTCUT_PAD, srow.bottom()),
@@ -546,7 +573,13 @@ fn palette(app: &mut App, ctx: &Context) {
         widgets::hline(&p, rect.left(), rect.right(), srow.bottom() + theme::MENU_SEP_MARGIN, theme::BORDER_MENU);
         let top = srow.bottom() + widgets::menu::SEP_H;
         if n == 0 {
-            p.text(Pos2::new(rect.left() + theme::MENU_LABEL_X_PLAIN, top + theme::MENU_ITEM_HEIGHT / 2.0), Align2::LEFT_CENTER, "No matching actions", font.clone(), theme::TEXT_DISABLED);
+            p.text(
+                Pos2::new(rect.left() + theme::MENU_LABEL_X_PLAIN, top + theme::MENU_ITEM_HEIGHT / 2.0),
+                Align2::LEFT_CENTER,
+                "No matching actions",
+                font.clone(),
+                theme::TEXT_DISABLED,
+            );
         }
         for r in 0..shown {
             let li = first + r;
@@ -566,7 +599,13 @@ fn palette(app: &mut App, ctx: &Context) {
             let col = if c.disabled { theme::TEXT_DISABLED } else { theme::TEXT };
             p.text(Pos2::new(row.left() + theme::MENU_LABEL_X_PLAIN, row.center().y), Align2::LEFT_CENTER, &c.label, font.clone(), col);
             if !c.shortcut.is_empty() {
-                let sc = if c.disabled { theme::TEXT_DISABLED } else if lit { theme::MENU_SHORTCUT_HIGHLIGHT } else { theme::TEXT_SECONDARY };
+                let sc = if c.disabled {
+                    theme::TEXT_DISABLED
+                } else if lit {
+                    theme::MENU_SHORTCUT_HIGHLIGHT
+                } else {
+                    theme::TEXT_SECONDARY
+                };
                 p.text(Pos2::new(row.right() - theme::MENU_SHORTCUT_PAD, row.center().y), Align2::RIGHT_CENTER, &c.shortcut, font.clone(), sc);
             }
         }

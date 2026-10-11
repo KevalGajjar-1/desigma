@@ -58,7 +58,6 @@ impl Edit {
         }
         out
     }
-
 }
 
 /// A transaction: structural commands applied immediately plus an [`Edit`] for

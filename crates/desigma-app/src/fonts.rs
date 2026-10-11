@@ -33,9 +33,7 @@ impl FontLoader {
         let installed: HashSet<String> = requests
             .iter()
             .map(|r| r.family.clone())
-            .filter(|family| {
-                desigma_render::resolve_font(family, 400, false).is_some_and(|f| f.family.eq_ignore_ascii_case(family))
-            })
+            .filter(|family| desigma_render::resolve_font(family, 400, false).is_some_and(|f| f.family.eq_ignore_ascii_case(family)))
             .collect();
         let doc = doc.clone();
         let (tx, rx) = channel();

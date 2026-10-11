@@ -41,7 +41,11 @@ pub fn trigger_matches(t: &Trigger, w: When) -> bool {
 
 fn trigger_delay_ms(t: &Trigger) -> u32 {
     match t {
-        Trigger::MouseEnter { delay_ms } | Trigger::MouseLeave { delay_ms } | Trigger::MouseDown { delay_ms } | Trigger::MouseUp { delay_ms } | Trigger::AfterDelay { delay_ms } => *delay_ms,
+        Trigger::MouseEnter { delay_ms }
+        | Trigger::MouseLeave { delay_ms }
+        | Trigger::MouseDown { delay_ms }
+        | Trigger::MouseUp { delay_ms }
+        | Trigger::AfterDelay { delay_ms } => *delay_ms,
         _ => 0,
     }
 }
@@ -259,7 +263,9 @@ impl Player {
 
     /// Whether anything at or above `target` reacts to the pointer (for the hand cursor).
     pub fn is_interactive(&self, target: NodeId) -> bool {
-        [When::Click, When::Drag, When::Down, When::Up, When::HoverOn, When::PressOn, When::Enter, When::Leave].iter().any(|w| self.find_reactive(target, *w).is_some())
+        [When::Click, When::Drag, When::Down, When::Up, When::HoverOn, When::PressOn, When::Enter, When::Leave]
+            .iter()
+            .any(|w| self.find_reactive(target, *w).is_some())
     }
 
     fn reactions_on(&self, node: NodeId, w: When) -> Vec<Reaction> {
@@ -589,10 +595,7 @@ impl Player {
     /// The overlay whose frame contains `node`, else the topmost open overlay.
     fn overlay_of(&self, node: NodeId) -> Option<usize> {
         let owner = self.top_frame_of(node);
-        self.overlays
-            .iter()
-            .position(|o| Some(o.frame) == owner && !o.closing())
-            .or_else(|| self.overlays.iter().rposition(|o| !o.closing()))
+        self.overlays.iter().position(|o| Some(o.frame) == owner && !o.closing()).or_else(|| self.overlays.iter().rposition(|o| !o.closing()))
     }
 
     /// Rect of `node` in the coordinates of the frame it is shown over.
@@ -606,7 +609,16 @@ impl Player {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn open_overlay(&mut self, source: NodeId, dest: NodeId, position: OverlayPosition, offset: Vec2, close_outside: bool, background: Option<Color>, transition: Option<Transition>) -> Option<NodeId> {
+    fn open_overlay(
+        &mut self,
+        source: NodeId,
+        dest: NodeId,
+        position: OverlayPosition,
+        offset: Vec2,
+        close_outside: bool,
+        background: Option<Color>,
+        transition: Option<Transition>,
+    ) -> Option<NodeId> {
         let frame = self.top_frame_of(dest)?;
         if frame == self.current || self.overlays.iter().any(|o| o.frame == frame && !o.closing()) {
             return None;
@@ -635,7 +647,19 @@ impl Player {
         let origin = geom::overlay_origin(old.position, old.offset, self.size_of(frame), self.size_of(self.current), self.rect_over_base(source));
         let t = transition.filter(|t| easing::effective_duration_ms(&t.easing, t.duration_ms) > 0);
         let anim = t.map(|t| OverlayAnim { start: self.now, dur: easing::effective_duration_ms(&t.easing, t.duration_ms) as f64 / 1000.0, opening: true });
-        self.overlays.insert(i, Overlay { frame, origin, background: old.background, close_outside: old.close_outside, position: old.position, offset: old.offset, transition: t, anim });
+        self.overlays.insert(
+            i,
+            Overlay {
+                frame,
+                origin,
+                background: old.background,
+                close_outside: old.close_outside,
+                position: old.position,
+                offset: old.offset,
+                transition: t,
+                anim,
+            },
+        );
         if anim.is_none() {
             self.on_shown(frame);
         }
@@ -721,7 +745,9 @@ impl Player {
         let Some(prev) = self.doc.get(inst).and_then(instance_component) else { return };
         let Some(frame) = self.top_frame_of(inst) else { return };
         let snapshot = transition
-            .filter(|t| matches!(t.kind, TransitionKind::SmartAnimate | TransitionKind::Dissolve) && easing::effective_duration_ms(&t.easing, t.duration_ms) > 0)
+            .filter(|t| {
+                matches!(t.kind, TransitionKind::SmartAnimate | TransitionKind::Dissolve) && easing::effective_duration_ms(&t.easing, t.duration_ms) > 0
+            })
             .map(|t| {
                 self.snapshots += 1;
                 (t, Snapshot { id: self.snapshots, doc: super::smart::subtree_doc(&self.doc, frame) })
@@ -820,7 +846,13 @@ fn hit_in(doc: &Document, id: NodeId, p: Vec2) -> Option<NodeId> {
 /// Top-level frames of a page that can be prototype destinations.
 pub fn top_level_frames(doc: &Document, page: NodeId) -> Vec<NodeId> {
     doc.get(page)
-        .map(|p| p.children.iter().copied().filter(|c| doc.get(*c).is_some_and(|n| n.visible && matches!(n.kind, NodeKind::Frame(_) | NodeKind::Component(_) | NodeKind::Section))).collect())
+        .map(|p| {
+            p.children
+                .iter()
+                .copied()
+                .filter(|c| doc.get(*c).is_some_and(|n| n.visible && matches!(n.kind, NodeKind::Frame(_) | NodeKind::Component(_) | NodeKind::Section)))
+                .collect()
+        })
         .unwrap_or_default()
 }
 
@@ -966,7 +998,11 @@ mod tests {
     #[test]
     fn spring_transitions_use_their_settle_time() {
         let mut f = fixture();
-        let spring = Some(Transition { kind: TransitionKind::MoveIn(Direction::Left), easing: Easing::Spring { mass: 1.0, stiffness: 300.0, damping: 20.0 }, duration_ms: 10 });
+        let spring = Some(Transition {
+            kind: TransitionKind::MoveIn(Direction::Left),
+            easing: Easing::Spring { mass: 1.0, stiffness: 300.0, damping: 20.0 },
+            duration_ms: 10,
+        });
         add(&mut f.doc, f.btn, react(Trigger::OnClick, Action::Navigate { dest: f.b, preserve_scroll: false }, spring));
         let mut p = Player::new(&f.doc, f.a);
         p.pointer_up(Some(f.btn), false);
@@ -1031,7 +1067,11 @@ mod tests {
         add(
             &mut f.doc,
             f.btn,
-            react(Trigger::OnClick, Action::OpenOverlay { dest: modal, position: OverlayPosition::Center, offset: Vec2::ZERO, close_on_click_outside: true, background: None }, None),
+            react(
+                Trigger::OnClick,
+                Action::OpenOverlay { dest: modal, position: OverlayPosition::Center, offset: Vec2::ZERO, close_on_click_outside: true, background: None },
+                None,
+            ),
         );
         (f, close)
     }

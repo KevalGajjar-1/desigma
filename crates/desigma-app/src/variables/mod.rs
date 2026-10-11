@@ -122,7 +122,11 @@ impl App {
         let cleanup = dangling_binding_cleanup(&self.doc, removed_vars, removed_colls);
         let mut cmds = vec![store.command()];
         for mut n in cleanup {
-            let keys: Vec<String> = self.doc.get(n.id).map(|o| o.variables.bindings.iter().filter(|(_, v)| removed_vars.contains(v)).map(|(k, _)| k.clone()).collect()).unwrap_or_default();
+            let keys: Vec<String> = self
+                .doc
+                .get(n.id)
+                .map(|o| o.variables.bindings.iter().filter(|(_, v)| removed_vars.contains(v)).map(|(k, _)| k.clone()).collect())
+                .unwrap_or_default();
             bake_bindings(&self.doc, &mut n, &keys);
             cmds.push(Command::Update { node: Box::new(n) });
         }

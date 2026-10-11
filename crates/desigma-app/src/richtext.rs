@@ -458,7 +458,7 @@ mod tests {
     fn splice_shifts_and_inherits() {
         let mut t = props("abcdef");
         apply_style(&mut t, 2..4, bold); // cd
-        // insert before the bold run: plain
+                                         // insert before the bold run: plain
         splice(&mut t, 0..0, "XX", None);
         assert_eq!(t.content, "XXabcdef");
         assert_eq!(rd(&t), vec![(4, 6, 700)]);

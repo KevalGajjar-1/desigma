@@ -582,7 +582,10 @@ mod tests {
     use super::*;
 
     fn line_path() -> Vec<Path> {
-        vec![Path { cmds: vec![PathCmd::MoveTo(v2(0.0, 0.0)), PathCmd::LineTo(v2(100.0, 0.0)), PathCmd::LineTo(v2(100.0, 100.0))], fill_rule: FillRule::NonZero }]
+        vec![Path {
+            cmds: vec![PathCmd::MoveTo(v2(0.0, 0.0)), PathCmd::LineTo(v2(100.0, 0.0)), PathCmd::LineTo(v2(100.0, 100.0))],
+            fill_rule: FillRule::NonZero,
+        }]
     }
 
     fn id(p: &[VPath]) -> Vec<VPath> {

@@ -455,15 +455,9 @@ pub fn apply(ctx: &egui::Context) {
 /// Installs the bundled Inter variable font as two instances: regular and strong.
 pub fn install_fonts(ctx: &egui::Context) {
     let mut fonts = egui::FontDefinitions::default();
-    let inter = desigma_fonts::bundled()
-        .iter()
-        .find(|a| a.family == UI_FONT_FAMILY && !a.italic)
-        .expect("bundled Inter");
+    let inter = desigma_fonts::bundled().iter().find(|a| a.family == UI_FONT_FAMILY && !a.italic).expect("bundled Inter");
     let instance = |weight: f32| {
-        let tweak = egui::FontTweak {
-            coords: egui::epaint::text::VariationCoords::new([("wght", weight), ("opsz", UI_FONT_OPSZ)]),
-            ..Default::default()
-        };
+        let tweak = egui::FontTweak { coords: egui::epaint::text::VariationCoords::new([("wght", weight), ("opsz", UI_FONT_OPSZ)]), ..Default::default() };
         std::sync::Arc::new(egui::FontData::from_static(inter.data).tweak(tweak))
     };
     fonts.font_data.insert("ui-regular".into(), instance(UI_FONT_WEIGHT));

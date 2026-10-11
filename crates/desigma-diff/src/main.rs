@@ -62,9 +62,7 @@ fn main() -> ExitCode {
 fn run(cli: Cli) -> Result<bool, String> {
     match cli.command {
         Command::Compare { a, b, tolerance, threshold, out, ignore, no_aa, json } => {
-            let load = |p: &PathBuf| {
-                image::open(p).map(|i| i.to_rgba8()).map_err(|e| format!("{}: {e}", p.display()))
-            };
+            let load = |p: &PathBuf| image::open(p).map(|i| i.to_rgba8()).map_err(|e| format!("{}: {e}", p.display()));
             let (ia, ib) = (load(&a)?, load(&b)?);
             let opts = DiffOptions { tolerance, detect_aa: !no_aa, ignore };
             let report = if let Some(out) = out {
@@ -93,10 +91,7 @@ fn run(cli: Cli) -> Result<bool, String> {
                     report.width,
                     report.height,
                     if report.size_mismatch {
-                        format!(
-                            " (size mismatch: {}x{} vs {}x{})",
-                            report.size_a.0, report.size_a.1, report.size_b.0, report.size_b.1
-                        )
+                        format!(" (size mismatch: {}x{} vs {}x{})", report.size_a.0, report.size_a.1, report.size_b.0, report.size_b.1)
                     } else {
                         String::new()
                     }
@@ -105,9 +100,7 @@ fn run(cli: Cli) -> Result<bool, String> {
             Ok(pass)
         }
         Command::Suite { manifest, out_dir, tolerance } => {
-            let out_dir = out_dir.unwrap_or_else(|| {
-                manifest.parent().unwrap_or(std::path::Path::new("")).join("diff-report")
-            });
+            let out_dir = out_dir.unwrap_or_else(|| manifest.parent().unwrap_or(std::path::Path::new("")).join("diff-report"));
             let results = suite::run(&manifest, &out_dir, tolerance)?;
             print!("{}", suite::table(&results));
             println!("report: {}", out_dir.join("index.html").display());

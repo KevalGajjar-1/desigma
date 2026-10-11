@@ -7,8 +7,7 @@
 use crate::edit::Edit;
 use crate::util::{aabb_of, rect_corners, v2};
 use desigma_doc::{
-    resolve_node, AutoLayout, Constraint, Document, LayoutAlign, LayoutDirection, NodeId, NodeKind, Rect, Sizing,
-    TextAutoResize, TextProps, Vec2,
+    resolve_node, AutoLayout, Constraint, Document, LayoutAlign, LayoutDirection, NodeId, NodeKind, Rect, Sizing, TextAutoResize, TextProps, Vec2,
 };
 
 /// One participating child, as seen by the solver.
@@ -112,10 +111,8 @@ pub fn compute(al: &AutoLayout, frame: Vec2, kids: &[ChildIn]) -> LayoutOut {
     let main_avail = (frame_main - pm).max(0.0);
 
     // Cross extent of each line.
-    let mut line_cross: Vec<f32> = lines
-        .iter()
-        .map(|l| l.iter().filter(|i| !kids[**i].cross_fill || al.wrap).map(|i| ax.cross(kids[*i].size)).fold(0.0, f32::max))
-        .collect();
+    let mut line_cross: Vec<f32> =
+        lines.iter().map(|l| l.iter().filter(|i| !kids[**i].cross_fill || al.wrap).map(|i| ax.cross(kids[*i].size)).fold(0.0, f32::max)).collect();
     if !al.wrap {
         if hug_cross {
             frame_cross = line_cross[0] + pc;
@@ -222,11 +219,8 @@ pub fn layout_node(doc: &mut Document, ed: &mut Edit, id: NodeId) {
     // gap / padding bound to variables count with the value of the mode in effect
     let Some(al) = doc.get(id).map(|n| resolve_node(doc, n)).and_then(|n| n.kind.frame_props().and_then(|f| f.auto_layout)) else { return };
     let horiz = al.direction == LayoutDirection::Horizontal;
-    let ids: Vec<NodeId> = children
-        .iter()
-        .copied()
-        .filter(|c| doc.get(*c).map(|k| resolve_node(doc, k).visible && !k.layout_child.absolute).unwrap_or(false))
-        .collect();
+    let ids: Vec<NodeId> =
+        children.iter().copied().filter(|c| doc.get(*c).map(|k| resolve_node(doc, k).visible && !k.layout_child.absolute).unwrap_or(false)).collect();
     let kids: Vec<ChildIn> = ids.iter().map(|c| child_in(doc, *c, horiz)).collect();
     let frame_size = doc.get(id).unwrap().size;
     let out = compute(&al, frame_size, &kids);
@@ -459,7 +453,10 @@ mod tests {
         let page = d.add_page("p");
         let fid = d.alloc_id();
         let mut f = Node::frame(fid, Rect::new(0.0, 0.0, 10.0, 10.0));
-        f.kind = NodeKind::Frame(FrameProps { auto_layout: Some(AutoLayout { primary_sizing: Sizing::Hug, counter_sizing: Sizing::Hug, item_spacing: 8.0, ..Default::default() }), ..Default::default() });
+        f.kind = NodeKind::Frame(FrameProps {
+            auto_layout: Some(AutoLayout { primary_sizing: Sizing::Hug, counter_sizing: Sizing::Hug, item_spacing: 8.0, ..Default::default() }),
+            ..Default::default()
+        });
         let f = d.insert(page, f).unwrap();
         let a = d.alloc_id();
         let a = d.insert(f, Node::rectangle(a, Rect::new(100.0, 100.0, 20.0, 20.0))).unwrap();
@@ -484,7 +481,7 @@ mod tests {
 
     #[test]
     fn gap_bound_to_a_variable_follows_the_mode() {
-        use desigma_doc::{VariableStore, VariableKind, VariableValue};
+        use desigma_doc::{VariableKind, VariableStore, VariableValue};
         let (mut d, f, _, b) = doc_with_frame();
         let mut s = VariableStore::default();
         let c = s.add_collection("Space");
