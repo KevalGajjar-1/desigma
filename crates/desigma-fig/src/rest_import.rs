@@ -381,6 +381,7 @@ pub(crate) fn import_rest_value(v: &Value, expand_instances: bool) -> Result<Doc
         cx.import_page(p);
     }
     cx.finish(expand_instances);
+    crate::variables::import_variables_value(&mut cx.doc, v);
     cx.doc.style_meta = style_meta(v.get("styles"), &cx.doc);
     Ok(cx.doc)
 }
@@ -521,6 +522,7 @@ impl Ctx {
         n.visible = fbool(v, "visible").unwrap_or(true);
         n.locked = fbool(v, "locked").unwrap_or(false);
         n.opacity = fnum(v, "opacity").unwrap_or(1.0);
+        n.variables = crate::variables::parse_node_variables(v);
         n.blend = fstr(v, "blendMode").map(blend).unwrap_or(default_blend);
         n.is_mask = fbool(v, "isMask").unwrap_or(false);
         n.fill_geometry = fill_geo;

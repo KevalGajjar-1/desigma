@@ -286,6 +286,7 @@ fn export_node(doc: &Document, id: NodeId, parent_abs: Option<&Affine>, depth: u
         NodeKind::Unknown { type_name } => type_name.as_str(),
     };
     m.insert("type".into(), ty.into());
+    crate::variables::export_node_variables(node, &mut m);
 
     let abs = parent_abs.map(|p| *p * node.transform).unwrap_or(node.transform);
     match &node.kind {
@@ -490,7 +491,8 @@ pub fn export_rest_json(doc: &Document) -> Value {
             components.insert(figma_id(doc, *c), json!({"key": k, "name": doc.get(*c).map(|n| n.name.as_str()).unwrap_or("")}));
         }
     }
-    json!({
+    let variables = (!doc.variable_collections.is_empty()).then(|| crate::variables::export_variables_meta(doc));
+    let mut out = json!({
         "name": doc.name,
         "role": "owner",
         "lastModified": "",
@@ -499,5 +501,9 @@ pub fn export_rest_json(doc: &Document) -> Value {
         "document": {"id": "0:0", "name": "Document", "type": "DOCUMENT", "children": pages},
         "components": components,
         "styles": styles,
-    })
+    });
+    if let (Some(v), Some(o)) = (variables, out.as_object_mut()) {
+        o.insert("variables".into(), v);
+    }
+    out
 }

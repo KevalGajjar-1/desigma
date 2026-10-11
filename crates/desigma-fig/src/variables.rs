@@ -1,0 +1,392 @@
+//! Figma variables: REST `GET /v1/files/:key/variables/local` payloads, node
+//! `boundVariables` / `explicitVariableModes`, and a tolerant `.fig` mapping.
+//!
+//! Ids are kept as Figma writes them (`VariableID:1:23`, mode ids `1:0`), so
+//! exporting gives back the same references.
+
+use crate::rest_import::{color, farr, fbool, fstr};
+use crate::FigError;
+use desigma_doc::*;
+use serde_json::{json, Map, Value};
+use std::collections::BTreeMap;
+
+fn is_alias(v: &Value) -> bool {
+    fstr(v, "type") == Some("VARIABLE_ALIAS")
+}
+
+/// Finds the `{variables, variableCollections}` maps in a REST response
+/// (`{meta: {...}}`), a bare meta object, or a file with a top-level
+/// `variables` key holding either.
+fn find_payload(v: &Value) -> Option<&Value> {
+    let has_maps = |x: &Value| x.get("variableCollections").is_some_and(Value::is_object);
+    if let Some(meta) = v.get("meta").filter(|m| m.get("variables").is_some() || m.get("variableCollections").is_some()) {
+        return Some(meta);
+    }
+    if let Some(inner) = v.get("variables").filter(|x| x.is_object()) {
+        if let Some(meta) = inner.get("meta").filter(|m| m.is_object()) {
+            return Some(meta);
+        }
+        if inner.get("variableCollections").is_some() || inner.get("variables").is_some() {
+            return Some(inner);
+        }
+    }
+    if has_maps(v) {
+        return Some(v);
+    }
+    None
+}
+
+fn parse_value(ty: &str, v: &Value) -> Option<VariableValue> {
+    if is_alias(v) {
+        return Some(VariableValue::Alias(fstr(v, "id")?.to_string()));
+    }
+    Some(match ty {
+        "COLOR" => VariableValue::Color(color(v)?),
+        "FLOAT" => VariableValue::Number(v.as_f64()? as f32),
+        "STRING" => VariableValue::String(v.as_str()?.to_string()),
+        "BOOLEAN" => VariableValue::Boolean(v.as_bool()?),
+        _ => return None,
+    })
+}
+
+fn kind_of(ty: &str) -> Option<VariableKind> {
+    Some(match ty {
+        "COLOR" => VariableKind::Color,
+        "FLOAT" => VariableKind::Number,
+        "STRING" => VariableKind::String,
+        "BOOLEAN" => VariableKind::Boolean,
+        _ => return None,
+    })
+}
+
+fn type_name(k: VariableKind) -> &'static str {
+    match k {
+        VariableKind::Color => "COLOR",
+        VariableKind::Number => "FLOAT",
+        VariableKind::String => "STRING",
+        VariableKind::Boolean => "BOOLEAN",
+    }
+}
+
+/// Maps `meta.variableCollections` / `meta.variables` into `doc`, replacing
+/// whatever it had. Returns the number of variables imported.
+pub fn import_variables_value(doc: &mut Document, v: &Value) -> usize {
+    let Some(p) = find_payload(v) else { return 0 };
+    let mut collections: BTreeMap<String, VariableCollection> = BTreeMap::new();
+    let mut variables: BTreeMap<String, Variable> = BTreeMap::new();
+    let empty = Map::new();
+    let colls = p.get("variableCollections").and_then(Value::as_object).unwrap_or(&empty);
+    for (key, c) in colls {
+        let id = fstr(c, "id").unwrap_or(key).to_string();
+        let modes: Vec<VariableMode> = farr(c, "modes")
+            .iter()
+            .filter_map(|m| Some(VariableMode { id: fstr(m, "modeId")?.to_string(), name: fstr(m, "name").unwrap_or("Mode").to_string() }))
+            .collect();
+        let default_mode = fstr(c, "defaultModeId").map(String::from).or_else(|| modes.first().map(|m| m.id.clone())).unwrap_or_default();
+        collections.insert(
+            id.clone(),
+            VariableCollection {
+                id,
+                name: fstr(c, "name").unwrap_or("Collection").to_string(),
+                modes,
+                default_mode,
+                variables: farr(c, "variableIds").iter().filter_map(|s| s.as_str().map(String::from)).collect(),
+                key: fstr(c, "key").map(String::from),
+            },
+        );
+    }
+    let vars = p.get("variables").and_then(Value::as_object).unwrap_or(&empty);
+    for (key, v) in vars {
+        let id = fstr(v, "id").unwrap_or(key).to_string();
+        let Some(ty) = fstr(v, "resolvedType") else { continue };
+        let Some(kind) = kind_of(ty) else { continue };
+        let Some(coll) = fstr(v, "variableCollectionId") else { continue };
+        if !collections.contains_key(coll) {
+            continue;
+        }
+        let values = v
+            .get("valuesByMode")
+            .and_then(Value::as_object)
+            .map(|m| m.iter().filter_map(|(mode, x)| Some((mode.clone(), parse_value(ty, x)?))).collect())
+            .unwrap_or_default();
+        variables.insert(
+            id.clone(),
+            Variable {
+                id,
+                name: fstr(v, "name").unwrap_or("Variable").to_string(),
+                collection: coll.to_string(),
+                kind,
+                values,
+                description: fstr(v, "description").unwrap_or("").to_string(),
+                scopes: farr(v, "scopes").iter().filter_map(|s| s.as_str().map(String::from)).collect(),
+                hidden_from_publishing: fbool(v, "hiddenFromPublishing").unwrap_or(false),
+                key: fstr(v, "key").map(String::from),
+            },
+        );
+    }
+    // Display order: the collection's `variableIds`, then anything it left out.
+    for c in collections.values_mut() {
+        c.variables.retain(|id| variables.get(id).is_some_and(|v| v.collection == c.id));
+    }
+    for v in variables.values() {
+        if let Some(c) = collections.get_mut(&v.collection) {
+            if !c.variables.contains(&v.id) {
+                c.variables.push(v.id.clone());
+            }
+        }
+    }
+    let n = variables.len();
+    doc.variables = variables;
+    doc.variable_collections = collections;
+    n
+}
+
+/// Reads a `variables/local` response (or any shape [`import_variables_value`]
+/// accepts) from JSON text, e.g. a file opened alongside the design.
+pub fn import_variables_json(doc: &mut Document, json: &str) -> Result<usize, FigError> {
+    let v = crate::rest_import::parse_json_text(json)?;
+    if find_payload(&v).is_none() {
+        return Err(FigError::Format("no `meta.variables` / `variableCollections` in JSON".into()));
+    }
+    Ok(import_variables_value(doc, &v))
+}
+
+fn value_json(v: &VariableValue) -> Value {
+    match v {
+        VariableValue::Color(c) => json!({"r": c.r, "g": c.g, "b": c.b, "a": c.a}),
+        VariableValue::Number(n) => json!(n),
+        VariableValue::String(s) => json!(s),
+        VariableValue::Boolean(b) => json!(b),
+        VariableValue::Alias(id) => json!({"type": "VARIABLE_ALIAS", "id": id}),
+    }
+}
+
+/// `{variables, variableCollections}` as in a response's `meta`.
+pub fn export_variables_meta(doc: &Document) -> Value {
+    let mut vars = Map::new();
+    for v in doc.variables.values() {
+        let mut m = Map::new();
+        m.insert("id".into(), v.id.clone().into());
+        m.insert("name".into(), v.name.clone().into());
+        if let Some(k) = &v.key {
+            m.insert("key".into(), k.clone().into());
+        }
+        m.insert("variableCollectionId".into(), v.collection.clone().into());
+        m.insert("resolvedType".into(), type_name(v.kind).into());
+        m.insert("valuesByMode".into(), Value::Object(v.values.iter().map(|(k, x)| (k.clone(), value_json(x))).collect()));
+        m.insert("remote".into(), false.into());
+        m.insert("description".into(), v.description.clone().into());
+        m.insert("hiddenFromPublishing".into(), v.hidden_from_publishing.into());
+        m.insert("scopes".into(), json!(if v.scopes.is_empty() { vec!["ALL_SCOPES".to_string()] } else { v.scopes.clone() }));
+        m.insert("codeSyntax".into(), json!({}));
+        vars.insert(v.id.clone(), Value::Object(m));
+    }
+    let mut colls = Map::new();
+    for c in doc.variable_collections.values() {
+        let mut m = Map::new();
+        m.insert("id".into(), c.id.clone().into());
+        m.insert("name".into(), c.name.clone().into());
+        if let Some(k) = &c.key {
+            m.insert("key".into(), k.clone().into());
+        }
+        m.insert("modes".into(), Value::Array(c.modes.iter().map(|x| json!({"modeId": x.id, "name": x.name})).collect()));
+        m.insert("defaultModeId".into(), c.default_mode.clone().into());
+        m.insert("remote".into(), false.into());
+        m.insert("hiddenFromPublishing".into(), false.into());
+        m.insert("variableIds".into(), json!(c.variables));
+        colls.insert(c.id.clone(), Value::Object(m));
+    }
+    json!({"variables": vars, "variableCollections": colls})
+}
+
+/// Full `GET /v1/files/:key/variables/local` response body.
+pub fn export_variables_json(doc: &Document) -> Value {
+    json!({"status": 200, "error": false, "meta": export_variables_meta(doc)})
+}
+
+// ------------------------------------------------------------ node bindings
+
+fn collect_aliases(v: &Value, key: String, out: &mut BTreeMap<String, String>) {
+    if is_alias(v) {
+        if let Some(id) = fstr(v, "id") {
+            out.insert(key, id.to_string());
+        }
+        return;
+    }
+    match v {
+        Value::Array(a) => a.iter().enumerate().for_each(|(i, e)| collect_aliases(e, format!("{key}/{i}"), out)),
+        Value::Object(o) => o.iter().for_each(|(k, e)| collect_aliases(e, format!("{key}/{k}"), out)),
+        _ => {}
+    }
+}
+
+/// `boundVariables` and `explicitVariableModes` of a REST node.
+pub(crate) fn parse_node_variables(v: &Value) -> NodeVariables {
+    let mut nv = NodeVariables::default();
+    if let Some(b) = v.get("boundVariables").and_then(Value::as_object) {
+        let mut raw = BTreeMap::new();
+        for (k, e) in b {
+            collect_aliases(e, k.clone(), &mut raw);
+        }
+        for (k, id) in raw {
+            let k = match k.as_str() {
+                "size/x" => "width".to_string(),
+                "size/y" => "height".to_string(),
+                _ => k,
+            };
+            nv.bindings.insert(k, id);
+        }
+    }
+    if let Some(m) = v.get("explicitVariableModes").and_then(Value::as_object) {
+        for (c, mode) in m {
+            if let Some(mode) = mode.as_str() {
+                nv.modes.insert(c.clone(), mode.to_string());
+            }
+        }
+    }
+    nv
+}
+
+fn put(root: &mut Value, path: &[&str], leaf: Value) {
+    let Some((first, rest)) = path.split_first() else { return };
+    let idx = first.parse::<usize>().ok();
+    if let Some(i) = idx {
+        if !root.is_array() {
+            *root = Value::Array(Vec::new());
+        }
+        let a = root.as_array_mut().unwrap();
+        while a.len() <= i {
+            a.push(Value::Null);
+        }
+        if rest.is_empty() {
+            a[i] = leaf;
+        } else {
+            put(&mut a[i], rest, leaf);
+        }
+    } else {
+        if !root.is_object() {
+            *root = Value::Object(Map::new());
+        }
+        let o = root.as_object_mut().unwrap();
+        let slot = o.entry(first.to_string()).or_insert(Value::Null);
+        if rest.is_empty() {
+            *slot = leaf;
+        } else {
+            put(slot, rest, leaf);
+        }
+    }
+}
+
+/// Writes `boundVariables` / `explicitVariableModes` for a node.
+pub(crate) fn export_node_variables(node: &Node, m: &mut Map<String, Value>) {
+    if !node.variables.bindings.is_empty() {
+        let mut root = Value::Object(Map::new());
+        for (k, id) in &node.variables.bindings {
+            let key = match k.as_str() {
+                "width" => "size/x",
+                "height" => "size/y",
+                other => other,
+            };
+            let parts: Vec<&str> = key.split('/').collect();
+            put(&mut root, &parts, json!({"type": "VARIABLE_ALIAS", "id": id}));
+        }
+        m.insert("boundVariables".into(), root);
+    }
+    if !node.variables.modes.is_empty() {
+        m.insert("explicitVariableModes".into(), json!(node.variables.modes));
+    }
+}
+
+// ------------------------------------------------------------ .fig
+
+fn guid(v: &Value) -> Option<String> {
+    let g = v.get("guid").unwrap_or(v);
+    Some(format!("{}:{}", g.get("sessionID")?.as_u64()?, g.get("localID")?.as_u64()?))
+}
+
+fn fig_value(ty: &str, v: &Value) -> Option<Value> {
+    if let Some(a) = v.get("alias") {
+        return Some(json!({"type": "VARIABLE_ALIAS", "id": format!("VariableID:{}", guid(a)?)}));
+    }
+    match ty {
+        "COLOR" => v.get("colorValue").cloned(),
+        "FLOAT" => v.get("floatValue").cloned(),
+        "STRING" => v.get("textValue").cloned(),
+        "BOOLEAN" => v.get("boolValue").cloned(),
+        _ => None,
+    }
+}
+
+/// Builds a REST-shaped variables payload from the `VARIABLE_SET` and
+/// `VARIABLE` node changes of a `.fig` message (given as JSON). Field names
+/// are best-effort; anything that does not match is skipped.
+pub(crate) fn from_fig_entries(entries: &[&Value]) -> Option<Value> {
+    let mut colls = Map::new();
+    let mut vars = Map::new();
+    for e in entries {
+        if fstr(e, "type") != Some("VARIABLE_SET") {
+            continue;
+        }
+        let Some(gid) = e.get("guid").and_then(guid) else { continue };
+        let id = format!("VariableCollectionId:{gid}");
+        let modes: Vec<Value> =
+            farr(e, "variableSetModes").iter().filter_map(|m| Some(json!({"modeId": guid(m.get("id")?)?, "name": fstr(m, "name").unwrap_or("Mode")}))).collect();
+        let default = modes.first().and_then(|m| m.get("modeId")).cloned().unwrap_or(Value::Null);
+        colls.insert(id.clone(), json!({"id": id, "name": fstr(e, "name").unwrap_or("Collection"), "modes": modes, "defaultModeId": default, "variableIds": []}));
+    }
+    for e in entries {
+        if fstr(e, "type") != Some("VARIABLE") {
+            continue;
+        }
+        let Some(gid) = e.get("guid").and_then(guid) else { continue };
+        let Some(set) = e.get("variableSetID").and_then(guid) else { continue };
+        let cid = format!("VariableCollectionId:{set}");
+        let Some(ty) = fstr(e, "variableResolvedType").or_else(|| fstr(e, "variableDataType")) else { continue };
+        let mut by_mode = Map::new();
+        let list = e.get("variableDataValues").map(|d| farr(d, "entries")).unwrap_or(&[]);
+        for ent in list {
+            let (Some(mode), Some(data)) = (ent.get("modeID").and_then(guid), ent.get("variableData")) else { continue };
+            let Some(val) = data.get("value").and_then(|x| fig_value(ty, x)) else { continue };
+            by_mode.insert(mode, val);
+        }
+        let id = format!("VariableID:{gid}");
+        if let Some(c) = colls.get_mut(&cid).and_then(|c| c.get_mut("variableIds")).and_then(Value::as_array_mut) {
+            c.push(json!(id));
+        } else {
+            continue;
+        }
+        vars.insert(
+            id.clone(),
+            json!({"id": id, "name": fstr(e, "name").unwrap_or("Variable"), "variableCollectionId": cid, "resolvedType": ty,
+                   "valuesByMode": by_mode, "scopes": e.get("variableScopes").cloned().unwrap_or(json!([])),
+                   "description": fstr(e, "description").unwrap_or(""), "hiddenFromPublishing": false}),
+        );
+    }
+    (!colls.is_empty()).then(|| json!({"variables": vars, "variableCollections": colls}))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fig_variable_nodes_map_tolerantly() {
+        let set = json!({"type": "VARIABLE_SET", "guid": {"sessionID": 1, "localID": 5}, "name": "Theme",
+            "variableSetModes": [{"id": {"sessionID": 1, "localID": 6}, "name": "Light"}, {"id": {"sessionID": 1, "localID": 7}, "name": "Dark"}]});
+        let var = json!({"type": "VARIABLE", "guid": {"sessionID": 1, "localID": 9}, "name": "Bg", "variableResolvedType": "FLOAT",
+            "variableSetID": {"guid": {"sessionID": 1, "localID": 5}},
+            "variableDataValues": {"entries": [
+                {"modeID": {"sessionID": 1, "localID": 6}, "variableData": {"value": {"floatValue": 4.0}}},
+                {"modeID": {"sessionID": 1, "localID": 7}, "variableData": {"value": {"alias": {"guid": {"sessionID": 1, "localID": 9}}}}}]}});
+        let junk = json!({"type": "VARIABLE", "guid": {"sessionID": 1, "localID": 10}});
+        let payload = from_fig_entries(&[&set, &var, &junk]).unwrap();
+        let mut doc = Document::new("d");
+        assert_eq!(import_variables_value(&mut doc, &json!({ "variables": payload })), 1);
+        let c = &doc.variable_collections["VariableCollectionId:1:5"];
+        assert_eq!((c.modes.len(), c.default_mode.as_str()), (2, "1:6"));
+        let v = &doc.variables["VariableID:1:9"];
+        assert_eq!(v.values["1:6"], VariableValue::Number(4.0));
+        assert_eq!(v.values["1:7"], VariableValue::Alias("VariableID:1:9".into()));
+        assert!(from_fig_entries(&[]).is_none());
+    }
+}

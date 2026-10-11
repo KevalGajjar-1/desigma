@@ -119,11 +119,16 @@ pub(crate) fn message_to_rest(msg: &KiwiValue, name: &str) -> Value {
         })
         .collect();
 
-    json!({
+    let var_entries: Vec<&Value> = entries.iter().map(|e| &e.json).filter(|j| matches!(fstr(j, "type"), Some("VARIABLE_SET" | "VARIABLE"))).collect();
+    let mut out = json!({
         "name": name,
         "document": {"id": "0:0", "name": "Document", "type": "DOCUMENT", "children": pages},
         "styles": style_table(&entries),
-    })
+    });
+    if let (Some(v), Some(o)) = (crate::variables::from_fig_entries(&var_entries), out.as_object_mut()) {
+        o.insert("variables".into(), v);
+    }
+    out
 }
 
 /// REST-style `styles` map from shared-style nodes (nodes carrying `styleType`
