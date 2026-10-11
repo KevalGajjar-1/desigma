@@ -263,6 +263,12 @@ struct Ctx {
     pending_swaps: Vec<(NodeId, String, String, bool)>,
     /// REST `overrides` entries: (instance, node id inside it, field names).
     rest_overrides: Vec<(NodeId, String, Vec<String>)>,
+    /// Prototype data to resolve once every node id is known.
+    proto: Vec<(NodeId, Value)>,
+    /// Overlay presentation of potential overlay destinations, by REST id.
+    overlay_props: BTreeMap<String, Value>,
+    /// `flowStartingPoints` of each page.
+    flow_pages: Vec<(NodeId, Value)>,
 }
 
 /// Overrides carried on `.fig` instance JSON as `_overrides` / `_derived`:
@@ -356,6 +362,9 @@ pub(crate) fn import_rest_value(v: &Value, expand_instances: bool) -> Result<Doc
         next_clone: 0,
         pending_swaps: Vec::new(),
         rest_overrides: Vec::new(),
+        proto: Vec::new(),
+        overlay_props: BTreeMap::new(),
+        flow_pages: Vec::new(),
     };
     if let Some(comps) = v.get("components").and_then(Value::as_object) {
         for (id, c) in comps {
@@ -387,6 +396,9 @@ impl Ctx {
             n.kind = NodeKind::Page { background: bg.with_alpha(1.0) };
             n.source_id = fstr(v, "id").map(String::from);
         }
+        if let Some(fl) = v.get("flowStartingPoints") {
+            self.flow_pages.push((pid, serde_json::json!({ "flowStartingPoints": fl })));
+        }
         let info = ParentInfo { origin: Vec2::ZERO, layout: None };
         for c in farr(v, "children") {
             self.import_node(c, pid, info, 0);
@@ -407,11 +419,25 @@ impl Ctx {
         if let Some(src) = &node.source_id {
             self.ids.insert(src.clone(), id);
         }
+        crate::proto::apply_scroll(&mut node, v);
         let is_instance = matches!(node.kind, NodeKind::Instance { .. });
         let origin = abs_origin(v).unwrap_or(pinfo.origin);
         let container = node.kind.is_container();
         if self.doc.insert(parent, node).is_err() {
             return;
+        }
+        if let Some(raw) = crate::proto::collect(v) {
+            self.proto.push((id, raw));
+        }
+        if let Some(o) = crate::proto::collect_overlay(v) {
+            if let Some(src) = fstr(v, "id") {
+                self.overlay_props.insert(src.to_string(), o);
+            }
+        }
+        if crate::proto::is_fixed(v) {
+            if let Some(p) = self.doc.get_mut(parent) {
+                p.prototype.fixed_children.push(id);
+            }
         }
         if is_instance {
             if let Some(cid) = fstr(v, "componentId") {
@@ -698,6 +724,7 @@ impl Ctx {
         self.resolve_swaps();
         if !expand_instances {
             self.apply_rest_overrides();
+            self.resolve_proto();
             return;
         }
         // Clone ids are handed out sequentially above every imported id, in
@@ -714,6 +741,26 @@ impl Ctx {
             self.apply_overrides(inst);
         }
         self.apply_rest_overrides();
+        self.resolve_proto();
+    }
+
+    /// Maps collected prototype data (REST ids) onto the imported nodes.
+    fn resolve_proto(&mut self) {
+        let res = crate::proto::Resolver { ids: &self.ids, overlay: &self.overlay_props };
+        let mut reactions = Vec::new();
+        for (id, raw) in std::mem::take(&mut self.proto) {
+            reactions.push((id, res.reactions(&raw)));
+        }
+        let mut flows = Vec::new();
+        for (page, canvas) in std::mem::take(&mut self.flow_pages) {
+            flows.extend(res.flows(page, &canvas));
+        }
+        for (id, r) in reactions {
+            if let Some(n) = self.doc.get_mut(id) {
+                n.prototype.reactions = r;
+            }
+        }
+        self.doc.flows.extend(flows);
     }
 
     /// Sets `ComponentLink::source` on the children REST already inlined under

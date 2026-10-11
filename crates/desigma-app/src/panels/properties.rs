@@ -137,7 +137,7 @@ fn segmented(ui: &mut Ui, pane: &Pane, x: f32, key: &str, items: &[Icon], select
     out
 }
 
-fn checkbox(ui: &mut Ui, pane: &mut Pane, key: &str, label: &str, value: bool) -> Option<bool> {
+pub(super) fn checkbox(ui: &mut Ui, pane: &mut Pane, key: &str, label: &str, value: bool) -> Option<bool> {
     let r = pane.rect(theme::SECTION_CONTENT_X, 0.0, theme::SECTION_CONTENT_W, theme::FIELD_HEIGHT);
     let resp = ui.interact(r, ui.id().with(("chk", key)), Sense::click());
     let b = Rect::from_min_size(Pos2::new(r.left(), r.center().y - 7.0), Vec2::splat(14.0));
@@ -1077,7 +1077,7 @@ fn convert_effect(e: &Effect, kind: usize) -> Effect {
 }
 
 // ---------------------------------------------------------------- color picker
-fn open_picker(app: &mut App, target: PickTarget, color: Color32, anchor: Rect, ids: Vec<NodeId>) {
+pub(super) fn open_picker(app: &mut App, target: PickTarget, color: Color32, anchor: Rect, ids: Vec<NodeId>) {
     app.props.picker = Some(Picker { target, tx: Tx::new(), color, anchor, ids });
 }
 
@@ -1115,7 +1115,7 @@ fn apply_picker(doc: &mut Document, p: &mut Picker) {
     }
 }
 
-fn picker_popup(app: &mut App, ui: &mut Ui, region: Rect) {
+pub(super) fn picker_popup(app: &mut App, ui: &mut Ui, region: Rect) {
     let Some(mut pk) = app.props.picker.take() else { return };
     let ctx = ui.ctx().clone();
     let pos = Pos2::new(region.left() - 232.0, (pk.anchor.top() - 20.0).max(region.top() - 40.0));

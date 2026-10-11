@@ -9,7 +9,13 @@ license.workspace = true
 name = "desigma"
 path = "src/main.rs"
 
+[features]
+default = ["open-url"]
+# Opens Present links in the system browser (after a confirmation).
+open-url = ["dep:open"]
+
 [dependencies]
+open = { version = "5", optional = true }
 desigma-doc.workspace = true
 desigma-render.workspace = true
 desigma-fig.workspace = true

@@ -6,6 +6,7 @@ pub mod draw;
 pub mod handles;
 pub mod hit;
 pub mod interact;
+pub mod proto;
 pub mod reorder;
 pub mod snap;
 pub mod tiles;
@@ -176,12 +177,18 @@ pub fn show(app: &mut App, ui: &mut Ui, rect: ERect) {
     }
     tiles::paint(app, ui, rect);
     let resp = ui.interact(rect, ui.id().with("canvas"), Sense::click_and_drag());
-    interact::process(app, ui, rect, &resp);
+    if !proto::process(app, ui, rect, &resp) {
+        interact::process(app, ui, rect, &resp);
+    }
     draw::overlays(app, ui, rect);
+    proto::overlays(app, ui, rect);
     crate::panels::inspect::measure_overlay(app, ui, rect);
     if resp.hovered() || !matches!(app.canvas.inter, Interaction::None) {
         if let Some(c) = app.canvas.cursor {
             ui.ctx().set_cursor_icon(c);
         }
+    }
+    if proto::active(app) && (app.proto.hot.is_some() || app.proto.connect.is_some()) {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
     }
 }

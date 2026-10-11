@@ -11,6 +11,11 @@ use crate::icons::{self, Icon};
 use crate::theme;
 use egui::{Align2, Color32, CornerRadius, FontId, Id, Painter, Pos2, Rect, Response, Sense, Stroke, StrokeKind, Ui, Vec2};
 
+/// True while the pointer is over a popup or menu (anything drawn as a foreground area).
+pub fn pointer_over_popup(ctx: &egui::Context) -> bool {
+    ctx.input(|i| i.pointer.latest_pos()).is_some_and(|p| ctx.layer_id_at(p).is_some_and(|l| l.order == egui::Order::Foreground))
+}
+
 /// Width of a string in the given font.
 pub fn text_width(p: &Painter, s: &str, font: &FontId) -> f32 {
     p.layout_no_wrap(s.to_string(), font.clone(), Color32::WHITE).size().x

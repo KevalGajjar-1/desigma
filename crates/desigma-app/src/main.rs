@@ -11,6 +11,8 @@ mod io;
 mod layout;
 mod ops;
 mod panels;
+mod present;
+mod proto;
 mod shell;
 mod styles;
 mod textmeasure;

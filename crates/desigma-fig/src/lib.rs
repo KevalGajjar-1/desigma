@@ -13,6 +13,7 @@
 pub mod container;
 mod export;
 mod fig;
+mod proto;
 pub mod kiwi;
 #[cfg(feature = "net")]
 pub mod rest;
@@ -23,6 +24,7 @@ pub mod testkit;
 
 pub use desigma_doc::Document;
 pub use export::export_rest_json;
+pub use proto::{key_code, key_name};
 pub use fig::{commands_blob_to_path, decode_fig_to_json, import_fig};
 pub use rest_import::{image_refs, import_rest_json};
 

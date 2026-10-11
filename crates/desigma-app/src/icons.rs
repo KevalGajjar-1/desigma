@@ -77,6 +77,8 @@ pub enum Icon {
     Rotate90,
     FlipH,
     FlipV,
+    Flag,
+    Play,
 }
 
 struct G<'a> {
@@ -207,6 +209,11 @@ pub fn paint(p: &Painter, icon: Icon, center: Pos2, size: f32, col: Color32) {
         Icon::Page => {
             g.poly(&[(4.0, 2.0), (9.5, 2.0), (12.0, 4.5), (12.0, 14.0), (4.0, 14.0)], true);
         }
+        Icon::Flag => {
+            g.line((4.0, 2.0), (4.0, 14.5));
+            g.fill_poly(&[(4.0, 2.5), (12.5, 5.0), (4.0, 8.0)]);
+        }
+        Icon::Play => g.fill_poly(&[(4.5, 2.5), (13.0, 8.0), (4.5, 13.5)]),
         Icon::Check => g.poly(&[(3.0, 8.5), (6.5, 12.0), (13.0, 4.5)], false),
         Icon::Move => g.fill_poly(&[(3.5, 2.0), (3.5, 12.5), (6.3, 9.8), (8.3, 14.0), (10.2, 13.1), (8.3, 9.0), (12.0, 9.0)]),
         Icon::Hand => {

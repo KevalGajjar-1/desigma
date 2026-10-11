@@ -175,7 +175,8 @@ pub fn show(app: &mut App, ui: &mut Ui, screen: Rect) {
             Vec2::new(theme::MODE_SWITCH_W, theme::TOOL_BUTTON - theme::MODE_SWITCH_PAD * 2.0),
         );
         let resp = ui.interact(r, ui.id().with(("mode", i)), Sense::click());
-        let sel = if app.ui.dev_mode { i == 3 } else { i == 1 };
+        let proto_mode = app.ui.right_tab == Some(crate::app::RightTab::Prototype);
+        let sel = if app.ui.dev_mode { i == 3 } else if proto_mode { i == 2 } else { i == 1 };
         if sel {
             // Active segment: darker inset tile.
             p.rect_filled(r, theme::cr(theme::MODE_TILE_RADIUS), theme::BG_TOOLBAR);
@@ -185,8 +186,18 @@ pub fn show(app: &mut App, ui: &mut Ui, screen: Rect) {
         icons::paint(&p, icon, r.center(), 16.0, if sel { theme::ICON_SELECTED } else { theme::ICON_SECONDARY });
         if resp.on_hover_text(label).clicked() {
             match i {
-                1 => app.ui.dev_mode = false,
-                3 => app.ui.dev_mode = true,
+                1 => {
+                    app.ui.dev_mode = false;
+                    app.ui.right_tab = Some(crate::app::RightTab::Design);
+                }
+                2 => {
+                    app.ui.dev_mode = false;
+                    app.ui.right_tab = Some(crate::app::RightTab::Prototype);
+                }
+                3 => {
+                    app.ui.dev_mode = true;
+                    app.ui.right_tab = Some(crate::app::RightTab::Design);
+                }
                 _ => app.show_toast(format!("{label} mode is not available yet"), false),
             }
         }

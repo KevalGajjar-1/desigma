@@ -159,6 +159,7 @@ pub fn demo_document() -> Document {
     }
 
     components_demo(&mut d, page, brand);
+    prototype_demo(&mut d, page, brand, ink);
 
     let mut ed = Edit::new();
     layout::layout_node(&mut d, &mut ed, card);
@@ -236,6 +237,45 @@ fn components_demo(d: &mut Document, page: NodeId, brand: Color) {
     }
 }
 
+/// Two-screen prototype: the Welcome button navigates to Dashboard with Smart
+/// Animate (layers shared by name morph), Dashboard's button goes back, and a
+/// flow starts at Welcome.
+fn prototype_demo(d: &mut Document, page: NodeId, brand: Color, ink: Color) {
+    let find = |d: &Document, name: &str| d.nodes.values().find(|n| n.name == name && n.parent == Some(page)).map(|n| n.id);
+    let (Some(welcome), Some(dash)) = (find(d, "Welcome"), find(d, "Dashboard")) else { return };
+    let welcome_btn = d.get(welcome).and_then(|w| w.children.iter().copied().find(|c| d.get(*c).is_some_and(|n| n.name == "Button")));
+    let Some(welcome_btn) = welcome_btn else { return };
+
+    // The Welcome button owns its label so a click on the text counts as a click on the button.
+    if let Some(label) = d.get(welcome).and_then(|w| w.children.iter().copied().find(|c| d.get(*c).is_some_and(|n| n.name == "Continue"))) {
+        let origin = d.get(welcome_btn).map(|b| b.transform.translation()).unwrap_or(Vec2::ZERO);
+        if let Some(b) = d.get_mut(welcome_btn) {
+            b.kind = NodeKind::Frame(FrameProps::default());
+        }
+        d.reparent(label, welcome_btn, 0).expect("label into button");
+        if let Some(l) = d.get_mut(label) {
+            l.transform = Affine::translate(l.transform.tx - origin.x, l.transform.ty - origin.y);
+        }
+    }
+
+    // Layers with the same names as on Welcome so Smart Animate has something to morph.
+    let id = d.alloc_id();
+    let hero = shape(d, dash, Node::rectangle(id, Rect::new(0.0, 0.0, 640.0, 120.0)), "Hero", 0.0);
+    d.get_mut(hero).unwrap().fills = vec![Paint::solid(brand)];
+    d.reparent(hero, dash, 0).expect("hero behind the tiles");
+    let id = d.alloc_id();
+    let btn = shape(d, dash, Node::frame(id, Rect::new(464.0, 336.0, 152.0, 44.0)), "Button", 8.0);
+    d.get_mut(btn).unwrap().fills = vec![Paint::solid(ink)];
+    let label = txt(d, btn, 40.0, 12.0, "Back", 16.0, 500, Color::WHITE);
+    d.get_mut(label).unwrap().name = "Continue".into();
+
+    let smart = Transition { kind: TransitionKind::SmartAnimate, easing: Easing::EaseInOut, duration_ms: 400 };
+    let go = |dest| Reaction { trigger: Trigger::OnClick, actions: vec![Action::Navigate { dest, preserve_scroll: false }], transition: Some(smart) };
+    d.get_mut(welcome_btn).unwrap().prototype.reactions.push(go(dash));
+    d.get_mut(btn).unwrap().prototype.reactions.push(go(welcome));
+    d.flows.push(Flow { name: "Flow 1".into(), page, start: welcome, description: String::new() });
+}
+
 fn theme_page_bg() -> u32 {
     theme::DEFAULT_PAGE_BG
 }
@@ -252,5 +292,21 @@ mod tests {
         assert!(card.size.y > 60.0, "card hugs its children vertically");
         let kids: Vec<f32> = card.children.iter().map(|c| d.get(*c).unwrap().transform.ty).collect();
         assert!(kids.windows(2).all(|w| w[1] > w[0]));
+    }
+
+    #[test]
+    fn demo_has_a_two_screen_prototype() {
+        let d = demo_document();
+        let by = |n: &str| d.nodes.values().find(|x| x.name == n).unwrap();
+        let (welcome, dash) = (by("Welcome").id, by("Dashboard").id);
+        assert_eq!(d.flows.len(), 1);
+        assert_eq!(d.flows[0].start, welcome);
+        let btn = d.get(welcome).unwrap().children.iter().map(|c| d.get(*c).unwrap()).find(|n| n.name == "Button").unwrap();
+        let r = &btn.prototype.reactions[0];
+        assert_eq!(r.trigger, Trigger::OnClick);
+        assert_eq!(r.actions, vec![Action::Navigate { dest: dash, preserve_scroll: false }]);
+        assert_eq!(r.transition.unwrap().kind, TransitionKind::SmartAnimate);
+        let dash_btn = d.get(dash).unwrap().children.iter().map(|c| d.get(*c).unwrap()).find(|n| n.name == "Button").unwrap();
+        assert!(matches!(dash_btn.prototype.reactions[0].actions[0], Action::Navigate { dest, .. } if dest == welcome));
     }
 }

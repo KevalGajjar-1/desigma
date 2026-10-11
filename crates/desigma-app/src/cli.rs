@@ -13,6 +13,10 @@ pub struct Options {
     pub menu: Option<String>,
     /// Built-in test document instead of the demo (`no-selection`: the Figma page-level reference).
     pub fixture: Option<String>,
+    /// Right panel tab to show: `design` or `prototype`.
+    pub tab: Option<String>,
+    /// Open the Present view on start.
+    pub present: bool,
     pub help: bool,
 }
 
@@ -35,6 +39,14 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Options, String> 
             "--select" => o.select = Some(it.next().ok_or("--select needs a layer name")?),
             "--menu" => o.menu = Some(it.next().ok_or("--menu needs a name (main, main/File, shape, palette)")?),
             "--fixture" => o.fixture = Some(it.next().ok_or("--fixture needs a name (no-selection)")?),
+            "--tab" => {
+                let t = it.next().ok_or("--tab needs design or prototype")?;
+                if !matches!(t.as_str(), "design" | "prototype") {
+                    return Err(format!("unknown tab '{t}' (expected design or prototype)"));
+                }
+                o.tab = Some(t);
+            }
+            "--present" => o.present = true,
             "-h" | "--help" => o.help = true,
             s if s.starts_with("--") => return Err(format!("unknown option {s}")),
             _ => {
@@ -80,9 +92,18 @@ mod tests {
         assert!(p(&["--screenshot"]).is_err());
         assert!(p(&["--bogus"]).is_err());
         assert!(p(&["--menu"]).is_err());
+        assert!(p(&["--tab", "nope"]).is_err());
+        assert!(p(&["--tab"]).is_err());
         assert!(p(&["a", "b"]).is_err());
         assert_eq!(parse_size("1440X900"), Some((1440, 900)));
         assert_eq!(parse_size("10x10"), None);
+    }
+
+    #[test]
+    fn parses_tab_and_present() {
+        let o = p(&["--tab", "prototype", "--present"]).unwrap();
+        assert_eq!(o.tab.as_deref(), Some("prototype"));
+        assert!(o.present);
     }
 
     #[test]
