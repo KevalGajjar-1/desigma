@@ -9,6 +9,7 @@ pub mod interact;
 pub mod proto;
 pub mod reorder;
 pub mod snap;
+pub mod textsession;
 pub mod tiles;
 pub mod tools;
 pub mod vector;
@@ -89,16 +90,12 @@ pub enum Interaction {
     VectorDrag,
 }
 
+pub use textsession::TextSession;
+
 pub struct PenState {
     pub pts: Vec<create::PenPoint>,
 }
 
-pub struct TextSession {
-    pub id: NodeId,
-    pub caret: usize,
-    pub tx: Tx,
-    pub created: bool,
-}
 
 #[derive(Default)]
 pub struct CanvasState {

@@ -128,6 +128,17 @@ pub fn register_font(data: Vec<u8>) {
     with_fonts(|_| ());
 }
 
+/// Family names available to text layout (bundled, system and registered fonts),
+/// sorted case-insensitively without duplicates. Used by font pickers.
+pub fn available_families() -> Vec<String> {
+    with_fonts(|f| {
+        let mut names: Vec<String> = f.fs.db().faces().filter_map(|face| face.families.first().map(|(n, _)| n.clone())).collect();
+        names.sort_by_key(|n| n.to_lowercase());
+        names.dedup_by(|a, b| a.eq_ignore_ascii_case(b));
+        names
+    })
+}
+
 /// Compatible alias of [`register_font`].
 pub fn load_font_data(data: Vec<u8>) {
     register_font(data)

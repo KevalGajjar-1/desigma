@@ -2,7 +2,7 @@
 //! badge, guides, marquee, pen preview and the text caret.
 
 use super::handles::Handle;
-use super::interact::{selection_box, text_wrap_width};
+use super::interact::selection_box;
 use super::snap::GuideAxis;
 use super::*;
 use crate::theme;
@@ -214,10 +214,20 @@ pub fn overlays(app: &App, ui: &Ui, rect: ERect) {
         if let Some(n) = app.doc.get(sess.id) {
             if let NodeKind::Text(t) = &n.kind {
                 let w = app.doc.world_transform(sess.id);
-                let (x, y, lh) = crate::textmeasure::caret_rect(t, text_wrap_width(t, n.size), sess.caret);
+                for (x, y, rw, rh) in crate::textmeasure::selection_rects(t, n.size, sess.range()) {
+                    let quad = [v2(x, y), v2(x + rw, y), v2(x + rw, y + rh), v2(x, y + rh)].map(|c| to_s(w.apply(c)));
+                    p.add(egui::Shape::convex_polygon(quad.to_vec(), theme::TEXT_SELECTION, Stroke::NONE));
+                }
+                let (x, y, lh) = crate::textmeasure::caret_rect(t, n.size, sess.caret);
                 let a = to_s(w.apply(v2(x, y)));
                 let b = to_s(w.apply(v2(x, y + lh)));
-                let blink = (ui.input(|i| i.time) * 2.0) as i64 % 2 == 0;
+                // Tell the platform where the caret is so IME candidate windows follow it.
+                if let Some(cr) = super::textsession::caret_screen_rect(app, rect.min) {
+                    ui.ctx().output_mut(|o| {
+                        o.ime = Some(egui::output::IMEOutput { rect: ERect::from_min_max(to_s(w.apply(v2(0.0, 0.0))), to_s(w.apply(v2(n.size.x, n.size.y)))), cursor_rect: cr, should_interrupt_composition: false })
+                    });
+                }
+                let blink = sess.range().is_empty() && (ui.input(|i| i.time) * 2.0) as i64 % 2 == 0;
                 if blink {
                     p.line_segment([a, b], Stroke::new(theme::TEXT_CARET_WIDTH, if light { Color32::BLACK } else { Color32::WHITE }));
                 }

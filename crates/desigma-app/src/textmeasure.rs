@@ -1,240 +1,163 @@
-//! Real text measurement for the editor (caret placement, auto-resize).
+//! Text measurement and caret geometry for the editor.
 //!
-//! `desigma_render` keeps its text layout private, so the app shapes text with
-//! cosmic-text directly, using the same font set as the renderer: the bundled
-//! Inter plus system fonts and anything registered at runtime.
+//! Everything is derived from `desigma_render::text_geometry`, which shapes
+//! with exactly the same code as the renderer (same fonts, runs, case, wrap),
+//! so carets and selections line up with the drawn glyphs. Positions are
+//! UTF-8 byte offsets into `TextProps::content` and node-local pixels.
 
-use cosmic_text::{fontdb, Align, Attrs, Buffer, Family, FontSystem, Hinting, Metrics, Shaping, Style, Weight, Wrap};
 use desigma_doc as d;
 use desigma_doc::{TextProps, Vec2};
-use std::cell::RefCell;
-use std::collections::HashSet;
-use std::sync::Arc;
-
-struct Fonts {
-    fs: FontSystem,
-    families: HashSet<String>,
-}
-
-thread_local! {
-    static FONTS: RefCell<Option<Fonts>> = const { RefCell::new(None) };
-}
-
-fn family_names(fs: &FontSystem) -> HashSet<String> {
-    fs.db().faces().flat_map(|f| f.families.iter().map(|(n, _)| n.to_lowercase())).collect()
-}
-
-fn init() -> Fonts {
-    let mut db = fontdb::Database::new();
-    let mut bundled = HashSet::new();
-    let mut owned = HashSet::new();
-    for asset in desigma_fonts::bundled() {
-        owned.insert(asset.family.to_lowercase());
-        bundled.extend(db.load_font_source(fontdb::Source::Binary(Arc::new(asset.data))));
-    }
-    db.load_system_fonts();
-    let shadowed: Vec<fontdb::ID> = db
-        .faces()
-        .filter(|f| !bundled.contains(&f.id) && f.families.iter().any(|(n, _)| owned.contains(&n.to_lowercase())))
-        .map(|f| f.id)
-        .collect();
-    for id in shadowed {
-        db.remove_face(id);
-    }
-    db.set_sans_serif_family("Inter");
-    let fs = FontSystem::new_with_locale_and_db("en-US".to_string(), db);
-    let families = family_names(&fs);
-    Fonts { fs, families }
-}
-
-fn with_fonts<R>(f: impl FnOnce(&mut Fonts) -> R) -> R {
-    FONTS.with(|cell| {
-        let mut slot = cell.borrow_mut();
-        let fonts = slot.get_or_insert_with(init);
-        f(fonts)
-    })
-}
-
-/// Makes a font fetched at runtime known to the measurer (mirrors `desigma_render::register_font`).
-pub fn register_font(data: Vec<u8>) {
-    with_fonts(|f| {
-        f.fs.db_mut().load_font_data(data);
-        f.families = family_names(&f.fs);
-    });
-}
-
-fn family_for(fonts: &Fonts, requested: &str) -> Option<String> {
-    if fonts.families.contains(&requested.to_lowercase()) {
-        return Some(requested.to_string());
-    }
-    let sub = desigma_fonts::substitute(requested)?;
-    fonts.families.contains(&sub.to_lowercase()).then(|| sub.to_string())
-}
-
-fn auto_ratio(fonts: &mut Fonts, st: &d::TextStyle, family: Option<&str>) -> f32 {
-    let fam = match family {
-        Some(n) => fontdb::Family::Name(n),
-        None => fontdb::Family::SansSerif,
-    };
-    let q = fontdb::Query {
-        families: &[fam],
-        weight: fontdb::Weight(st.font_weight),
-        stretch: fontdb::Stretch::Normal,
-        style: if st.italic { fontdb::Style::Italic } else { fontdb::Style::Normal },
-    };
-    let Some(id) = fonts.fs.db().query(&q) else { return 1.2 };
-    let Some(font) = fonts.fs.get_font(id, fontdb::Weight(st.font_weight)) else { return 1.2 };
-    let m = font.as_swash().metrics(&[]);
-    let upem = m.units_per_em as f32;
-    let r = if upem > 0.0 { (m.ascent + m.descent + m.leading) / upem } else { 1.2 };
-    if r.is_finite() && r > 0.5 {
-        r
-    } else {
-        1.2
-    }
-}
-
-/// Line height of the base style in px.
-pub fn line_height(props: &TextProps) -> f32 {
-    with_fonts(|f| {
-        let st = &props.style;
-        match st.line_height {
-            d::LineHeight::Pixels(p) => p,
-            d::LineHeight::Percent(p) => st.font_size * p / 100.0,
-            d::LineHeight::Auto => {
-                let fam = family_for(f, &st.font_family);
-                auto_ratio(f, st, fam.as_deref()) * st.font_size
-            }
-        }
-    })
-}
-
-fn shaped_text(props: &TextProps) -> String {
-    match props.style.case {
-        d::TextCase::Upper | d::TextCase::SmallCaps => props.content.to_uppercase(),
-        d::TextCase::Lower => props.content.to_lowercase(),
-        _ => props.content.clone(),
-    }
-}
-
-/// Runs `f` on the shaped buffer of `props`. `width` wraps the text (None = no wrap).
-fn with_buffer<R>(props: &TextProps, width: Option<f32>, f: impl FnOnce(&mut Buffer, f32) -> R) -> R {
-    let lh = line_height(props);
-    with_fonts(|fonts| {
-        let st = &props.style;
-        let family = family_for(fonts, &st.font_family);
-        let fsize = st.font_size.max(0.1);
-        let fam = match &family {
-            Some(n) => Family::Name(n),
-            None => Family::SansSerif,
-        };
-        let mut attrs = Attrs::new().family(fam).weight(Weight(st.font_weight)).style(if st.italic { Style::Italic } else { Style::Normal }).metrics(Metrics::new(fsize, lh));
-        if st.letter_spacing != 0.0 {
-            attrs = attrs.letter_spacing(st.letter_spacing / fsize);
-        }
-        let mut buffer = Buffer::new(&mut fonts.fs, Metrics::new(fsize, lh));
-        buffer.set_hinting(Hinting::Disabled);
-        buffer.set_size(width, None);
-        buffer.set_wrap(if width.is_some() { Wrap::WordOrGlyph } else { Wrap::None });
-        let align = match st.align_h {
-            d::TextAlignH::Left => Align::Left,
-            d::TextAlignH::Center => Align::Center,
-            d::TextAlignH::Right => Align::Right,
-            d::TextAlignH::Justified => Align::Justified,
-        };
-        buffer.set_text(&shaped_text(props), &attrs, Shaping::Advanced, Some(align));
-        buffer.shape_until_scroll(&mut fonts.fs, false);
-        f(&mut buffer, lh)
-    })
-}
+use desigma_render::{text_geometry, LineGeom, TextGeometry};
+use std::ops::Range;
+use std::rc::Rc;
 
 /// Natural size of the text: widest line by total height. `width` wraps lines.
 pub fn measure(props: &TextProps, width: Option<f32>) -> Vec2 {
-    with_buffer(props, width, |b, lh| {
-        let (mut w, mut bottom, mut lines) = (0.0f32, 0.0f32, 0usize);
-        for run in b.layout_runs() {
-            w = w.max(run.line_w);
-            bottom = bottom.max(run.line_top + run.line_height);
-            lines += 1;
+    let mut p = props.clone();
+    let size = match width {
+        Some(w) => {
+            if p.auto_resize == d::TextAutoResize::WidthAndHeight {
+                p.auto_resize = d::TextAutoResize::Height;
+            }
+            Vec2::new(w, 0.0)
         }
-        if lines == 0 {
-            bottom = lh;
+        None => {
+            p.auto_resize = d::TextAutoResize::WidthAndHeight;
+            Vec2::ZERO
         }
-        // Paragraph spacing is added between source lines.
-        let paragraphs = props.content.matches('\n').count() as f32;
-        Vec2::new(w.ceil().max(1.0), (bottom + paragraphs * props.style.paragraph_spacing).ceil().max(1.0))
-    })
+    };
+    let g = text_geometry(&p, size);
+    Vec2::new(g.width.ceil().max(1.0), g.height.ceil().max(1.0))
 }
 
-/// Caret rectangle (x, y, height) in node-local space for a char-index caret.
-pub fn caret_rect(props: &TextProps, width: Option<f32>, caret: usize) -> (f32, f32, f32) {
-    let content = shaped_text(props);
-    let (line, byte) = line_and_byte(&content, caret);
-    with_buffer(props, width, |b, lh| {
-        let mut best: Option<(f32, f32, f32)> = None;
-        for run in b.layout_runs() {
-            if run.line_i != line {
-                continue;
-            }
-            let (x, found) = match (run.glyphs.first(), run.glyphs.last()) {
-                (Some(first), Some(last)) => {
-                    if byte < first.start {
-                        (first.x, true)
-                    } else if let Some(g) = run.glyphs.iter().find(|g| byte >= g.start && byte < g.end) {
-                        (g.x, true)
-                    } else if byte >= last.end {
-                        (last.x + last.w, true)
-                    } else {
-                        (last.x + last.w, false)
-                    }
-                }
-                _ => (0.0, true),
-            };
-            let cand = (x, run.line_top, run.line_height);
-            if found {
-                best = Some(cand);
-                // A caret at a wrap boundary belongs to the next visual line.
-                if run.glyphs.last().map(|l| byte < l.end).unwrap_or(true) {
-                    break;
-                }
-            } else if best.is_none() {
-                best = Some(cand);
-            }
-        }
-        best.unwrap_or((0.0, 0.0, lh))
-    })
+/// Geometry for editing: laid out in the node's real box.
+pub fn geometry(props: &TextProps, size: Vec2) -> Rc<TextGeometry> {
+    text_geometry(props, size)
 }
 
-/// Char index nearest to the node-local point (x, y).
-pub fn hit_caret(props: &TextProps, width: Option<f32>, x: f32, y: f32) -> usize {
-    let content = shaped_text(props);
-    let total = content.chars().count();
-    with_buffer(props, width, |b, _| {
-        let Some(c) = b.hit(x, y) else { return total };
-        let mut idx = 0;
-        for (li, l) in content.split('\n').enumerate() {
-            if li == c.line {
-                let in_line = l.char_indices().take_while(|(bi, _)| *bi < c.index).count();
-                return idx + in_line;
-            }
-            idx += l.chars().count() + 1;
-        }
-        total
-    })
+/// Index of the visual line a caret at byte `at` is drawn on. A caret at a soft
+/// wrap boundary belongs to the next line (as in Figma).
+pub fn line_of(g: &TextGeometry, at: usize) -> usize {
+    // Lines drop the whitespace they wrap at, so an offset in that gap stays at the end of its line.
+    g.lines.iter().rposition(|l| l.start <= at).unwrap_or(0)
 }
 
-/// (paragraph index, byte offset inside that paragraph) of a char-index caret.
-fn line_and_byte(content: &str, caret: usize) -> (usize, usize) {
-    let mut remaining = caret;
-    for (li, l) in content.split('\n').enumerate() {
-        let n = l.chars().count();
-        if remaining <= n {
-            let byte = l.char_indices().nth(remaining).map(|(b, _)| b).unwrap_or(l.len());
-            return (li, byte);
-        }
-        remaining -= n + 1;
+fn x_in_line(content: &str, l: &LineGeom, at: usize) -> f32 {
+    let Some(first) = l.glyphs.first() else { return l.empty_x };
+    let last = l.glyphs.last().unwrap();
+    if at <= first.start {
+        return first.x;
     }
-    (0, 0)
+    if at >= last.end {
+        return last.x + last.w;
+    }
+    for g in &l.glyphs {
+        if at == g.start {
+            return g.x;
+        }
+        if at > g.start && at < g.end {
+            // inside a cluster (ligature, combining marks): interpolate by chars
+            let total = content[g.start..g.end].chars().count().max(1);
+            let before = content[g.start..at.min(content.len())].chars().count();
+            return g.x + g.w * before as f32 / total as f32;
+        }
+    }
+    last.x + last.w
+}
+
+/// Caret rectangle (x, y, height) in node-local space for a byte offset.
+pub fn caret_rect(props: &TextProps, size: Vec2, at: usize) -> (f32, f32, f32) {
+    let g = geometry(props, size);
+    let l = &g.lines[line_of(&g, at)];
+    (x_in_line(&props.content, l, at), l.top, l.height)
+}
+
+/// Selection rectangles (x, y, w, h) for the byte range, one per visual line.
+pub fn selection_rects(props: &TextProps, size: Vec2, range: Range<usize>) -> Vec<(f32, f32, f32, f32)> {
+    let g = geometry(props, size);
+    let mut out = Vec::new();
+    if range.is_empty() {
+        return out;
+    }
+    let n = g.lines.len();
+    for (i, l) in g.lines.iter().enumerate() {
+        let next_same_para = g.lines.get(i + 1).is_some_and(|nl| nl.para == l.para);
+        // The newline ending a paragraph is selected too when the range runs past it.
+        let nl_selected = !next_same_para && i + 1 < n && range.end > l.end && range.start <= l.end;
+        let lo = range.start.max(l.start);
+        let hi = range.end.min(l.end);
+        if lo >= hi && !nl_selected {
+            // empty line fully inside the range: show a small newline marker
+            if l.glyphs.is_empty() && range.start <= l.start && range.end > l.start {
+                out.push((l.empty_x, l.top, 4.0, l.height));
+            }
+            continue;
+        }
+        let x0 = if lo < hi { x_in_line(&props.content, l, lo) } else { l.glyphs.last().map(|g| g.x + g.w).unwrap_or(l.empty_x) };
+        let mut x1 = if lo < hi { x_in_line(&props.content, l, hi) } else { x0 };
+        if nl_selected {
+            x1 += 4.0;
+        }
+        out.push((x0, l.top, (x1 - x0).max(0.0), l.height));
+    }
+    out
+}
+
+/// Byte offset nearest to the node-local point (x, y).
+pub fn hit_caret(props: &TextProps, size: Vec2, x: f32, y: f32) -> usize {
+    let g = geometry(props, size);
+    let li = g.lines.iter().rposition(|l| l.top <= y).unwrap_or(0);
+    let l = &g.lines[li];
+    let wrapped = g.lines.get(li + 1).is_some_and(|n| n.para == l.para);
+    let Some(first) = l.glyphs.first() else { return l.start };
+    if x <= first.x {
+        return first.start;
+    }
+    for gl in &l.glyphs {
+        if x < gl.x + gl.w {
+            // nearer edge; inside a cluster snap to its start/end
+            return if x < gl.x + gl.w / 2.0 { gl.start } else { gl.end };
+        }
+    }
+    let last = l.glyphs.last().unwrap();
+    // a caret after a wrap-trailing space would render on the next line
+    if wrapped && props.content[last.start..last.end].chars().all(char::is_whitespace) {
+        last.start
+    } else {
+        last.end
+    }
+}
+
+/// Start and end byte offsets of the visual line holding `at` (Home / End).
+pub fn line_bounds(props: &TextProps, size: Vec2, at: usize) -> (usize, usize) {
+    let g = geometry(props, size);
+    let l = &g.lines[line_of(&g, at)];
+    let wrapped = g.lines.get(line_of(&g, at) + 1).is_some_and(|n| n.para == l.para);
+    let mut end = l.end;
+    if wrapped {
+        // keep the caret on this line: before a trailing space
+        if let Some(last) = l.glyphs.last() {
+            if props.content[last.start..last.end].chars().all(char::is_whitespace) {
+                end = last.start;
+            }
+        }
+    }
+    (l.start, end)
+}
+
+/// Caret one visual line up (-1) or down (+1) keeping the column `goal_x`.
+/// At the first/last line it goes to the start/end of the text.
+pub fn move_vertical(props: &TextProps, size: Vec2, at: usize, dir: i32, goal_x: f32) -> usize {
+    let g = geometry(props, size);
+    let li = line_of(&g, at) as i32 + dir;
+    if li < 0 {
+        return 0;
+    }
+    if li as usize >= g.lines.len() {
+        return props.content.len();
+    }
+    let l = &g.lines[li as usize];
+    hit_caret(props, size, goal_x, l.top + l.height / 2.0)
 }
 
 #[cfg(test)]
@@ -250,6 +173,8 @@ mod tests {
             max_lines: None,
         }
     }
+
+    const Z: Vec2 = Vec2 { x: 0.0, y: 0.0 };
 
     #[test]
     fn width_grows_with_content_and_size() {
@@ -273,12 +198,23 @@ mod tests {
     }
 
     #[test]
+    fn measure_follows_run_styles() {
+        let mut p = props("ab cd", 12.0);
+        let small = measure(&p, None);
+        let mut big = p.style.clone();
+        big.font_size = 48.0;
+        p.runs = vec![d::TextRun { start: 3, end: 5, style: big }];
+        let m = measure(&p, None);
+        assert!(m.x > small.x * 1.8 && m.y > small.y * 2.0, "{small:?} -> {m:?}");
+    }
+
+    #[test]
     fn caret_follows_text() {
         let p = props("Hello\nWorld", 16.0);
-        let (x0, y0, h) = caret_rect(&p, None, 0);
-        let (x3, _, _) = caret_rect(&p, None, 3);
-        let (xe, _, _) = caret_rect(&p, None, 5);
-        let (x6, y6, _) = caret_rect(&p, None, 6);
+        let (x0, y0, h) = caret_rect(&p, Z, 0);
+        let (x3, _, _) = caret_rect(&p, Z, 3);
+        let (xe, _, _) = caret_rect(&p, Z, 5);
+        let (x6, y6, _) = caret_rect(&p, Z, 6);
         assert_eq!(x0, 0.0);
         assert!(x3 > x0 && xe > x3);
         assert_eq!(x6, 0.0);
@@ -286,11 +222,118 @@ mod tests {
     }
 
     #[test]
+    fn caret_x_matches_glyph_positions() {
+        // Caret x for every offset equals the shaped glyph edge: the sum of the
+        // advances of the preceding glyphs, i.e. where the renderer draws them.
+        let p = props("Hamburgefonstiv ijl", 20.0);
+        let g = geometry(&p, Z);
+        let glyphs = &g.lines[0].glyphs;
+        let mut last = -1.0;
+        for (i, gl) in glyphs.iter().enumerate() {
+            let (x, _, _) = caret_rect(&p, Z, gl.start);
+            assert_eq!(x, gl.x, "glyph {i}");
+            assert!(x > last);
+            last = x;
+        }
+        let end = p.content.len();
+        let (xe, _, _) = caret_rect(&p, Z, end);
+        let lastg = glyphs.last().unwrap();
+        assert_eq!(xe, lastg.x + lastg.w);
+        // and a measured width agrees with the caret at the end
+        assert!((measure(&p, None).x - xe).abs() <= 1.0);
+    }
+
+    #[test]
+    fn caret_x_matches_rendered_ink() {
+        // The renderer's ink for the first n letters never extends past the caret after n.
+        let p = props("Hello", 24.0);
+        for n in 1..=5usize {
+            let mut q = p.clone();
+            q.content = p.content[..n].to_string();
+            let ink = desigma_render::text_geometry(&q, Z);
+            let (cx, _, _) = caret_rect(&p, Z, n);
+            // (kerning with the following letter may shift the edge by a fraction of a px)
+            assert!((ink.width - cx).abs() < 1.0, "n={n}: width {} caret {cx}", ink.width);
+        }
+    }
+
+    #[test]
     fn hit_roundtrips_caret() {
         let p = props("Hello\nWorld", 16.0);
         for caret in [0usize, 2, 5, 6, 9, 11] {
-            let (x, y, h) = caret_rect(&p, None, caret);
-            assert_eq!(hit_caret(&p, None, x + 0.5, y + h / 2.0), caret, "caret {caret}");
+            let (x, y, h) = caret_rect(&p, Z, caret);
+            assert_eq!(hit_caret(&p, Z, x + 0.5, y + h / 2.0), caret, "caret {caret}");
         }
+    }
+
+    #[test]
+    fn multibyte_offsets_roundtrip() {
+        let p = props("aé😀中b", 18.0);
+        for (caret, _) in p.content.char_indices().chain(std::iter::once((p.content.len(), ' '))) {
+            let (x, y, h) = caret_rect(&p, Z, caret);
+            assert_eq!(hit_caret(&p, Z, x + 0.01, y + h / 2.0), caret, "caret {caret}");
+        }
+    }
+
+    #[test]
+    fn wrapped_caret_moves_to_next_line() {
+        let mut p = props("one two three four", 16.0);
+        p.auto_resize = d::TextAutoResize::Height;
+        let size = Vec2::new(70.0, 100.0);
+        let g = geometry(&p, size);
+        assert!(g.lines.len() >= 3);
+        let l0 = &g.lines[0];
+        // wrapping drops the space between the lines: the offset before it ends line 0,
+        // the offset after it starts line 1
+        let (_, y_end, _) = caret_rect(&p, size, l0.end);
+        assert_eq!(y_end, g.lines[0].top);
+        let (_, y_next, _) = caret_rect(&p, size, g.lines[1].start);
+        assert_eq!(y_next, g.lines[1].top);
+        let (hs, he) = line_bounds(&p, size, 2);
+        assert_eq!((hs, he), (0, l0.end));
+        // clicking far right of line 0 stays on line 0
+        let hit = hit_caret(&p, size, 500.0, g.lines[0].top + 2.0);
+        assert!(hit <= l0.end && line_of(&g, hit) == 0, "hit {hit}");
+    }
+
+    #[test]
+    fn vertical_moves_keep_column() {
+        let p = props("abcdef\nab\nabcdef", 16.0);
+        let (gx, _, _) = caret_rect(&p, Z, 5);
+        let down = move_vertical(&p, Z, 5, 1, gx);
+        assert_eq!(down, 9, "short line clamps to its end");
+        let down2 = move_vertical(&p, Z, down, 1, gx);
+        assert_eq!(down2, 10 + 5);
+        assert_eq!(move_vertical(&p, Z, 2, -1, 0.0), 0);
+        assert_eq!(move_vertical(&p, Z, 12, 1, 0.0), p.content.len());
+    }
+
+    #[test]
+    fn selection_rects_cover_lines() {
+        let p = props("abc\ndef", 16.0);
+        let r = selection_rects(&p, Z, 1..6);
+        assert_eq!(r.len(), 2);
+        assert!(r[0].0 > 0.0 && r[0].2 > 0.0);
+        assert_eq!(r[1].0, 0.0);
+        assert!(selection_rects(&p, Z, 3..3).is_empty());
+    }
+
+    #[test]
+    fn empty_text_has_a_caret_line() {
+        let p = props("", 16.0);
+        let (x, y, h) = caret_rect(&p, Z, 0);
+        assert_eq!((x, y), (0.0, 0.0));
+        assert!(h >= 16.0);
+        assert_eq!(hit_caret(&p, Z, 5.0, 5.0), 0);
+    }
+
+    #[test]
+    fn centered_empty_line_sits_in_the_middle() {
+        let mut p = props("a\n\nb", 16.0);
+        p.style.align_h = d::TextAlignH::Center;
+        p.auto_resize = d::TextAutoResize::Height;
+        let size = Vec2::new(100.0, 80.0);
+        let (x, _, _) = caret_rect(&p, size, 2);
+        assert!((x - 50.0).abs() < 0.01, "{x}");
     }
 }

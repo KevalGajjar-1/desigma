@@ -694,7 +694,7 @@ fn text_tool_auto_resizes_with_real_measurement() {
     assert_eq!(n.size.x, crate::textmeasure::measure(&t, None).x, "size is the measured width, not an estimate");
     // the caret sits at the measured end of the text
     let caret = s.app().canvas.text.as_ref().unwrap().caret;
-    let (x, _, h) = crate::textmeasure::caret_rect(&t, None, caret);
+    let (x, _, h) = crate::textmeasure::caret_rect(&t, n.size, caret);
     assert!((x - n.size.x).abs() <= 1.0 && h > 10.0);
     s.key(Key::Escape);
 }

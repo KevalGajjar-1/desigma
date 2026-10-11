@@ -357,6 +357,8 @@ pub const ZOOM_MIN: f32 = 0.02;
 pub const ZOOM_MAX: f32 = 256.0;
 pub const FIT_PADDING: f32 = 64.0;
 pub const TEXT_CARET_WIDTH: f32 = 1.0;
+/// Selected text highlight: #0c8ce9 at 35% alpha.
+pub const TEXT_SELECTION: Color32 = Color32::from_rgba_premultiplied(4, 49, 81, 89);
 pub const NUDGE: f32 = 1.0;
 pub const NUDGE_BIG: f32 = 10.0;
 
