@@ -700,3 +700,5 @@ fn text_tool_auto_resizes_with_real_measurement() {
 }
 
 mod components;
+
+mod assets_thumbs;
