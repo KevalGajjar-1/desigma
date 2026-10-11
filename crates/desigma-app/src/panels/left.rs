@@ -16,30 +16,8 @@ pub fn show(app: &mut App, ui: &mut Ui, rect: Rect) {
     let x0 = inner.left();
     let mut y = inner.top();
 
-    // ---- header
-    let name = if app.doc.name.is_empty() { "Untitled".to_string() } else { app.doc.name.clone() };
-    let name_font = theme::font_large_strong();
-    let shown = widgets::elide(&p, &name, &name_font, theme::LEFT_PANEL_WIDTH - 16.0 - 24.0 - 40.0 - 24.0);
-    let name_rect = p.text(Pos2::new(x0 + theme::PANEL_PADDING_X, y + theme::LEFT_FILE_NAME_Y + 8.0), Align2::LEFT_CENTER, &shown, name_font, theme::TEXT);
-    let hit = Rect::from_min_max(Pos2::new(x0 + 8.0, y + 8.0), Pos2::new(name_rect.right() + 28.0, y + 32.0));
-    let hr = ui.interact(hit, ui.id().with("file-name"), Sense::click());
-    if hr.hovered() {
-        p.rect_filled(hit, theme::cr(theme::RADIUS_MEDIUM), theme::BG_HOVER);
-        p.text(Pos2::new(x0 + theme::PANEL_PADDING_X, y + theme::LEFT_FILE_NAME_Y + 8.0), Align2::LEFT_CENTER, &shown, theme::font_large_strong(), theme::TEXT);
-    }
-    icons::paint(&p, Icon::ChevronDown, Pos2::new(name_rect.right() + 10.0, name_rect.center().y), 12.0, theme::ICON_SECONDARY);
-    if hr.clicked() {
-        app.ui.menu = if app.ui.menu == Some(MenuKind::FileName) { None } else { Some(MenuKind::FileName) };
-        app.ui.menu_anchor = Some(hit);
-    }
-    let sub = p.text(
-        Pos2::new(x0 + theme::PANEL_PADDING_X, y + theme::LEFT_SUBLABEL_Y + 8.0),
-        Align2::LEFT_CENTER,
-        "Drafts",
-        theme::font_body(),
-        theme::TEXT_SECONDARY,
-    );
-    widgets::badge(&p, Pos2::new(sub.right() + theme::BADGE_GAP, sub.center().y - theme::BADGE_HEIGHT / 2.0), "Free");
+    // ---- header: "<Project> / <File name>", then the save state
+    file_header(app, ui, inner, y);
     let tb = Rect::from_min_size(
         Pos2::new(inner.right() - theme::LEFT_SIDEBAR_BTN_RIGHT_PAD - theme::PANEL_ACTION_BUTTON, y + theme::LEFT_ACTION_Y),
         Vec2::splat(theme::PANEL_ACTION_BUTTON),
@@ -212,5 +190,88 @@ fn page_menu(app: &mut App, ui: &mut Ui) {
         }
         MenuResult::Closed => app.layers.page_menu = None,
         MenuResult::Open => {}
+    }
+}
+
+/// Max width of the file-name row (the sidebar button and the menu chevron take the rest).
+const HEADER_NAME_W: f32 = theme::LEFT_PANEL_WIDTH - 16.0 - 36.0 - 24.0;
+
+/// File header: "<Project> / <File name>" for library files (double-click renames), the
+/// plain name otherwise, and a second line with the save state or "Save to library".
+fn file_header(app: &mut App, ui: &mut Ui, inner: Rect, y: f32) {
+    let p = ui.painter().clone();
+    let x0 = inner.left() + theme::PANEL_PADDING_X;
+    let cy = y + theme::LEFT_FILE_NAME_Y + 8.0;
+    let name = if app.doc.name.is_empty() { "Untitled".to_string() } else { app.doc.name.clone() };
+    let strong = theme::font_large_strong();
+    let regular = theme::font_body();
+    let slash_w = widgets::text_width(&p, " / ", &regular);
+    // Project prefix (library files only), elided so the file name keeps most of the row.
+    let prefix = app.lib_file.as_ref().map(|f| widgets::elide(&p, &f.project, &regular, HEADER_NAME_W * 0.45));
+    let prefix_w = prefix.as_ref().map(|t| widgets::text_width(&p, t, &regular) + slash_w).unwrap_or(0.0);
+    let shown = widgets::elide(&p, &name, &strong, HEADER_NAME_W - prefix_w);
+    let name_x = x0 + prefix_w;
+    let name_w = widgets::text_width(&p, &shown, &strong);
+    let name_rect = Rect::from_min_size(Pos2::new(name_x, cy - 10.0), Vec2::new(name_w.max(8.0), 20.0));
+    let hit = Rect::from_min_max(Pos2::new(inner.left() + 8.0, y + 8.0), Pos2::new(name_rect.right() + 28.0, y + 32.0));
+    widgets::record(ui, "file-header", hit);
+
+    if app.renaming_file && app.lib_file.is_some() {
+        let id = ui.id().with("header-rename");
+        let seen_id = id.with("seen");
+        let first = !ui.data(|d| d.get_temp::<bool>(seen_id).unwrap_or(false));
+        if first {
+            ui.memory_mut(|m| m.request_focus(id));
+            ui.data_mut(|d| d.insert_temp(seen_id, true));
+        }
+        let field_rect = Rect::from_min_max(Pos2::new(name_x - 4.0, y + 10.0), Pos2::new(inner.left() + 8.0 + HEADER_NAME_W + 16.0, y + 30.0));
+        p.rect_filled(field_rect, theme::cr(theme::RADIUS_MEDIUM), theme::BG_SECONDARY);
+        if let Some(t) = &prefix {
+            p.text(Pos2::new(x0, cy), Align2::LEFT_CENTER, format!("{t} / "), regular.clone(), theme::TEXT_SECONDARY);
+        }
+        let res = field::edit_text(ui, field_rect.shrink2(Vec2::new(4.0, 0.0)), id, &name, strong.clone(), theme::TEXT, 0.0);
+        if let Some(new_name) = res {
+            app.rename_library_file(&new_name);
+        }
+        let focused = ui.memory(|m| m.has_focus(id));
+        if !focused && !first {
+            app.renaming_file = false;
+            ui.data_mut(|d| d.remove_temp::<bool>(seen_id));
+        }
+    } else {
+        let hr = ui.interact(hit, ui.id().with("file-name"), Sense::click());
+        if hr.hovered() {
+            p.rect_filled(hit, theme::cr(theme::RADIUS_MEDIUM), theme::BG_HOVER);
+        }
+        if let Some(t) = &prefix {
+            p.text(Pos2::new(x0, cy), Align2::LEFT_CENTER, format!("{t} / "), regular.clone(), theme::TEXT_SECONDARY);
+        }
+        p.text(Pos2::new(name_x, cy), Align2::LEFT_CENTER, &shown, strong, theme::TEXT);
+        icons::paint(&p, Icon::ChevronDown, Pos2::new(name_rect.right() + 10.0, cy), 12.0, theme::ICON_SECONDARY);
+        if hr.double_clicked() && app.lib_file.is_some() {
+            app.renaming_file = true;
+            app.ui.menu = None;
+        } else if hr.clicked() {
+            app.ui.menu = if app.ui.menu == Some(MenuKind::FileName) { None } else { Some(MenuKind::FileName) };
+            app.ui.menu_anchor = Some(hit);
+        }
+    }
+
+    // Second line: save state for library files, otherwise a way into the library.
+    let sub_y = y + theme::LEFT_SUBLABEL_Y + 8.0;
+    if app.lib_file.is_some() {
+        let text = if app.autosave.pending() { "Saving\u{2026}" } else { "All changes saved" };
+        p.text(Pos2::new(x0, sub_y), Align2::LEFT_CENTER, text, theme::font_body(), theme::TEXT_SECONDARY);
+    } else if app.lib.is_some() {
+        let label = "Save to library";
+        let w = widgets::text_width(&p, label, &theme::font_body());
+        let lr = Rect::from_min_size(Pos2::new(x0 - 2.0, sub_y - 9.0), Vec2::new(w + 4.0, 18.0));
+        let resp = ui.interact(lr, ui.id().with("save-to-library"), Sense::click());
+        let col = if resp.hovered() { theme::ICON_SELECTED } else { theme::TEXT_BRAND };
+        p.text(Pos2::new(x0, sub_y), Align2::LEFT_CENTER, label, theme::font_body(), col);
+        widgets::record(ui, "save-to-library", lr);
+        if resp.clicked() {
+            app.begin_save_to_library();
+        }
     }
 }

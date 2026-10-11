@@ -7,9 +7,8 @@ use crate::widgets;
 use egui::{Align2, Pos2, Rect, Sense, Ui, Vec2};
 
 /// Rail entries in order; the flag marks the item that starts a new group (separator above it).
-pub const ITEMS: [(RailItem, Icon, &str, bool); 5] = [
+pub const ITEMS: [(RailItem, Icon, &str, bool); 4] = [
     (RailItem::File, Icon::File, "File", false),
-    (RailItem::Agents, Icon::Sparkle, "Agents", false),
     (RailItem::Assets, Icon::Assets, "Assets", false),
     (RailItem::Tools, Icon::Tools, "Tools", false),
     (RailItem::Variables, Icon::Variables, "Variables", true),
@@ -85,12 +84,13 @@ pub fn show(app: &mut App, ui: &mut Ui, rect: Rect) {
         }
     }
 
-    // Bottom: help + account.
-    let mut by = rect.bottom() - 8.0;
-    for (icon, key, tip) in [(Icon::User, "acct", "Account"), (Icon::Help, "help", "Help")] {
-        let br = Rect::from_min_size(Pos2::new(rect.left() + 12.0, by - theme::RAIL_MENU_BUTTON_SIZE), Vec2::splat(theme::RAIL_MENU_BUTTON_SIZE));
-        by -= theme::RAIL_MENU_BUTTON_SIZE + 4.0;
-        widgets::icon_button(ui, br, key, icon, false, tip);
+    // Bottom: help (keyboard shortcuts, About, the GitHub repo).
+    let br = Rect::from_min_size(
+        Pos2::new(rect.left() + theme::RAIL_MENU_BUTTON_X, rect.bottom() - 8.0 - theme::RAIL_MENU_BUTTON_SIZE),
+        Vec2::splat(theme::RAIL_MENU_BUTTON_SIZE),
+    );
+    if widgets::icon_button(ui, br, "help", Icon::Help, false, "Help").clicked() {
+        crate::panels::menus::run(app, ui.ctx(), crate::panels::menus::Action::Shortcuts);
     }
 }
 
@@ -114,10 +114,10 @@ mod tests {
 
     #[test]
     fn cells_follow_the_measured_rail_layout() {
-        // File, Agents, Assets, Tools every 56px, then a 16px gap before Variables.
-        assert_eq!(cell_tops(), vec![56.0, 112.0, 168.0, 224.0, 296.0]);
-        // separators sit at y=48 (under the logo) and 288 (middle of the group gap)
+        // File, Assets, Tools every 56px, then a 16px gap before Variables.
+        assert_eq!(cell_tops(), vec![56.0, 112.0, 168.0, 240.0]);
+        // separators sit at y=48 (under the logo) and 232 (middle of the group gap)
         assert_eq!(theme::RAIL_SEPARATOR_Y, 48.0);
-        assert_eq!(cell_tops()[4] - theme::RAIL_GROUP_GAP / 2.0, 288.0);
+        assert_eq!(cell_tops()[3] - theme::RAIL_GROUP_GAP / 2.0, 232.0);
     }
 }

@@ -31,7 +31,12 @@ pub struct Shell {
 }
 
 impl Shell {
-    pub fn new(cc: &eframe::CreationContext<'_>, opts: Options) -> Self {
+    pub fn new(cc: &eframe::CreationContext<'_>, mut opts: Options) -> Self {
+        // A real launch always has a library; screenshot runs only touch it for the home screen.
+        if opts.library.is_none() && (opts.screenshot.is_none() || opts.home) {
+            opts.library = Some(desigma_library::Library::default_root());
+        }
+        opts.home = opts.wants_home();
         Self::build(&cc.egui_ctx, opts)
     }
 
@@ -40,8 +45,16 @@ impl Shell {
         theme::apply(ctx);
         let mut app = App::new(if opts.fixture.as_deref() == Some("no-selection") { demo::reference_document() } else { demo::demo_document() });
         app.doc.name = "Untitled".into();
+        if let Some(root) = opts.library.clone() {
+            app.attach_library(root);
+        }
         if let Some(f) = &opts.file {
             app.open_path(f.clone());
+        }
+        if let Some(id) = &opts.open_id {
+            app.open_library_file(id);
+        } else if opts.home {
+            app.go_home();
         }
         if let Some(name) = opts.select.as_ref().filter(|n| n.as_str() != "none") {
             if let Some(id) = app.doc.nodes.values().find(|n| &n.name == name).map(|n| n.id) {
@@ -156,6 +169,9 @@ impl Shell {
     }
 
     fn handle_keys(&mut self, ctx: &Context) {
+        if self.app.dialog.is_some() {
+            return;
+        }
         let typing = ctx.egui_wants_keyboard_input();
         if self.app.vars.open {
             // The Variables modal owns the keyboard; undo / redo still work.
@@ -421,12 +437,44 @@ impl Shell {
         }
     }
 
+    fn sync_title(&mut self, ctx: &Context) {
+        let title = if self.app.home.is_some() { theme::APP_TITLE.to_string() } else { self.app.title() };
+        if title != self.title {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
+            self.title = title;
+        }
+    }
+
+    /// One frame of the home screen (file browser): files dropped on the window are imported.
+    fn home_frame(&mut self, ui: &mut egui::Ui, ctx: &Context) {
+        let dropped: Vec<PathBuf> = ctx.input(|i| i.raw.dropped_files.iter().filter_map(|f| f.path.clone()).collect());
+        if !dropped.is_empty() && self.app.dialog.is_none() {
+            let target = self.app.home_target().or_else(|| self.app.home.as_ref().and_then(|h| h.snap.projects.first().map(|p| (p.id.clone(), None))));
+            if let Some((p, f)) = target {
+                self.app.import_into_library(&dropped, &p, f.as_deref());
+            }
+        }
+        crate::home::show(&mut self.app, ui);
+        crate::home::dialog::show(&mut self.app, ctx);
+        let full = ui.max_rect();
+        self.toast(ui, full);
+        self.sync_title(ctx);
+    }
+
     /// One full UI pass over the window.
     pub fn draw(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
         self.app.now = ctx.input(|i| i.time);
         self.drive_screenshot(&ctx);
+        if ctx.input(|i| i.viewport().close_requested()) {
+            self.app.flush_autosave();
+        }
         self.app.scrub_sync(&ctx);
+        if self.app.home.is_some() {
+            self.home_frame(ui, &ctx);
+            return;
+        }
+        self.app.autosave_tick(&ctx);
         if self.app.proto.present.is_some() {
             crate::present::show(&mut self.app, ui);
             return;
@@ -459,15 +507,12 @@ impl Shell {
         toolbar::show(&mut self.app, ui, canvas_rect_for_toolbar(full));
         self.context_menu(ui, canvas_rect);
         menus::show(&mut self.app, &ctx);
+        crate::home::dialog::show(&mut self.app, &ctx);
         panels::context::show(&mut self.app, &ctx);
         crate::variables::modal::show(&mut self.app, &ctx);
         self.toast(ui, full);
 
-        let title = self.app.title();
-        if title != self.title {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
-            self.title = title;
-        }
+        self.sync_title(&ctx);
         if self.app.ui.menu == Some(MenuKind::Main) && self.app.ui.menu_anchor.is_none() {
             self.app.ui.menu = None;
         }

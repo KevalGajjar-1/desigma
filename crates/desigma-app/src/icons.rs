@@ -12,7 +12,6 @@ pub enum Icon {
     Tools,
     Variables,
     Help,
-    User,
     ChevronDown,
     ChevronRight,
     Plus,
@@ -79,6 +78,12 @@ pub enum Icon {
     FlipV,
     Flag,
     Play,
+    // projects library
+    Folder,
+    Trash,
+    Clock,
+    GridView,
+    ListView,
 }
 
 struct G<'a> {
@@ -171,10 +176,6 @@ pub fn paint(p: &Painter, icon: Icon, center: Pos2, size: f32, col: Color32) {
             g.line((8.0, 8.6), (8.0, 9.4));
             g.dot(8.0, 11.4, 0.6);
         }
-        Icon::User => {
-            g.circle(8.0, 5.5, 2.6);
-            g.arc(8.0, 15.0, 5.5, PI, TAU);
-        }
         Icon::ChevronDown => g.poly(&[(4.5, 6.5), (8.0, 10.0), (11.5, 6.5)], false),
         Icon::ChevronRight => g.poly(&[(6.0, 4.0), (10.0, 8.0), (6.0, 12.0)], false),
         Icon::Plus => {
@@ -214,6 +215,31 @@ pub fn paint(p: &Painter, icon: Icon, center: Pos2, size: f32, col: Color32) {
             g.fill_poly(&[(4.0, 2.5), (12.5, 5.0), (4.0, 8.0)]);
         }
         Icon::Play => g.fill_poly(&[(4.5, 2.5), (13.0, 8.0), (4.5, 13.5)]),
+        Icon::Folder => {
+            g.poly(&[(1.5, 3.5), (6.0, 3.5), (7.5, 5.0), (14.5, 5.0), (14.5, 13.0), (1.5, 13.0)], true);
+        }
+        Icon::Trash => {
+            g.line((2.5, 4.0), (13.5, 4.0));
+            g.poly(&[(6.0, 4.0), (6.0, 2.5), (10.0, 2.5), (10.0, 4.0)], false);
+            g.poly(&[(3.8, 4.0), (4.6, 13.5), (11.4, 13.5), (12.2, 4.0)], false);
+            g.line((6.6, 6.5), (6.8, 11.0));
+            g.line((9.4, 6.5), (9.2, 11.0));
+        }
+        Icon::Clock => {
+            g.circle(8.0, 8.0, 6.0);
+            g.poly(&[(8.0, 4.5), (8.0, 8.0), (10.5, 9.5)], false);
+        }
+        Icon::GridView => {
+            g.rect(2.5, 2.5, 4.5, 4.5, 1.0);
+            g.rect(9.0, 2.5, 4.5, 4.5, 1.0);
+            g.rect(2.5, 9.0, 4.5, 4.5, 1.0);
+            g.rect(9.0, 9.0, 4.5, 4.5, 1.0);
+        }
+        Icon::ListView => {
+            g.line((2.5, 4.0), (13.5, 4.0));
+            g.line((2.5, 8.0), (13.5, 8.0));
+            g.line((2.5, 12.0), (13.5, 12.0));
+        }
         Icon::Check => g.poly(&[(3.0, 8.5), (6.5, 12.0), (13.0, 4.5)], false),
         Icon::Move => g.fill_poly(&[(3.5, 2.0), (3.5, 12.5), (6.3, 9.8), (8.3, 14.0), (10.2, 13.1), (8.3, 9.0), (12.0, 9.0)]),
         Icon::Hand => {
