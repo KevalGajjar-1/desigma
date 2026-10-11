@@ -214,6 +214,59 @@ fn build_segments(props: &TextProps) -> Vec<Segment> {
     segs
 }
 
+fn line_bottom(run: &cosmic_text::LayoutRun, para: f32) -> f32 {
+    run.line_top + run.line_height + run.line_i as f32 * para
+}
+
+/// Number of lines kept by `TextAutoResize::Truncate`: `max_lines`, or as many
+/// as fit the box height (at least one).
+fn truncation_limit(buffer: &Buffer, props: &TextProps, size: Vec2, para: f32) -> usize {
+    match props.max_lines {
+        Some(m) => m.max(1) as usize,
+        None if size.y > 0.0 => buffer.layout_runs().filter(|r| line_bottom(r, para) <= size.y + 0.5).count().max(1),
+        None => usize::MAX,
+    }
+}
+
+/// Byte offset in `full` (the concatenated segment text) of the end of the
+/// `limit`-th laid out line.
+fn cut_after_run(buffer: &Buffer, full: &str, limit: usize) -> Option<usize> {
+    let run = buffer.layout_runs().nth(limit.checked_sub(1)?)?;
+    let line_start: usize = full.split('\n').take(run.line_i).map(|l| l.len() + 1).sum();
+    let end = run.glyphs.iter().map(|g| g.end).max().unwrap_or(0);
+    let mut cut = (line_start + end).min(full.len());
+    while !full.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    Some(cut)
+}
+
+/// The first `cut` bytes of the segments, trailing whitespace removed, followed
+/// by an ellipsis in the style of the last kept character.
+fn truncated_segments(segs: &[Segment], mut cut: usize) -> Vec<Segment> {
+    let mut out: Vec<Segment> = Vec::new();
+    for s in segs {
+        if cut == 0 {
+            break;
+        }
+        let take = s.text.len().min(cut);
+        out.push(Segment { text: s.text[..take].to_string(), style: s.style, small: s.small });
+        cut -= take;
+    }
+    while let Some(last) = out.last_mut() {
+        let keep = last.text.trim_end().len();
+        last.text.truncate(keep);
+        if last.text.is_empty() {
+            out.pop();
+        } else {
+            break;
+        }
+    }
+    let style = out.last().map(|s| s.style).unwrap_or(0);
+    out.push(Segment { text: "\u{2026}".into(), style, small: false });
+    out
+}
+
 fn style_hash(props: &TextProps, size: Vec2) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
@@ -260,7 +313,7 @@ fn compute_layout(fonts: &mut Fonts, props: &TextProps, size: Vec2) -> TextLayou
         }
     };
 
-    let segs = build_segments(props);
+    let full_segs = build_segments(props);
     let attrs_for = |seg: &Segment| -> Attrs<'_> {
         let st = &styles[seg.style];
         let fsize = (st.font_size * if seg.small { 0.8 } else { 1.0 }).max(0.1);
@@ -292,14 +345,7 @@ fn compute_layout(fonts: &mut Fonts, props: &TextProps, size: Vec2) -> TextLayou
 
     let base_size = props.style.font_size.max(0.1);
     let base_lh = line_height_for(0, base_size);
-    let mut buffer = Buffer::new(&mut fonts.fs, Metrics::new(base_size, base_lh));
-    buffer.set_hinting(Hinting::Disabled);
     let wrap_width = if size.x > 0.0 { Some(size.x) } else { None };
-    buffer.set_size(wrap_width, None);
-    buffer.set_wrap(match props.auto_resize {
-        TextAutoResize::WidthAndHeight => Wrap::None,
-        _ => Wrap::WordOrGlyph,
-    });
     let align = match props.style.align_h {
         d::TextAlignH::Left => Align::Left,
         d::TextAlignH::Center => Align::Center,
@@ -307,12 +353,41 @@ fn compute_layout(fonts: &mut Fonts, props: &TextProps, size: Vec2) -> TextLayou
         d::TextAlignH::Justified => Align::Justified,
     };
     let default_attrs = attrs_for(&Segment { text: String::new(), style: 0, small: false });
-    let spans: Vec<(&str, Attrs)> = segs.iter().map(|s| (s.text.as_str(), attrs_for(s))).collect();
-    buffer.set_rich_text(spans, &default_attrs, Shaping::Advanced, Some(align));
-    buffer.shape_until_scroll(&mut fonts.fs, false);
+    let build = |fs: &mut FontSystem, segs: &[Segment]| -> Buffer {
+        let mut buffer = Buffer::new(fs, Metrics::new(base_size, base_lh));
+        buffer.set_hinting(Hinting::Disabled);
+        buffer.set_size(wrap_width, None);
+        buffer.set_wrap(match props.auto_resize {
+            TextAutoResize::WidthAndHeight => Wrap::None,
+            _ => Wrap::WordOrGlyph,
+        });
+        let spans: Vec<(&str, Attrs)> = segs.iter().map(|s| (s.text.as_str(), attrs_for(s))).collect();
+        buffer.set_rich_text(spans, &default_attrs, Shaping::Advanced, Some(align));
+        buffer.shape_until_scroll(fs, false);
+        buffer
+    };
+    let para = props.style.paragraph_spacing;
+    let mut buffer = build(&mut fonts.fs, &full_segs);
+
+    // Truncate: keep at most `limit` lines and end the last one with "…".
+    if props.auto_resize == TextAutoResize::Truncate {
+        let limit = truncation_limit(&buffer, props, size, para);
+        if buffer.layout_runs().count() > limit {
+            let full: String = full_segs.iter().map(|s| s.text.as_str()).collect();
+            let mut cut = cut_after_run(&buffer, &full, limit).unwrap_or(0);
+            // the ellipsis itself must still fit on the last line: back off until it does
+            for _ in 0..full.len() + 1 {
+                let segs = truncated_segments(&full_segs, cut);
+                buffer = build(&mut fonts.fs, &segs);
+                if buffer.layout_runs().count() <= limit || cut == 0 {
+                    break;
+                }
+                cut = full[..cut].char_indices().next_back().map(|(i, _)| i).unwrap_or(0);
+            }
+        }
+    }
 
     // measure
-    let para = props.style.paragraph_spacing;
     let mut total_h = 0.0f32;
     for run in buffer.layout_runs() {
         total_h = total_h.max(run.line_top + run.line_height + run.line_i as f32 * para);
@@ -378,4 +453,66 @@ fn compute_layout(fonts: &mut Fonts, props: &TextProps, size: Vec2) -> TextLayou
         }
     }
     TextLayout { styles, paths: builders.into_iter().map(|b| b.finish()).collect() }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const LONG: &str = "The quick brown fox jumps over the lazy dog and keeps running far away";
+
+    fn props(content: &str, auto_resize: TextAutoResize, max_lines: Option<u32>) -> TextProps {
+        TextProps {
+            content: content.into(),
+            style: d::TextStyle { font_size: 16.0, line_height: d::LineHeight::Pixels(20.0), ..Default::default() },
+            runs: Vec::new(),
+            auto_resize,
+            max_lines,
+        }
+    }
+
+    fn ink(l: &TextLayout) -> sk::Path {
+        l.paths[0].clone().expect("text has ink")
+    }
+
+    #[test]
+    fn truncate_stops_at_max_lines() {
+        let size = Vec2::new(120.0, 300.0);
+        let full = ink(&layout(&props(LONG, TextAutoResize::Height, None), size));
+        let cut = ink(&layout(&props(LONG, TextAutoResize::Truncate, Some(2)), size));
+        assert!(full.bounds().bottom() > 60.0, "untruncated text spans 3+ lines");
+        assert!(cut.bounds().bottom() <= 40.0, "two lines of 20px: {}", cut.bounds().bottom());
+        assert!(cut.bounds().right() <= 120.5, "ellipsis stays inside the box");
+    }
+
+    #[test]
+    fn truncate_ends_last_line_with_ellipsis() {
+        let size = Vec2::new(120.0, 300.0);
+        let cut = ink(&layout(&props(LONG, TextAutoResize::Truncate, Some(2)), size));
+        // some prefix + "…" laid out normally must be identical
+        let found = (1..LONG.len()).filter(|k| LONG.is_char_boundary(*k)).any(|k| {
+            let s = format!("{}\u{2026}", LONG[..k].trim_end());
+            let p = ink(&layout(&props(&s, TextAutoResize::Height, None), size));
+            p.points() == cut.points()
+        });
+        assert!(found, "truncated layout is a text prefix followed by an ellipsis");
+    }
+
+    #[test]
+    fn truncate_without_max_lines_uses_box_height() {
+        let by_height = ink(&layout(&props(LONG, TextAutoResize::Truncate, None), Vec2::new(120.0, 45.0)));
+        let by_lines = ink(&layout(&props(LONG, TextAutoResize::Truncate, Some(2)), Vec2::new(120.0, 45.0)));
+        assert!(by_height.bounds().bottom() <= 45.0);
+        assert_eq!(by_height.points(), by_lines.points(), "45px box holds two 20px lines");
+        let one = ink(&layout(&props(LONG, TextAutoResize::Truncate, None), Vec2::new(120.0, 25.0)));
+        assert!(one.bounds().bottom() <= 25.0);
+    }
+
+    #[test]
+    fn truncate_leaves_fitting_text_alone() {
+        let size = Vec2::new(300.0, 100.0);
+        let a = ink(&layout(&props("short", TextAutoResize::Truncate, Some(3)), size));
+        let b = ink(&layout(&props("short", TextAutoResize::Height, None), size));
+        assert_eq!(a.points(), b.points(), "no ellipsis when everything fits");
+    }
 }
