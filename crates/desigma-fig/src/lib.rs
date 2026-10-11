@@ -1,7 +1,30 @@
 //! Figma file support.
 //! CONTRACT: `import_rest_json`, `import_fig`, `FigError` are used by the app.
+//!
+//! - [`import_rest_json`]: body of Figma REST `GET /v1/files/:key` (ideally
+//!   requested with `geometry=paths`) -> [`Document`].
+//! - [`import_fig`]: `.fig` binary (fig-kiwi container, optionally zip-wrapped).
+//! - [`export_rest_json`]: [`Document`] -> REST-shaped JSON.
+//! - [`image_refs`]: image hashes a document needs fetched separately
+//!   (REST `GET /v1/files/:key/images`); `.fig` files embed them already.
+//! - `rest` (cargo feature `net`): blocking REST client; the access token is
+//!   always supplied by the caller at runtime and never stored or logged.
 
-use desigma_doc::Document;
+pub mod container;
+mod export;
+mod fig;
+pub mod kiwi;
+#[cfg(feature = "net")]
+pub mod rest;
+mod rest_import;
+pub mod svgpath;
+#[doc(hidden)]
+pub mod testkit;
+
+pub use desigma_doc::Document;
+pub use export::export_rest_json;
+pub use fig::{commands_blob_to_path, decode_fig_to_json, import_fig};
+pub use rest_import::{image_refs, import_rest_json};
 
 #[derive(Debug, thiserror::Error)]
 pub enum FigError {
@@ -11,16 +34,4 @@ pub enum FigError {
     Format(String),
     #[error("unsupported: {0}")]
     Unsupported(String),
-}
-
-/// Imports the body of Figma REST `GET /v1/files/:key`.
-pub fn import_rest_json(json: &str) -> Result<Document, FigError> {
-    let _ = json;
-    Err(FigError::Unsupported("REST import not implemented yet".into()))
-}
-
-/// Imports a `.fig` file (raw fig-kiwi or zip-wrapped) from bytes.
-pub fn import_fig(bytes: &[u8]) -> Result<Document, FigError> {
-    let _ = bytes;
-    Err(FigError::Unsupported(".fig import not implemented yet".into()))
 }
