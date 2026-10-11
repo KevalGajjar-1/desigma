@@ -2,6 +2,7 @@
 
 use crate::*;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Command {
@@ -16,6 +17,8 @@ pub enum Command {
     RemovePage { id: NodeId },
     /// Replace the document's prototype flow list (flow starting points).
     SetFlows { flows: Vec<Flow> },
+    /// Replace all variables and collections (variable edits).
+    SetVariables { variables: BTreeMap<String, Variable>, collections: BTreeMap<String, VariableCollection> },
     Batch(Vec<Command>),
 }
 
@@ -83,6 +86,10 @@ impl Command {
                 Command::InsertPage { index, nodes }
             }
             Command::SetFlows { flows } => Command::SetFlows { flows: std::mem::replace(&mut doc.flows, flows) },
+            Command::SetVariables { variables, collections } => Command::SetVariables {
+                variables: std::mem::replace(&mut doc.variables, variables),
+                collections: std::mem::replace(&mut doc.variable_collections, collections),
+            },
             Command::Batch(cmds) => {
                 let mut inv = Vec::with_capacity(cmds.len());
                 for c in cmds {

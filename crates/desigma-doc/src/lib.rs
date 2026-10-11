@@ -10,6 +10,7 @@ mod history;
 mod node;
 mod paint;
 mod prototype;
+mod variables;
 
 pub use components::*;
 pub use geom::*;
@@ -17,6 +18,7 @@ pub use history::*;
 pub use node::*;
 pub use paint::*;
 pub use prototype::*;
+pub use variables::*;
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -50,6 +52,12 @@ pub struct Document {
     /// Prototype flows (starting points), in display order.
     #[serde(default)]
     pub flows: Vec<Flow>,
+    /// Variables (design tokens) by id.
+    #[serde(default)]
+    pub variables: BTreeMap<String, Variable>,
+    /// Variable collections (with their modes) by id.
+    #[serde(default)]
+    pub variable_collections: BTreeMap<String, VariableCollection>,
     /// Embedded images keyed by content hash (Figma `imageRef`).
     pub images: BTreeMap<String, Vec<u8>>,
     next_id: u64,

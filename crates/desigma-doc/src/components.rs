@@ -60,6 +60,8 @@ impl Ctx {
                 styles: Default::default(),
                 style_meta: Default::default(),
                 flows: Default::default(),
+                variables: Default::default(),
+                variable_collections: Default::default(),
                 images: Default::default(),
                 next_id: doc.next_id,
             },

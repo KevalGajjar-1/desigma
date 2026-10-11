@@ -1,0 +1,191 @@
+//! Variables (design tokens) with collections and modes, as in Figma.
+//!
+//! A node binds a property to a variable through [`NodeVariables::bindings`],
+//! keyed by Figma's `boundVariables` field names ("fills/0", "width",
+//! "itemSpacing", "topLeftRadius", "visible", "characters", ...). The value used
+//! for a node comes from the mode chosen on the nearest ancestor (or the node
+//! itself) in [`NodeVariables::modes`], else the collection's default mode.
+
+use crate::{Color, Document, NodeId};
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct VariableMode {
+    pub id: String,
+    pub name: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct VariableCollection {
+    pub id: String,
+    pub name: String,
+    pub modes: Vec<VariableMode>,
+    pub default_mode: String,
+    /// Variable ids in display order.
+    pub variables: Vec<String>,
+    /// Figma library key, when imported from a published library.
+    pub key: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum VariableKind {
+    Color,
+    Number,
+    String,
+    Boolean,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum VariableValue {
+    Color(Color),
+    Number(f32),
+    String(String),
+    Boolean(bool),
+    /// Another variable's id; resolved in the same mode context.
+    Alias(String),
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Variable {
+    pub id: String,
+    /// May contain "/" for grouping ("Color/Brand/Primary").
+    pub name: String,
+    pub collection: String,
+    pub kind: VariableKind,
+    /// Value per mode id.
+    pub values: BTreeMap<String, VariableValue>,
+    pub description: String,
+    /// Figma scopes ("ALL_FILLS", "CORNER_RADIUS", "GAP", ...); empty = all.
+    pub scopes: Vec<String>,
+    pub hidden_from_publishing: bool,
+    pub key: Option<String>,
+}
+
+/// Per-node variable bindings and explicit mode choices.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct NodeVariables {
+    /// Property key (Figma `boundVariables` name) -> variable id.
+    pub bindings: BTreeMap<String, String>,
+    /// Collection id -> mode id, inherited by descendants.
+    pub modes: BTreeMap<String, String>,
+}
+
+impl NodeVariables {
+    pub fn is_empty(&self) -> bool {
+        self.bindings.is_empty() && self.modes.is_empty()
+    }
+}
+
+/// Maximum alias chain length followed before giving up (cycles).
+const MAX_ALIAS_DEPTH: usize = 16;
+
+impl Document {
+    /// Mode in effect for `collection` at `node`: the nearest explicit choice
+    /// on the node or an ancestor, else the collection default.
+    pub fn variable_mode(&self, node: NodeId, collection: &str) -> Option<String> {
+        let mut cur = Some(node);
+        while let Some(id) = cur {
+            let n = self.get(id)?;
+            if let Some(m) = n.variables.modes.get(collection) {
+                return Some(m.clone());
+            }
+            cur = n.parent;
+        }
+        self.variable_collections.get(collection).map(|c| c.default_mode.clone())
+    }
+
+    /// Resolves a variable to a concrete value as seen from `node`, following
+    /// aliases (each alias resolves in its own collection's mode at `node`).
+    pub fn resolve_variable(&self, node: NodeId, variable: &str) -> Option<VariableValue> {
+        let mut id = variable.to_string();
+        for _ in 0..MAX_ALIAS_DEPTH {
+            let v = self.variables.get(&id)?;
+            let mode = self.variable_mode(node, &v.collection)?;
+            let coll = self.variable_collections.get(&v.collection)?;
+            let value = v.values.get(&mode).or_else(|| v.values.get(&coll.default_mode))?;
+            match value {
+                VariableValue::Alias(next) => id = next.clone(),
+                other => return Some(other.clone()),
+            }
+        }
+        None
+    }
+
+    /// Resolves the variable bound to `property` on `node`, if any.
+    pub fn bound_value(&self, node: NodeId, property: &str) -> Option<VariableValue> {
+        let var = self.get(node)?.variables.bindings.get(property)?;
+        self.resolve_variable(node, var)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::*;
+
+    fn setup() -> (Document, NodeId, NodeId) {
+        let mut d = Document::new("t");
+        let page = d.add_page("P");
+        let fid = d.alloc_id();
+        let frame = d.insert(page, Node::frame(fid, Rect::new(0.0, 0.0, 100.0, 100.0))).unwrap();
+        let rid = d.alloc_id();
+        let rect = d.insert(frame, Node::rectangle(rid, Rect::new(0.0, 0.0, 10.0, 10.0))).unwrap();
+        d.variable_collections.insert(
+            "c1".into(),
+            VariableCollection {
+                id: "c1".into(),
+                name: "Theme".into(),
+                modes: vec![VariableMode { id: "light".into(), name: "Light".into() }, VariableMode { id: "dark".into(), name: "Dark".into() }],
+                default_mode: "light".into(),
+                variables: vec!["base".into(), "bg".into()],
+                key: None,
+            },
+        );
+        let var = |id: &str, values: Vec<(&str, VariableValue)>| Variable {
+            id: id.into(),
+            name: id.into(),
+            collection: "c1".into(),
+            kind: VariableKind::Color,
+            values: values.into_iter().map(|(k, v)| (k.to_string(), v)).collect(),
+            description: String::new(),
+            scopes: vec![],
+            hidden_from_publishing: false,
+            key: None,
+        };
+        d.variables.insert("base".into(), var("base", vec![("light", VariableValue::Color(Color::WHITE)), ("dark", VariableValue::Color(Color::BLACK))]));
+        d.variables.insert("bg".into(), var("bg", vec![("light", VariableValue::Alias("base".into())), ("dark", VariableValue::Alias("base".into()))]));
+        d.get_mut(rect).unwrap().variables.bindings.insert("fills/0".into(), "bg".into());
+        (d, frame, rect)
+    }
+
+    #[test]
+    fn resolves_default_mode_and_alias() {
+        let (d, _, rect) = setup();
+        assert_eq!(d.bound_value(rect, "fills/0"), Some(VariableValue::Color(Color::WHITE)));
+    }
+
+    #[test]
+    fn ancestor_mode_is_inherited() {
+        let (mut d, frame, rect) = setup();
+        d.get_mut(frame).unwrap().variables.modes.insert("c1".into(), "dark".into());
+        assert_eq!(d.bound_value(rect, "fills/0"), Some(VariableValue::Color(Color::BLACK)));
+    }
+
+    #[test]
+    fn alias_cycle_gives_none() {
+        let (mut d, _, rect) = setup();
+        d.variables.get_mut("base").unwrap().values.insert("light".into(), VariableValue::Alias("bg".into()));
+        assert_eq!(d.bound_value(rect, "fills/0"), None);
+    }
+
+    #[test]
+    fn set_variables_undo() {
+        let (mut d, _, _) = setup();
+        let mut h = History::default();
+        h.exec(&mut d, Command::SetVariables { variables: Default::default(), collections: Default::default() }).unwrap();
+        assert!(d.variables.is_empty());
+        h.undo(&mut d).unwrap();
+        assert_eq!(d.variables.len(), 2);
+        assert_eq!(d.variable_collections.len(), 1);
+    }
+}
