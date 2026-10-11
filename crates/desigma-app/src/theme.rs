@@ -93,6 +93,9 @@ pub const UI_FONT_WEIGHT: f32 = 450.0;
 pub const UI_FONT_WEIGHT_STRONG: f32 = 550.0;
 pub const UI_FONT_WEIGHT_MEDIUM: f32 = 500.0;
 pub const FAMILY_MEDIUM: &str = "desigma-medium";
+/// Table headers and sidebar rows of the variables view (ui-spec: weight 600).
+pub const UI_FONT_WEIGHT_SEMIBOLD: f32 = 600.0;
+pub const FAMILY_SEMIBOLD: &str = "desigma-semibold";
 /// Inter's optical-size axis at text sizes.
 pub const UI_FONT_OPSZ: f32 = 14.0;
 
@@ -111,6 +114,9 @@ pub fn font_body() -> FontId {
 /// Menu rows: Inter at the medium instance.
 pub fn font_menu() -> FontId {
     FontId::new(FONT_SIZE_BODY, FontFamily::Name(FAMILY_MEDIUM.into()))
+}
+pub fn font_body_semibold() -> FontId {
+    FontId::new(FONT_SIZE_BODY, FontFamily::Name(FAMILY_SEMIBOLD.into()))
 }
 pub fn font_body_strong() -> FontId {
     FontId::new(FONT_SIZE_BODY, FontFamily::Name(FAMILY_STRONG.into()))
@@ -465,6 +471,7 @@ pub fn install_fonts(ctx: &egui::Context) {
     fonts.font_data.insert("ui-regular".into(), instance(UI_FONT_WEIGHT));
     fonts.font_data.insert("ui-strong".into(), instance(UI_FONT_WEIGHT_STRONG));
     fonts.font_data.insert("ui-medium".into(), instance(UI_FONT_WEIGHT_MEDIUM));
+    fonts.font_data.insert("ui-semibold".into(), instance(UI_FONT_WEIGHT_SEMIBOLD));
     fonts.families.entry(FontFamily::Proportional).or_default().insert(0, "ui-regular".into());
     let mut strong_family = vec!["ui-strong".to_string()];
     strong_family.extend(fonts.families.get(&FontFamily::Proportional).cloned().unwrap_or_default());
@@ -472,6 +479,9 @@ pub fn install_fonts(ctx: &egui::Context) {
     let mut medium_family = vec!["ui-medium".to_string()];
     medium_family.extend(fonts.families.get(&FontFamily::Proportional).cloned().unwrap_or_default());
     fonts.families.insert(FontFamily::Name(FAMILY_MEDIUM.into()), medium_family);
+    let mut semibold_family = vec!["ui-semibold".to_string()];
+    semibold_family.extend(fonts.families.get(&FontFamily::Proportional).cloned().unwrap_or_default());
+    fonts.families.insert(FontFamily::Name(FAMILY_SEMIBOLD.into()), semibold_family);
     ctx.set_fonts(fonts);
 }
 
@@ -480,3 +490,39 @@ pub fn is_light(c: Color32) -> bool {
     let l = (0.299 * c.r() as f32 + 0.587 * c.g() as f32 + 0.114 * c.b() as f32) / 255.0;
     l > LIGHT_BG_THRESHOLD
 }
+
+// ---------------------------------------------------------------- variables view
+// Measured on the Figma UI3 local-variables captures (800x600, dpr 1).
+/// Sidebar content width; the 1px border follows it in the full view.
+pub const VAR_SIDEBAR_W: f32 = 240.0;
+/// Top bar height of the full view (excluding its 1px bottom border).
+pub const VAR_BAR_H: f32 = 48.0;
+/// Floating panel: size and default top-left.
+pub const VAR_FLOAT_W: f32 = 642.0;
+pub const VAR_FLOAT_H: f32 = 380.0;
+pub const VAR_FLOAT_Y: f32 = 8.0;
+pub const VAR_FLOAT_BAR_H: f32 = 40.0;
+pub const VAR_HEAD_H: f32 = 40.0;
+pub const VAR_ROW_H: f32 = 40.0;
+pub const VAR_ROW_PITCH: f32 = 41.0;
+/// Name column width (the 1px grid line follows it).
+pub const VAR_NAME_COL: f32 = 200.0;
+pub const VAR_MODE_MIN: f32 = 140.0;
+pub const VAR_MODE_MAX: f32 = 280.0;
+pub const VAR_ADD_COL: f32 = 39.0;
+pub const VAR_BOTTOM_H: f32 = 41.0;
+pub const VAR_SCROLL_H: f32 = 11.0;
+pub const VAR_SCROLL_THUMB: Color32 = rgb(0x707070);
+pub const VAR_SEARCH_W: f32 = 174.0;
+pub const VAR_FILTER_W: f32 = 25.0;
+pub const VAR_SIDE_ROW: f32 = 32.0;
+pub const VAR_PILL_H: f32 = 24.0;
+pub const VAR_ICON_X: f32 = 16.0;
+pub const VAR_NAME_X: f32 = 44.0;
+pub const VAR_SWATCH: f32 = 16.0;
+pub const VAR_HEX_X: f32 = 30.0;
+pub const VAR_HEX_W: f32 = 146.0;
+pub const VAR_OPACITY_W: f32 = 62.0;
+pub const VAR_OPACITY_RIGHT: f32 = 74.0;
+pub const VAR_FIELD_H: f32 = 24.0;
+pub const VAR_POPOVER_W: f32 = 264.0;

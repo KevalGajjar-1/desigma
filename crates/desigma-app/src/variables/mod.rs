@@ -1,8 +1,9 @@
-//! Variables: the "Local variables" modal, the inspector binding picker and the
-//! App operations behind them. Every change goes through `Command::SetVariables`
+//! Variables: the local-variables view (full view or floating panel), the inspector
+//! binding picker and the App operations behind them. Every change goes through `Command::SetVariables`
 //! (or ordinary node updates for bindings) so it is one undo step.
 
-pub mod modal;
+pub mod popover;
+pub mod view;
 pub mod widgets;
 
 use crate::app::App;
@@ -13,14 +14,19 @@ use egui::Rect;
 use std::collections::HashSet;
 use std::path::Path;
 
-/// Which popup menu of the modal is open.
+/// Which popup menu of the variables view is open.
 #[derive(Clone, Debug, PartialEq)]
 pub enum VarMenuKind {
-    Add,
+    /// "+ Create variable" type dropdown.
+    Create,
     Row(String),
     Mode(String, String),
     Collection(String),
     Folder(String, String),
+    /// Collection settings (sliders button): import / export.
+    Settings,
+    /// Filter button: variable types.
+    Filter,
 }
 
 #[derive(Clone, Debug)]
@@ -60,25 +66,75 @@ pub struct RowDrag {
     pub var: String,
 }
 
-#[derive(Default)]
+/// "Edit variable" popover.
+#[derive(Clone, Debug)]
+pub struct EditPopover {
+    pub var: String,
+    pub anchor: Rect,
+    pub scroll: f32,
+}
+
 pub struct VarsState {
     pub open: bool,
+    /// Full view (true) or floating panel (false); remembered between openings.
+    pub full: bool,
+    /// Top-left of the floating panel; `None` = default position.
+    pub float_pos: Option<egui::Pos2>,
+    /// Sidebar hidden by its toggle.
+    pub sidebar_hidden: bool,
     /// Selected collection id.
     pub collection: Option<String>,
+    /// Selected group path (`None` = "All").
+    pub group: Option<String>,
+    /// Selected variable rows (ids) and the range anchor.
+    pub selected: Vec<String>,
+    pub anchor: Option<String>,
     pub scroll: f32,
     pub scroll_x: f32,
     pub search: String,
+    /// Variable types hidden by the filter button.
+    pub hidden_kinds: Vec<VariableKind>,
     pub folded: HashSet<String>,
     pub menu: Option<VarMenu>,
     pub cell_picker: Option<CellPicker>,
     pub alias_picker: Option<AliasPicker>,
     pub bind_picker: Option<BindPicker>,
+    pub edit: Option<EditPopover>,
     pub drag: Option<RowDrag>,
-    /// Variable whose name field should take focus on the next frame.
+    /// Variable whose name should start editing on the next frame.
     pub focus_name: Option<String>,
-    /// Collection or folder being renamed inline: ("c", id) / ("f", "coll\0path").
+    /// Thing being renamed inline: ('v', var) / ('c', coll) / ('f', "coll\0path") / ('t', coll) / ('m', mode).
     pub renaming: Option<(char, String)>,
     pub rename_frames: u32,
+}
+
+impl Default for VarsState {
+    fn default() -> Self {
+        Self {
+            open: false,
+            full: false,
+            float_pos: None,
+            sidebar_hidden: false,
+            collection: None,
+            group: None,
+            selected: vec![],
+            anchor: None,
+            scroll: 0.0,
+            scroll_x: 0.0,
+            search: String::new(),
+            hidden_kinds: vec![],
+            folded: HashSet::new(),
+            menu: None,
+            cell_picker: None,
+            alias_picker: None,
+            bind_picker: None,
+            edit: None,
+            drag: None,
+            focus_name: None,
+            renaming: None,
+            rename_frames: 0,
+        }
+    }
 }
 
 impl App {
@@ -101,12 +157,36 @@ impl App {
         self.ui.menu = None;
     }
 
+    /// Rail "Variables" item: opens the view in its last form, or closes it.
+    pub fn toggle_variables(&mut self) {
+        if self.vars.open {
+            self.close_variables();
+        } else {
+            self.open_variables();
+        }
+    }
+
+    /// Runs `f` on a working copy of the variable store and installs the result as one undo step.
+    /// `f` returns the ids of variables and collections it removed.
+    pub fn edit_variables(&mut self, f: impl FnOnce(&mut VariableStore) -> (Vec<String>, Vec<String>)) -> bool {
+        let mut store = VariableStore::from_doc(&self.doc);
+        let (rv, rc) = f(&mut store);
+        self.commit_store(store, &rv, &rc)
+    }
+
+    /// Hook for the shared-libraries feature: variables of enabled libraries that the binding
+    /// picker lists next to the local ones. Empty until `App::library_variables()` lands.
+    pub fn library_variables_hook(&self) -> Vec<widgets::PickItem> {
+        Vec::new()
+    }
+
     pub fn close_variables(&mut self) {
         self.vars.open = false;
         self.vars.menu = None;
         self.vars.alias_picker = None;
         self.vars.renaming = None;
         self.vars.drag = None;
+        self.vars.edit = None;
         if let Some(p) = self.vars.cell_picker.take() {
             self.finish_cell_picker(p);
         }

@@ -31,25 +31,71 @@ pub fn hexagon(p: &egui::Painter, c: Pos2, r: f32, col: Color32, filled: bool) {
     }
 }
 
-/// Glyph for a variable type: colour dot, "#", "T" or a toggle.
+/// Glyph for a variable type: palette, "#", "Aa" or a toggle (16px box centred on `c`).
 pub fn kind_glyph(p: &egui::Painter, c: Pos2, kind: VariableKind, col: Color32) {
     match kind {
         VariableKind::Color => {
-            p.circle_stroke(c, 5.5, Stroke::new(1.2, col));
-            p.circle_filled(c, 2.4, col);
+            let st = Stroke::new(1.2, col);
+            p.circle_stroke(c, 6.2, st);
+            for (dx, dy) in [(-2.4, -2.2), (0.6, -3.0), (2.8, -0.6), (-3.2, 1.0)] {
+                p.circle_filled(c + Vec2::new(dx, dy), 0.9, col);
+            }
+            p.circle_filled(c + Vec2::new(2.2, 3.2), 1.9, theme::BG);
+            p.circle_stroke(c + Vec2::new(2.2, 3.2), 1.9, st);
         }
         VariableKind::Number => {
-            p.text(c, Align2::CENTER_CENTER, "#", theme::font_body_strong(), col);
+            p.text(c, Align2::CENTER_CENTER, "#", theme::font_large(), col);
         }
         VariableKind::String => {
-            p.text(c, Align2::CENTER_CENTER, "T", theme::font_body_strong(), col);
+            p.text(c, Align2::CENTER_CENTER, "Aa", theme::font_body_strong(), col);
         }
         VariableKind::Boolean => {
-            let r = Rect::from_center_size(c, Vec2::new(12.0, 7.0));
+            let r = Rect::from_center_size(c, Vec2::new(13.0, 8.0));
             p.rect_stroke(r, theme::cr(255), Stroke::new(1.2, col), StrokeKind::Inside);
-            p.circle_filled(Pos2::new(r.right() - 3.5, c.y), 2.0, col);
+            p.circle_filled(Pos2::new(r.right() - 4.0, c.y), 2.0, col);
         }
     }
+}
+
+/// Two slider tracks with knobs (collection settings).
+pub fn sliders_glyph(p: &egui::Painter, c: Pos2, col: Color32) {
+    let st = Stroke::new(1.2, col);
+    for (dx, ky) in [(-3.5, 2.0), (3.5, -2.0)] {
+        let x = c.x + dx;
+        p.line_segment([Pos2::new(x, c.y - 6.0), Pos2::new(x, c.y + 6.0)], st);
+        p.circle_filled(Pos2::new(x, c.y + ky), 2.3, theme::BG);
+        p.circle_stroke(Pos2::new(x, c.y + ky), 2.3, st);
+    }
+}
+
+/// Circle with three shrinking lines (filter).
+pub fn filter_glyph(p: &egui::Painter, c: Pos2, col: Color32) {
+    let st = Stroke::new(1.1, col);
+    p.circle_stroke(c, 7.2, st);
+    for (dy, hw) in [(-2.4, 3.6), (0.0, 2.4), (2.4, 1.0)] {
+        p.line_segment([Pos2::new(c.x - hw, c.y + dy), Pos2::new(c.x + hw, c.y + dy)], st);
+    }
+}
+
+/// Diagonal arrow pair: pointing inward (collapse) or outward (expand).
+pub fn arrows_glyph(p: &egui::Painter, c: Pos2, col: Color32, inward: bool) {
+    let st = Stroke::new(1.2, col);
+    let sign = if inward { 1.0 } else { -1.0 };
+    for s in [-1.0f32, 1.0] {
+        // the arrow sits in the top-right (s = 1) / bottom-left (s = -1) corner
+        let dir = Vec2::new(s, -s);
+        let (tip, tail) = if inward { (1.5, 5.5) } else { (5.5, 1.5) };
+        let t = c + dir * tip;
+        p.line_segment([c + dir * tail, t], st);
+        p.line_segment([t, t + Vec2::new(sign * s * 3.5, 0.0)], st);
+        p.line_segment([t, t + Vec2::new(0.0, -sign * s * 3.5)], st);
+    }
+}
+
+pub fn cross_glyph(p: &egui::Painter, c: Pos2, r: f32, col: Color32) {
+    let st = Stroke::new(1.3, col);
+    p.line_segment([c + Vec2::new(-r, -r), c + Vec2::new(r, r)], st);
+    p.line_segment([c + Vec2::new(-r, r), c + Vec2::new(r, -r)], st);
 }
 
 pub fn kind_name(kind: VariableKind) -> &'static str {
@@ -76,7 +122,7 @@ pub fn pill(ui: &mut Ui, rect: Rect, id: impl crate::widgets::Key, name: &str, s
     let fill = if hovered { theme::BG_TERTIARY } else { theme::BG_SECONDARY };
     p.rect_filled(rect, theme::cr(theme::RADIUS_MEDIUM), fill);
     let mut x = rect.left() + 12.0;
-    hexagon(p, Pos2::new(x, rect.center().y), 5.0, theme::TEXT_BRAND, false);
+    hexagon(p, Pos2::new(x, rect.center().y), 5.0, theme::ICON_SECONDARY, false);
     x += 12.0;
     if let Some(c) = swatch {
         let sw = Rect::from_center_size(Pos2::new(x + 6.0, rect.center().y), Vec2::splat(12.0));
@@ -140,7 +186,7 @@ pub enum PickResult {
 
 const PICK_W: f32 = 248.0;
 const PICK_MAX_H: f32 = 320.0;
-const PICK_ROW: f32 = 28.0;
+const PICK_ROW: f32 = 24.0;
 const PICK_GROUP: f32 = 26.0;
 const PICK_HEAD: f32 = 40.0;
 
@@ -201,20 +247,18 @@ pub fn picker(
         let (full, _) = ui.allocate_exact_size(size, Sense::hover());
         let p = ui.painter().clone();
         widgets::menu_panel(&p, full, theme::MENU_RADIUS);
-        p.text(Pos2::new(full.left() + 14.0, full.top() + 20.0), Align2::LEFT_CENTER, title, theme::font_body_strong(), theme::TEXT_SECONDARY);
-        // search
-        let sr = Rect::from_min_size(
-            Pos2::new(full.left() + 8.0 + 90.0_f32.min(full.width() * 0.38), full.top() + 8.0),
-            Vec2::new(full.width() - 16.0 - 90.0_f32.min(full.width() * 0.38), 24.0),
-        );
+        let _ = title;
+        let sr = Rect::from_min_size(Pos2::new(full.left() + 8.0, full.top() + 8.0), Vec2::new(full.width() - 16.0, 24.0));
         p.rect_filled(sr, theme::cr(theme::RADIUS_MEDIUM), theme::BG_SECONDARY);
+        crate::icons::paint(&p, crate::icons::Icon::Search, Pos2::new(sr.left() + 14.0, sr.center().y), 12.0, theme::ICON_TERTIARY);
+        let sr = Rect::from_min_max(sr.min + Vec2::new(22.0, 0.0), sr.max);
         let te = egui::TextEdit::singleline(query)
             .id(id.with("q"))
             .hint_text("Search")
             .font(theme::font_body())
             .text_color(theme::TEXT)
             .frame(egui::Frame::NONE)
-            .margin(egui::Margin::symmetric(8, 0))
+            .margin(egui::Margin::symmetric(4, 0))
             .vertical_align(egui::Align::Center)
             .desired_width(sr.width());
         let out = ui.put(sr, te);

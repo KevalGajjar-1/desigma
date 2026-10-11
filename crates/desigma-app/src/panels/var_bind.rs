@@ -89,6 +89,8 @@ pub fn bind_picker(app: &mut App, ctx: &Context) {
             }
         }
     }
+    // shared libraries: hook until `App::library_variables()` exists
+    items.extend(app.library_variables_hook().into_iter().filter(|i| i.kind == bp.kind));
     let title = match bp.kind {
         VariableKind::Color => "Colors",
         VariableKind::Number => "Numbers",
