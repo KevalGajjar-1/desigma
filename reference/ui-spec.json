@@ -91,7 +91,35 @@
       "tabs": { "y": 48, "h": 24, "radius": 5, "x_from_panel": 9, "active": { "bg": "bg_secondary", "font_weight": 550, "color": "text" }, "inactive": { "color": "text_secondary", "font_weight": 450 }, "zoom_dropdown": { "x_from_right": 63, "w": 55 } },
       "content_top": 81,
       "section": { "title_font": "body_medium strong", "title_height": 40, "padding_x": 16, "action_button": { "size": 24, "radius": 5, "right_pad": 8 } },
-      "input": { "height": 24, "radius": 5, "font": "body_medium", "bg": "bg_secondary", "hover_border": "border" }
+      "input": { "height": 24, "radius": 5, "font": "body_medium", "bg": "bg_secondary", "hover_border": "border" },
+      "_selection_note": "x values below are relative to the panel's left edge (the 1px border is at x=0). Measured from the Dray Insight file with an instance selected.",
+      "selection_header": {
+        "y": 93,
+        "name_field": { "x": 9, "w": 136, "h": 24, "font": "body_large", "radius": 5, "bg": "bg" },
+        "action_buttons": { "x": [153, 181, 209], "size": 24, "radius": 5 }
+      },
+      "property_section": {
+        "title_row": { "x": 1, "w": 240, "h": 40, "text_x": 17, "text_y_offset": 12, "font": "body_medium strong" },
+        "empty_section": { "row_h": 32, "pitch": 41, "title_color": "text_secondary", "plus_button": { "x": 209, "size": 24 } },
+        "separator": "1px border between sections (pitch = height + 1)",
+        "sublabel": { "font": "body_medium", "color": "text_secondary", "h": 16 },
+        "content_x": 17,
+        "content_w": 184,
+        "trailing_button_x": 209
+      },
+      "fields": {
+        "two_col": { "x": [17, 113], "w": 88, "h": 24, "gap": 8, "bg": "bg_secondary", "radius": 5, "font": "body_medium weight 450", "prefix_label_w": 23 },
+        "row_pitch_with_label": 48,
+        "segmented": { "button_w": 29, "h": 24, "x_start": 17, "group_gap": 8, "bg": "bg_secondary", "first_radius": [5, 0, 0, 5], "last_radius": [0, 5, 5, 0] },
+        "dimension_value": { "w": 48, "radius": 2 }
+      },
+      "section_order_with_selection": ["Properties (component)", "Position", "Auto layout", "Appearance", "Fill", "Stroke", "Effects", "Selection colors", "Layout guide", "Export"],
+      "section_y_example": { "Position": 166, "Auto layout": 375, "Appearance": 676, "Fill": 779, "Stroke": 820, "Effects": 861 }
+    },
+    "canvas_selection": {
+      "frame_outline": "#0d99ff",
+      "component_or_instance_outline": "#9747ff",
+      "size_badge": { "bg": "same as outline color", "text": "#ffffff", "font": "body_small strong", "radius": 2, "offset_below": 4, "format": "{w} × {h}" }
     },
     "toolbelt": {
       "height": 48, "bottom_margin": 12, "radius": 13, "bg": "bg_toolbar", "padding": 8, "width_example": 512,
