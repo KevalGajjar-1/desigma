@@ -315,7 +315,7 @@ fn poly_path(w: f32, h: f32, pts: &[(f32, f32)], radius: f32) -> Option<sk::Path
         let cos = (d1.0 * d2.0 + d1.1 * d2.1).clamp(-1.0, 1.0);
         let phi = cos.acos(); // interior angle
         let half_tan = (phi / 2.0).tan();
-        if phi < 1e-3 || phi > PI - 1e-3 || half_tan < 1e-6 {
+        if !(1e-3..=PI - 1e-3).contains(&phi) || half_tan < 1e-6 {
             corners.push((cur, cur, cur, d1, d2, 0.0));
             continue;
         }
