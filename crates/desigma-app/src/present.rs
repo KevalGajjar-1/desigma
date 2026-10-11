@@ -58,6 +58,8 @@ pub struct PresentState {
     /// Screen rect of the current frame in the last painted frame (for tests and hit testing).
     pub stage: ERect,
     pub scale: f32,
+    /// Device screen (rect, corner radius in px) the stage is letterboxed into, if a device is set.
+    pub device_screen: Option<(ERect, f32)>,
     pub pending_url: Option<(String, bool)>,
     pub close: bool,
 }
@@ -74,6 +76,7 @@ impl PresentState {
             drag: None,
             stage: ERect::NOTHING,
             scale: 1.0,
+            device_screen: None,
             pending_url: None,
             close: false,
         }
@@ -108,6 +111,16 @@ pub fn stage_layout(avail: ERect, frame: Vec2, pad: f32) -> (ERect, f32) {
     let sh = (avail.height() - 2.0 * pad).max(10.0) / frame.y.max(1.0);
     let s = sw.min(sh).clamp(0.05, theme::PRESENT_MAX_SCALE);
     (ERect::from_center_size(avail.center(), EV::new(frame.x * s, frame.y * s)), s)
+}
+
+/// Letterboxes `frame` into a device screen of `device` units that fits `avail` (with a bezel and
+/// `pad` around it). Returns the device screen rect, its corner radius in px, the frame's rect
+/// and the frame's scale.
+pub fn device_layout(avail: ERect, frame: Vec2, device: Vec2, radius: f32, pad: f32) -> (ERect, f32, ERect, f32) {
+    let (screen, dev_scale) = stage_layout(avail, device, pad + theme::PRESENT_BEZEL);
+    let k = (screen.width() / frame.x.max(1.0)).min(screen.height() / frame.y.max(1.0));
+    let stage = ERect::from_center_size(screen.center(), EV::new(frame.x * k, frame.y * k));
+    (screen, radius * dev_scale, stage, k)
 }
 
 // ----------------------------------------------------------------- rendering
@@ -340,7 +353,17 @@ pub fn show(app: &mut App, ui: &mut Ui) {
     // ---- stage geometry
     let area = ERect::from_min_max(Pos2::new(full.left(), bar.bottom()), full.max);
     let cur_size = st.player.size_of(st.player.current);
-    let (stage, scale) = stage_layout(area, cur_size, theme::PRESENT_PADDING);
+    let (stage, scale) = match crate::proto::device_viewport(&app.doc.prototype_device) {
+        Some((dev, radius)) => {
+            let (screen, r, stage, k) = device_layout(area, cur_size, dev, radius, theme::PRESENT_PADDING);
+            st.device_screen = Some((screen, r));
+            (stage, k)
+        }
+        None => {
+            st.device_screen = None;
+            stage_layout(area, cur_size, theme::PRESENT_PADDING)
+        }
+    };
     st.stage = stage;
     st.scale = scale;
     let px = scale * ctx.pixels_per_point();
@@ -432,6 +455,10 @@ pub fn show(app: &mut App, ui: &mut Ui) {
 }
 
 fn page_bg(app: &App) -> Color32 {
+    // A background stored with the prototype device wins.
+    if let Some(c) = app.doc.prototype_device.background {
+        return Color32::from_rgb((c.r * 255.0).round() as u8, (c.g * 255.0).round() as u8, (c.b * 255.0).round() as u8);
+    }
     // The prototype background is the page background unless it is still the editor default.
     match app.doc.get(app.page).map(|n| &n.kind) {
         Some(NodeKind::Page { background }) => {
@@ -464,10 +491,11 @@ fn target_at(st: &PresentState, pos: Pos2, now: f64) -> Option<NodeId> {
 
 #[allow(clippy::too_many_arguments)]
 fn paint_stage(st: &mut PresentState, ctx: &Context, p: &egui::Painter, stage: ERect, px: f32, scale: f32, now: f64, app: &App) {
-    // Device bezel behind the frame.
-    if let Some((_, w, _h, r)) = crate::proto::DEVICES.get(app.proto.device).filter(|d| d.1 > 0.0) {
-        let _ = w;
-        p.rect_filled(stage.expand(10.0), theme::cr((r * scale + 10.0).clamp(0.0, 80.0) as u8), Color32::BLACK);
+    // Device bezel and screen behind the (letterboxed) frame.
+    if let Some((screen, r)) = st.device_screen {
+        let rr = |v: f32| theme::cr(v.clamp(0.0, 120.0) as u8);
+        p.rect_filled(screen.expand(theme::PRESENT_BEZEL), rr(r + theme::PRESENT_BEZEL), Color32::BLACK);
+        p.rect_filled(screen, rr(r), page_bg(app));
     }
     let clip = stage;
     let pc = p.with_clip_rect(clip);

@@ -101,11 +101,20 @@ fn device_section(app: &mut App, ui: &mut Ui, pane: &mut Pane) {
     title(ui, pane, "Device", None, false);
     let names: Vec<String> =
         proto::DEVICES.iter().map(|d| if d.1 > 0.0 { format!("{} ({}×{})", d.0, d.1 as i32, d.2 as i32) } else { d.0.to_string() }).collect();
-    let cur = app.proto.device.min(names.len() - 1);
+    let stored = app.doc.prototype_device.clone();
+    // A device from elsewhere (not one of the presets) is shown by name and size.
+    let label = match proto::device_index(&stored) {
+        Some(i) => names[i].clone(),
+        None => {
+            let sz = stored.size.map(|s| format!(" ({}×{})", s.x as i32, s.y as i32)).unwrap_or_default();
+            format!("{}{sz}", stored.preset.clone().unwrap_or_default())
+        }
+    };
     let r = pane.full(0.0);
     record(ui, "proto-device", r);
-    if let Some(i) = dropdown(ui, r, "proto-device", &names[cur], &names) {
-        app.proto.device = i;
+    if let Some(i) = dropdown(ui, r, "proto-device", &label, &names) {
+        let device = proto::device_for(i, &stored);
+        app.set_prototype_device(device);
     }
     pane.y += theme::FIELD_HEIGHT + 12.0;
     section_sep(ui, pane, false);
