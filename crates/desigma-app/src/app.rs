@@ -23,6 +23,8 @@ impl Default for View {
     }
 }
 
+// `View` is Copy, but these keep `&self` so call sites read `view.to_screen(..)` uniformly.
+#[allow(clippy::wrong_self_convention)]
 impl View {
     pub fn to_screen(&self, origin: egui::Pos2, p: Vec2) -> egui::Pos2 {
         egui::pos2(origin.x + (p.x - self.offset.x) * self.zoom, origin.y + (p.y - self.offset.y) * self.zoom)

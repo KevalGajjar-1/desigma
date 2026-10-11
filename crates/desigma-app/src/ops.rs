@@ -98,6 +98,7 @@ impl App {
         let mut items: Vec<(NodeId, Rect)> = tops.iter().map(|i| (*i, world_aabb(&self.doc, *i))).collect();
         let bb = union_all(items.iter().map(|i| i.1)).unwrap_or_default();
         let horizontal = bb.w >= bb.h;
+        #[allow(clippy::type_complexity)] // pair of fn-pointer axis accessors
         let (start, len): (fn(&Rect) -> f32, fn(&Rect) -> f32) = if horizontal { (|r| r.x, |r| r.w) } else { (|r| r.y, |r| r.h) };
         items.sort_by(|a, b| start(&a.1).partial_cmp(&start(&b.1)).unwrap_or(std::cmp::Ordering::Equal));
         let total: f32 = items.iter().map(|i| len(&i.1)).sum();
@@ -460,10 +461,9 @@ impl App {
             return;
         }
         let mut tx = Tx::new();
-        let target;
         let single_frame = tops.len() == 1 && self.doc.get(tops[0]).map(|n| n.kind.frame_props().is_some() && n.parent.is_some()).unwrap_or(false);
-        if single_frame {
-            target = tops[0];
+        let target = if single_frame {
+            tops[0]
         } else {
             // Order children by position along the dominant axis.
             let rects: Vec<(NodeId, Rect)> = tops.iter().map(|t| (*t, world_aabb(&self.doc, *t))).collect();
@@ -500,7 +500,7 @@ impl App {
             self.run_tx(tx);
             self.selection = vec![g];
             return;
-        }
+        };
         if let Some(n) = tx.ed.node(&mut self.doc, target) {
             if let Some(fp) = n.kind.frame_props_mut() {
                 fp.auto_layout = match fp.auto_layout {

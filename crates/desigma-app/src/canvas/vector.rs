@@ -403,7 +403,7 @@ pub fn press(app: &mut App, rect: ERect, pos: Pos2, mods: Modifiers) -> bool {
             // Inside (or just around) the node: deselect the vertex and stay in edit mode.
             let inside = {
                 let to_s = mapper(app, rect, world);
-                let c = [v2(0.0, 0.0), v2(size.x, 0.0), v2(size.x, size.y), v2(0.0, size.y)].map(|q| to_s(q));
+                let c = [v2(0.0, 0.0), v2(size.x, 0.0), v2(size.x, size.y), v2(0.0, size.y)].map(to_s);
                 let (x0, x1) = (c.iter().map(|q| q.x).fold(f32::MAX, f32::min), c.iter().map(|q| q.x).fold(f32::MIN, f32::max));
                 let (y0, y1) = (c.iter().map(|q| q.y).fold(f32::MAX, f32::min), c.iter().map(|q| q.y).fold(f32::MIN, f32::max));
                 let m = theme::VEDIT_HIT;

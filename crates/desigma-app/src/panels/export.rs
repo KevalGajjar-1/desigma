@@ -81,7 +81,7 @@ fn thumbnail(app: &App, ui: &Ui, node: NodeId) -> Option<Thumb> {
         return None;
     }
     // Render at 2x the preview box so it stays sharp on hi-dpi screens.
-    let scale = (theme::SECTION_CONTENT_W * 2.0 / b.w).min(PREVIEW_H * 2.0 / b.h).min(2.0).max(0.01);
+    let scale = (theme::SECTION_CONTENT_W * 2.0 / b.w).min(PREVIEW_H * 2.0 / b.h).clamp(0.01, 2.0);
     let pm = desigma_export::render_export(&app.doc, node, scale)?;
     let img = egui::ColorImage::from_rgba_premultiplied([pm.width() as usize, pm.height() as usize], pm.data());
     let tex = ctx.load_texture("export-preview", img, TextureOptions::LINEAR);

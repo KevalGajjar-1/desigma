@@ -309,6 +309,7 @@ fn layer_bindings(app: &mut App, ui: &mut Ui, pane: &mut Pane, id: NodeId) {
     }
     let Some(n) = app.doc.get(id).cloned() else { return };
     let defs = prop_defs(&app.doc, comp);
+    #[allow(clippy::type_complexity)] // local row table of (label, field, predicate)
     let mut rows: Vec<(&'static str, OverrideField, fn(&PropKind) -> bool)> =
         vec![("Visibility", OverrideField::Visible, |k| matches!(k, PropKind::Boolean))];
     if matches!(n.kind, NodeKind::Text(_)) {

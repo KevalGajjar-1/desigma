@@ -114,7 +114,7 @@ pub fn overlays(app: &App, ui: &Ui, rect: ERect) {
         }
         if let Some((corners, is_line)) = selection_box(app) {
             let col = sel_color(app, app.selection[0]);
-            let s = corners.map(|c| to_s(c));
+            let s = corners.map(&to_s);
             if multi {
                 p.add(egui::Shape::closed_line(s.to_vec(), Stroke::new(theme::CANVAS_OUTLINE_WIDTH, col)));
             }

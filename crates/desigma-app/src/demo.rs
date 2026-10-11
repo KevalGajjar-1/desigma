@@ -5,6 +5,8 @@ use crate::layout;
 use crate::theme;
 use desigma_doc::*;
 
+// Demo-document builder: a flat positional signature is the clearest here.
+#[allow(clippy::too_many_arguments)]
 fn txt(doc: &mut Document, parent: NodeId, x: f32, y: f32, s: &str, size: f32, weight: u16, color: Color) -> NodeId {
     let id = doc.alloc_id();
     let style = TextStyle { font_size: size, font_weight: weight, fills: vec![Paint::solid(color)], ..Default::default() };
