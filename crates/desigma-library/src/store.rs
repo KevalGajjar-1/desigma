@@ -13,6 +13,7 @@ use desigma_doc::{Document, Vec2};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, MutexGuard};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Name of the project created on first launch.
@@ -97,6 +98,14 @@ pub fn now_ms() -> u64 {
             Err(p) => prev = p,
         }
     }
+}
+
+static WRITE_LOCK: Mutex<()> = Mutex::new(());
+
+/// Serialises manifest read-modify-write cycles within the process (the app saves
+/// thumbnails on a background thread while the UI thread keeps editing the index).
+fn write_lock() -> MutexGuard<'static, ()> {
+    WRITE_LOCK.lock().unwrap_or_else(|e| e.into_inner())
 }
 
 /// Writes `bytes` to `path` via a temporary file in the same directory, so a
@@ -333,6 +342,7 @@ impl Library {
     }
 
     pub fn create_file(&self, project: &str, folder: Option<&str>, name: &str, doc: &Document) -> Result<FileEntry> {
+        let _guard = write_lock();
         let name = clean_name(name, "file")?;
         let mut m = self.load_manifest(project)?;
         if let Some(f) = folder {
@@ -361,6 +371,7 @@ impl Library {
 
     /// Overwrites the file's contents atomically and bumps its modified time.
     pub fn save_file(&self, id: &str, doc: &Document) -> Result<()> {
+        let _guard = write_lock();
         let (mut m, i) = self.find_file(id)?;
         write_atomic(&self.file_path(&m.project.id, id), doc.to_json()?.as_bytes())?;
         let now = now_ms();
@@ -376,6 +387,7 @@ impl Library {
     }
 
     fn update_file(&self, id: &str, f: impl FnOnce(&mut FileEntry)) -> Result<()> {
+        let _guard = write_lock();
         let (mut m, i) = self.find_file(id)?;
         f(&mut m.files[i]);
         self.save_manifest(&m)
@@ -396,6 +408,7 @@ impl Library {
     }
 
     pub fn duplicate_file(&self, id: &str) -> Result<FileEntry> {
+        let _guard = write_lock();
         let (mut m, i) = self.find_file(id)?;
         let src = m.files[i].clone();
         let now = now_ms();
@@ -424,6 +437,7 @@ impl Library {
 
     /// Moves a file to another project and/or folder.
     pub fn move_file(&self, id: &str, project: &str, folder: Option<&str>) -> Result<()> {
+        let _guard = write_lock();
         let (mut src, i) = self.find_file(id)?;
         if src.project.id == project {
             if let Some(f) = folder {
@@ -467,6 +481,7 @@ impl Library {
 
     /// Stores a PNG thumbnail for the file.
     pub fn set_thumbnail(&self, id: &str, png: &[u8]) -> Result<()> {
+        let _guard = write_lock();
         let (mut m, i) = self.find_file(id)?;
         let rel = Self::thumb_rel(&m.project.id, id);
         write_atomic(&self.path(&rel), png)?;
@@ -518,6 +533,7 @@ impl Library {
 
     /// Moves a file to the trash.
     pub fn trash_file(&self, id: &str) -> Result<()> {
+        let _guard = write_lock();
         let (mut m, i) = self.find_file(id)?;
         let entry = m.files[i].clone();
         let dir = self.trash_dir(id);
@@ -552,6 +568,7 @@ impl Library {
 
     /// Restores a trashed file into its original project (and folder, if it still exists).
     pub fn restore_file(&self, id: &str) -> Result<FileEntry> {
+        let _guard = write_lock();
         let dir = self.trash_dir(id);
         let item: TrashItem =
             serde_json::from_str(&std::fs::read_to_string(dir.join(TRASH_MANIFEST)).map_err(|_| LibraryError::NotFound(format!("trashed file {id}")))?)?;
