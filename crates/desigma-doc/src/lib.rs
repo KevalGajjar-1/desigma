@@ -10,6 +10,7 @@ mod history;
 mod node;
 mod paint;
 mod prototype;
+mod settings;
 mod variables;
 mod variables_apply;
 mod variables_edit;
@@ -20,6 +21,7 @@ pub use history::*;
 pub use node::*;
 pub use paint::*;
 pub use prototype::*;
+pub use settings::*;
 pub use variables::*;
 pub use variables_apply::*;
 pub use variables_edit::*;
@@ -62,6 +64,12 @@ pub struct Document {
     /// Variable collections (with their modes) by id.
     #[serde(default)]
     pub variable_collections: BTreeMap<String, VariableCollection>,
+    /// Ruler guides per page.
+    #[serde(default)]
+    pub guides: BTreeMap<NodeId, Vec<Guide>>,
+    /// Device used when presenting the prototype.
+    #[serde(default)]
+    pub prototype_device: PrototypeDevice,
     /// Embedded images keyed by content hash (Figma `imageRef`).
     pub images: BTreeMap<String, Vec<u8>>,
     next_id: u64,

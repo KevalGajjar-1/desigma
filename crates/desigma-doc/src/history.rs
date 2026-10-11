@@ -36,6 +36,15 @@ pub enum Command {
     SetFlows {
         flows: Vec<Flow>,
     },
+    /// Replace the guides of one page.
+    SetGuides {
+        page: NodeId,
+        guides: Vec<Guide>,
+    },
+    /// Replace the prototype device settings.
+    SetPrototypeDevice {
+        device: PrototypeDevice,
+    },
     /// Replace all variables and collections (variable edits).
     SetVariables {
         variables: BTreeMap<String, Variable>,
@@ -108,6 +117,11 @@ impl Command {
                 Command::InsertPage { index, nodes }
             }
             Command::SetFlows { flows } => Command::SetFlows { flows: std::mem::replace(&mut doc.flows, flows) },
+            Command::SetGuides { page, guides } => {
+                let old = if guides.is_empty() { doc.guides.remove(&page) } else { doc.guides.insert(page, guides) };
+                Command::SetGuides { page, guides: old.unwrap_or_default() }
+            }
+            Command::SetPrototypeDevice { device } => Command::SetPrototypeDevice { device: std::mem::replace(&mut doc.prototype_device, device) },
             Command::SetVariables { variables, collections } => Command::SetVariables {
                 variables: std::mem::replace(&mut doc.variables, variables),
                 collections: std::mem::replace(&mut doc.variable_collections, collections),

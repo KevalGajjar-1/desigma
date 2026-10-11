@@ -62,6 +62,8 @@ impl Ctx {
                 flows: Default::default(),
                 variables: Default::default(),
                 variable_collections: Default::default(),
+                guides: Default::default(),
+                prototype_device: Default::default(),
                 images: Default::default(),
                 next_id: doc.next_id,
             },

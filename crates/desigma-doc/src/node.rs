@@ -51,6 +51,9 @@ pub struct Node {
     /// Variable bindings and explicit modes; empty for most nodes.
     #[serde(default, skip_serializing_if = "NodeVariables::is_empty")]
     pub variables: NodeVariables,
+    /// Export presets shown in the inspector's Export section.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub export_settings: Vec<ExportPreset>,
 }
 
 /// A node property that an instance can override independently of its main
@@ -156,6 +159,7 @@ impl Node {
             component: ComponentLink::default(),
             prototype: PrototypeProps::default(),
             variables: NodeVariables::default(),
+            export_settings: Vec::new(),
         }
     }
 

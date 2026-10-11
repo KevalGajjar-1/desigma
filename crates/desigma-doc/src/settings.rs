@@ -1,0 +1,98 @@
+//! Per-document and per-node settings that are not part of the scene itself:
+//! ruler guides, export presets and the prototype device.
+
+use crate::NodeId;
+use serde::{Deserialize, Serialize};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum GuideAxis {
+    /// A vertical line at `offset` on the x axis.
+    X,
+    /// A horizontal line at `offset` on the y axis.
+    Y,
+}
+
+/// A ruler guide. Page guides have `frame: None` and page-space offsets;
+/// frame guides move with their frame and use frame-local offsets.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Guide {
+    pub axis: GuideAxis,
+    pub offset: f32,
+    pub frame: Option<NodeId>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ExportFileFormat {
+    #[default]
+    Png,
+    Jpg,
+    Svg,
+    Pdf,
+}
+
+/// How an export size is constrained, as in Figma's export rows.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub enum ExportConstraint {
+    Scale(f32),
+    Width(f32),
+    Height(f32),
+}
+
+impl Default for ExportConstraint {
+    fn default() -> Self {
+        ExportConstraint::Scale(1.0)
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct ExportPreset {
+    pub format: ExportFileFormat,
+    pub constraint: ExportConstraint,
+    /// File name suffix, e.g. "@2x".
+    pub suffix: String,
+}
+
+/// Device the prototype is presented on.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct PrototypeDevice {
+    /// Preset name ("iPhone 15", "Desktop", ...); `None` = no device frame.
+    pub preset: Option<String>,
+    /// Viewport size in px when a preset is chosen.
+    pub size: Option<crate::Vec2>,
+    pub background: Option<crate::Color>,
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::*;
+
+    #[test]
+    fn guides_and_device_undo() {
+        let mut d = Document::new("t");
+        let page = d.add_page("P");
+        let mut h = History::default();
+        let g = Guide { axis: GuideAxis::X, offset: 40.0, frame: None };
+        h.exec(&mut d, Command::SetGuides { page, guides: vec![g] }).unwrap();
+        assert_eq!(d.guides[&page], vec![g]);
+        h.exec(&mut d, Command::SetPrototypeDevice { device: PrototypeDevice { preset: Some("Desktop".into()), ..Default::default() } }).unwrap();
+        h.undo(&mut d).unwrap();
+        assert_eq!(d.prototype_device, PrototypeDevice::default());
+        h.undo(&mut d).unwrap();
+        assert!(!d.guides.contains_key(&page));
+        h.redo(&mut d).unwrap();
+        assert_eq!(d.guides[&page].len(), 1);
+    }
+
+    #[test]
+    fn export_settings_roundtrip_and_omitted_when_empty() {
+        let mut d = Document::new("t");
+        let page = d.add_page("P");
+        let id = d.alloc_id();
+        let mut n = Node::rectangle(id, Rect::new(0.0, 0.0, 1.0, 1.0));
+        n.export_settings.push(ExportPreset { format: ExportFileFormat::Svg, constraint: ExportConstraint::Width(512.0), suffix: "@512".into() });
+        d.insert(page, n).unwrap();
+        let back = Document::from_json(&d.to_json().unwrap()).unwrap();
+        assert_eq!(back.get(id).unwrap().export_settings, d.get(id).unwrap().export_settings);
+        assert!(!serde_json::to_string(back.get(page).unwrap()).unwrap().contains("export_settings"));
+    }
+}
