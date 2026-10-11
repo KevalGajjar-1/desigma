@@ -18,11 +18,14 @@ pub struct Shape {
     pub fillable: bool,
     /// Plain rectangle (used by per-side stroke weights).
     pub is_rect: bool,
+    /// Precomputed stroke outline (`Node::stroke_geometry`): filled with the
+    /// stroke paints instead of stroking `paths`.
+    pub stroke_paths: Option<Vec<(sk::Path, sk::FillRule)>>,
 }
 
 impl Shape {
     fn single(path: sk::Path, rule: sk::FillRule, closed: bool) -> Self {
-        Self { paths: vec![(path, rule)], closed, fillable: true, is_rect: false }
+        Self { paths: vec![(path, rule)], closed, fillable: true, is_rect: false, stroke_paths: None }
     }
 }
 
@@ -240,13 +243,28 @@ pub fn vector_paths(paths: &[d::Path]) -> Shape {
             out.push((path, fill_rule(p.fill_rule)));
         }
     }
-    Shape { paths: out, closed, fillable: true, is_rect: false }
+    Shape { paths: out, closed, fillable: true, is_rect: false, stroke_paths: None }
 }
 
 /// Geometry for a node, or `None` when it has no own geometry (groups, pages,
 /// text, unknown). `tol` is the flattening tolerance in local units used by
 /// boolean operations.
+///
+/// Precomputed `fill_geometry` / `stroke_geometry` (imported from Figma) take
+/// precedence over geometry derived from the node kind.
 pub fn node_shape(doc: &Document, n: &Node, tol: f32) -> Option<Shape> {
+    let given = n.fill_geometry.as_deref().map(vector_paths).filter(|s| !s.paths.is_empty());
+    let mut shape = match given {
+        Some(s) => Some(s),
+        None => derived_shape(doc, n, tol),
+    }?;
+    if let Some(sg) = n.stroke_geometry.as_deref().map(vector_paths).filter(|s| !s.paths.is_empty()) {
+        shape.stroke_paths = Some(sg.paths);
+    }
+    Some(shape)
+}
+
+fn derived_shape(doc: &Document, n: &Node, tol: f32) -> Option<Shape> {
     let (w, h) = (n.size.x, n.size.y);
     match &n.kind {
         NodeKind::Frame(_)
@@ -265,7 +283,7 @@ pub fn node_shape(doc: &Document, n: &Node, tol: f32) -> Option<Shape> {
             let mut pb = sk::PathBuilder::new();
             pb.move_to(0.0, 0.0);
             pb.line_to(w, 0.0);
-            Some(Shape { paths: vec![(pb.finish()?, sk::FillRule::Winding)], closed: false, fillable: false, is_rect: false })
+            Some(Shape { paths: vec![(pb.finish()?, sk::FillRule::Winding)], closed: false, fillable: false, is_rect: false, stroke_paths: None })
         }
         NodeKind::Polygon { count } => Some(Shape::single(poly_path(w, h, &polygon_points(*count))?, sk::FillRule::Winding, true)),
         NodeKind::Star { count, inner_ratio } => {

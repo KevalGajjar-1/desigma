@@ -365,7 +365,11 @@ impl Renderer<'_> {
                     desigma_doc::StrokeAlign::Outside if sh.closed => n.stroke.weight * 2.0,
                     _ => n.stroke.weight,
                 };
-                if !strokes.is_empty() && outset > 0.0 {
+                if let (Some(sp), false) = (&sh.stroke_paths, strokes.is_empty()) {
+                    for (path, rule) in sp {
+                        pm.fill_path(path, &black_paint(1.0), *rule, ts2, None);
+                    }
+                } else if !strokes.is_empty() && outset > 0.0 {
                     let mut st = sk::Stroke { width: outset, line_join: sk::LineJoin::Miter, ..Default::default() };
                     st.miter_limit = 4.0;
                     for (path, _) in &sh.paths {
@@ -437,6 +441,13 @@ impl Renderer<'_> {
     fn draw_strokes(&self, n: &Node, sh: &Shape, ts: sk::Transform, target: &mut sk::Pixmap, clip: Option<&sk::Mask>, alpha: f32) {
         let paints = self.visible_strokes(n);
         if paints.is_empty() {
+            return;
+        }
+        // precomputed outline: already expanded by weight and alignment
+        if let Some(sp) = &sh.stroke_paths {
+            for p in paints {
+                fill_paths(&self.env, target, sp, ts, n.size, p, alpha, clip);
+            }
             return;
         }
         let (tw, th) = (target.width(), target.height());
