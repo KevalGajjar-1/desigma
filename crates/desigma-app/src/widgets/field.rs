@@ -44,7 +44,7 @@ pub fn edit_text(ui: &mut Ui, rect: Rect, id: Id, display: &str, font: FontId, c
     None
 }
 
-fn parse_number(s: &str) -> Option<f32> {
+pub(crate) fn parse_number(s: &str) -> Option<f32> {
     let t = s.trim().trim_end_matches(['%', '°']).trim_end_matches("px").trim();
     t.parse::<f32>().ok().or_else(|| eval_simple(t))
 }

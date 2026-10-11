@@ -1,7 +1,7 @@
 //! Right panel content: page settings when nothing is selected, otherwise the
 //! inspector (alignment, position, layout, appearance, fill, stroke, effects).
 
-use super::{clipped, scrollbar, wheel_scroll};
+use super::{clipped, scrollbar, var_bind, wheel_scroll};
 use crate::app::App;
 use crate::edit::Tx;
 use crate::icons::{self, Icon};
@@ -375,7 +375,7 @@ fn selection_colors_section(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[
 
 // ---------------------------------------------------------------- selection
 fn selection_ui(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[NodeId]) {
-    let Some(n0) = app.doc.get(sel[0]).cloned() else { return };
+    let Some(n0) = app.doc.get(sel[0]).map(|n| resolve_node(&app.doc, n).into_owned()) else { return };
     let multi = sel.len() > 1;
     let is_text = matches!(n0.kind, NodeKind::Text(_));
     let is_frame = n0.kind.frame_props().is_some();
@@ -528,14 +528,17 @@ fn selection_ui(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[NodeId]) {
     section_sep(ui, pane, false);
     title(ui, pane, "Appearance", None, false);
     let op = common(app, sel, |n| (n.opacity * 100.0).round());
-    if let Some(v) = field::num_field(ui, pane.col(0, 0.0), "opacity", Prefix::Icon(Icon::Opacity), op, "%") {
+    let op_r = pane.col(0, 0.0);
+    if let Some(v) = var_bind::numeric(app, ui, op_r, sel, &["opacity"], |ui| field::num_field(ui, op_r, "opacity", Prefix::Icon(Icon::Opacity), op, "%")) {
         let o = (v / 100.0).clamp(0.0, 1.0);
         app.edit_nodes(sel, |n| n.opacity = o);
     }
     let has_radius = !matches!(n0.kind, NodeKind::Text(_) | NodeKind::Line | NodeKind::Group | NodeKind::Vector { .. });
     if has_radius {
         let rad = common(app, sel, |n| n.corner_radii[0]);
-        if let Some(v) = field::num_field(ui, pane.col(1, 0.0), "radius", Prefix::Icon(Icon::Radius), rad, "") {
+        let rad_r = pane.col(1, 0.0);
+        let radius_keys = ["topLeftRadius", "topRightRadius", "bottomRightRadius", "bottomLeftRadius"];
+        if let Some(v) = var_bind::numeric(app, ui, rad_r, sel, &radius_keys, |ui| field::num_field(ui, rad_r, "radius", Prefix::Icon(Icon::Radius), rad, "")) {
             let v = v.max(0.0);
             app.edit_nodes(sel, |n| n.corner_radii = [v; 4]);
         }
@@ -550,6 +553,9 @@ fn selection_ui(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[NodeId]) {
                 }
             });
         }
+    }
+    if is_frame {
+        var_bind::mode_rows(app, ui, pane, sel);
     }
     pane.y += 4.0;
 
@@ -571,7 +577,9 @@ fn selection_ui(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[NodeId]) {
     }
     paint_rows(app, ui, pane, sel, &n0.stroke.paints, true);
     if !n0.stroke.paints.is_empty() {
-        if let Some(w) = field::num_field(ui, pane.col(0, 0.0), "stroke-w", Prefix::Text("W"), common(app, sel, |n| n.stroke.weight), "") {
+        let sw_r = pane.col(0, 0.0);
+        let sw_val = common(app, sel, |n| n.stroke.weight);
+        if let Some(w) = var_bind::numeric(app, ui, sw_r, sel, &["strokeWeight"], |ui| field::num_field(ui, sw_r, "stroke-w", Prefix::Text("W"), sw_val, "")) {
             let w = w.max(0.0);
             app.edit_nodes(sel, |n| n.stroke.weight = w);
         }
@@ -673,8 +681,9 @@ fn dimensions_ui(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[NodeId], is
     sublabel(ui, pane, "Dimensions");
     let ws = common(app, sel, |n| n.size.x);
     let hs = common(app, sel, |n| n.size.y);
-    let w_new = field::num_field(ui, pane.col(0, 0.0), "w", Prefix::Text("W"), ws, "");
-    let h_new = if is_line { None } else { field::num_field(ui, pane.col(1, 0.0), "h", Prefix::Text("H"), hs, "") };
+    let (wr, hr) = (pane.col(0, 0.0), pane.col(1, 0.0));
+    let w_new = var_bind::numeric(app, ui, wr, sel, &["width"], |ui| field::num_field(ui, wr, "w", Prefix::Text("W"), ws, ""));
+    let h_new = if is_line { None } else { var_bind::numeric(app, ui, hr, sel, &["height"], |ui| field::num_field(ui, hr, "h", Prefix::Text("H"), hs, "")) };
     if w_new.is_some() || h_new.is_some() {
         resize_selection(app, sel, w_new, h_new);
     }
@@ -720,7 +729,8 @@ fn auto_layout_ui(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[NodeId], a
             }
         });
     }
-    if let Some(v) = field::num_field(ui, pane.col(1, 0.0), "al-gap", Prefix::Icon(Icon::Spacing), Some(a.item_spacing), "") {
+    let gap_r = pane.col(1, 0.0);
+    if let Some(v) = var_bind::numeric(app, ui, gap_r, sel, &["itemSpacing"], |ui| field::num_field(ui, gap_r, "al-gap", Prefix::Icon(Icon::Spacing), Some(a.item_spacing), "")) {
         update_al(app, sel, |al| al.item_spacing = v);
     }
     row_end(pane);
@@ -730,13 +740,15 @@ fn auto_layout_ui(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[NodeId], a
     sublabel(ui, pane, "Padding");
     let ph = a.padding[1].max(a.padding[3]);
     let pv = a.padding[0].max(a.padding[2]);
-    if let Some(v) = field::num_field(ui, pane.col(0, 0.0), "al-ph", Prefix::Icon(Icon::PaddingH), Some(ph), "") {
+    let ph_r = pane.col(0, 0.0);
+    if let Some(v) = var_bind::numeric(app, ui, ph_r, sel, &["paddingLeft", "paddingRight"], |ui| field::num_field(ui, ph_r, "al-ph", Prefix::Icon(Icon::PaddingH), Some(ph), "")) {
         update_al(app, sel, |al| {
             al.padding[1] = v;
             al.padding[3] = v;
         });
     }
-    if let Some(v) = field::num_field(ui, pane.col(1, 0.0), "al-pv", Prefix::Icon(Icon::PaddingV), Some(pv), "") {
+    let pv_r = pane.col(1, 0.0);
+    if let Some(v) = var_bind::numeric(app, ui, pv_r, sel, &["paddingTop", "paddingBottom"], |ui| field::num_field(ui, pv_r, "al-pv", Prefix::Icon(Icon::PaddingV), Some(pv), "")) {
         update_al(app, sel, |al| {
             al.padding[0] = v;
             al.padding[2] = v;
@@ -802,7 +814,8 @@ fn text_ui(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[NodeId], t: &Text
             }
         });
     }
-    if let Some(v) = field::num_field(ui, pane.col(1, 0.0), "font-size", Prefix::Text("S"), Some(s.font_size), "") {
+    let fs_r = pane.col(1, 0.0);
+    if let Some(v) = var_bind::numeric(app, ui, fs_r, sel, &["fontSize"], |ui| field::num_field(ui, fs_r, "font-size", Prefix::Text("S"), Some(s.font_size), "")) {
         let v = v.max(1.0);
         app.edit_nodes(sel, |n| {
             if let NodeKind::Text(t) = &mut n.kind {
@@ -898,13 +911,16 @@ fn paint_rows(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[NodeId], paint
         widgets::record(ui, &format!("sw:{stroke}:{i}"), sw);
         let swr = ui.interact(sw, ui.id().with(("sw", key)), Sense::click());
         widgets::swatch(ui.painter(), sw, paint_preview(p));
-        if swr.clicked() {
+        let var_key = format!("{}/{i}", if stroke { "strokes" } else { "fills" });
+        let bound = var_bind::pill_field(app, ui, Rect::from_min_max(hex_r.min, Pos2::new(op_r.left() - 4.0, hex_r.bottom())), sel, &[var_key.as_str()]);
+        if swr.clicked() && !bound {
             if let PaintKind::Solid(c) = &p.kind {
                 let target = if stroke { PickTarget::Stroke(i) } else { PickTarget::Fill(i) };
                 open_picker(app, target, to_c32(*c, p.opacity), sw, sel.to_vec());
             }
         }
         match &p.kind {
+            _ if bound => {}
             _ if linked.is_some() => {
                 field::field_bg(ui, hex_r, ui.id().with(("ro", key)));
                 let name = widgets::elide(ui.painter(), linked.as_deref().unwrap_or(""), &theme::font_body(), hex_r.width() - 16.0);
@@ -925,6 +941,9 @@ fn paint_rows(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[NodeId], paint
                 field::field_bg(ui, hex_r, ui.id().with(("ro", key)));
                 ui.painter().text(Pos2::new(hex_r.left() + 8.0, hex_r.center().y), Align2::LEFT_CENTER, paint_label(p), theme::font_body(), theme::TEXT);
             }
+        }
+        if !bound && matches!(p.kind, PaintKind::Solid(_)) {
+            var_bind::hover_button(app, ui, hex_r, sel, &[var_key.as_str()], VariableKind::Color);
         }
         if let Some(v) = field::num_field(ui, op_r, ("op", key), Prefix::None, Some((p.opacity * 100.0).round()), "%") {
             let o = (v / 100.0).clamp(0.0, 1.0);

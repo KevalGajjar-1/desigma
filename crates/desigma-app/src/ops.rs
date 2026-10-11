@@ -781,6 +781,15 @@ impl App {
     }
 
     pub fn open_path(&mut self, p: PathBuf) {
+        // A variables-only JSON opened alongside a design merges into it.
+        if p.extension().is_some_and(|e| e.eq_ignore_ascii_case("json")) {
+            if let Ok(text) = std::fs::read_to_string(&p) {
+                if crate::variables::is_variables_payload(&text) {
+                    self.import_variables_file(&p);
+                    return;
+                }
+            }
+        }
         match io::load_path(&p) {
             Ok(doc) => {
                 let name = doc.name.clone();
@@ -819,7 +828,7 @@ impl App {
         };
         let name = self.doc.get(id).map(|n| n.name.clone()).unwrap_or_default();
         let Some(path) = io::pick_export(&name) else { return };
-        let png = desigma_export::export_png(&self.doc, id, 1.0);
+        let png = desigma_export::export_png(&self.export_doc(), id, 1.0);
         if png.is_empty() {
             self.show_toast("Nothing to export", true);
             return;

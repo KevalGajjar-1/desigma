@@ -7,8 +7,8 @@
 use crate::edit::Edit;
 use crate::util::{aabb_of, rect_corners, v2};
 use desigma_doc::{
-    AutoLayout, Constraint, Document, LayoutAlign, LayoutDirection, NodeId, NodeKind, Rect, Sizing, TextAutoResize,
-    TextProps, Vec2,
+    resolve_node, AutoLayout, Constraint, Document, LayoutAlign, LayoutDirection, NodeId, NodeKind, Rect, Sizing,
+    TextAutoResize, TextProps, Vec2,
 };
 
 /// One participating child, as seen by the solver.
@@ -198,7 +198,8 @@ pub fn fit_text(t: &TextProps, size: Vec2) -> Vec2 {
 }
 
 fn child_in(doc: &Document, id: NodeId, horiz: bool) -> ChildIn {
-    let n = doc.get(id).unwrap();
+    // sizes bound to variables count with the value of the mode in effect
+    let n = &*resolve_node(doc, doc.get(id).unwrap());
     let lc = n.layout_child;
     let (main_s, cross_s) = if horiz { (lc.horizontal, lc.vertical) } else { (lc.vertical, lc.horizontal) };
     ChildIn { size: n.size, main_fill: main_s == Sizing::Fill || lc.grow > 0.0, cross_fill: cross_s == Sizing::Fill, grow: lc.grow }
@@ -218,12 +219,13 @@ pub fn layout_node(doc: &mut Document, ed: &mut Edit, id: NodeId) {
         fit_group(doc, ed, id);
         return;
     }
-    let Some(al) = doc.get(id).and_then(|n| n.kind.frame_props()).and_then(|f| f.auto_layout) else { return };
+    // gap / padding bound to variables count with the value of the mode in effect
+    let Some(al) = doc.get(id).map(|n| resolve_node(doc, n)).and_then(|n| n.kind.frame_props().and_then(|f| f.auto_layout)) else { return };
     let horiz = al.direction == LayoutDirection::Horizontal;
     let ids: Vec<NodeId> = children
         .iter()
         .copied()
-        .filter(|c| doc.get(*c).map(|k| k.visible && !k.layout_child.absolute).unwrap_or(false))
+        .filter(|c| doc.get(*c).map(|k| resolve_node(doc, k).visible && !k.layout_child.absolute).unwrap_or(false))
         .collect();
     let kids: Vec<ChildIn> = ids.iter().map(|c| child_in(doc, *c, horiz)).collect();
     let frame_size = doc.get(id).unwrap().size;
@@ -478,6 +480,28 @@ mod tests {
         ed.node(&mut d, a).unwrap().size = v2(40.0, 20.0);
         relayout_up(&mut d, &mut ed, a);
         assert_eq!(d.get(f).unwrap().size.x, 78.0);
+    }
+
+    #[test]
+    fn gap_bound_to_a_variable_follows_the_mode() {
+        use desigma_doc::{VariableStore, VariableKind, VariableValue};
+        let (mut d, f, _, b) = doc_with_frame();
+        let mut s = VariableStore::default();
+        let c = s.add_collection("Space");
+        let light = s.collections[&c].default_mode.clone();
+        let dark = s.add_mode(&c, "Wide").unwrap();
+        let gap = s.add_variable(&c, "Gap", VariableKind::Number).unwrap();
+        s.set_value(&gap, &light, VariableValue::Number(8.0));
+        s.set_value(&gap, &dark, VariableValue::Number(20.0));
+        d.variables = s.variables;
+        d.variable_collections = s.collections;
+        d.get_mut(f).unwrap().variables.bindings.insert("itemSpacing".into(), gap);
+        let mut ed = Edit::new();
+        layout_node(&mut d, &mut ed, f);
+        assert_eq!(d.get(b).unwrap().transform.tx, 28.0);
+        d.get_mut(f).unwrap().variables.modes.insert(c, dark);
+        layout_node(&mut d, &mut ed, f);
+        assert_eq!(d.get(b).unwrap().transform.tx, 40.0);
     }
 
     #[test]
