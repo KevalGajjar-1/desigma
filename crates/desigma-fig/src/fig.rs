@@ -176,6 +176,44 @@ fn enum_map(m: &mut Map<String, Value>, from: &Value, src: &str, dst: &str, tabl
     }
 }
 
+/// REST `exportSettings` from kiwi export settings: `imageType` (PNG/JPEG/SVG/PDF) and a
+/// `constraint` whose type is CONTENT_SCALE / CONTENT_WIDTH / CONTENT_HEIGHT.
+fn convert_export_settings(nc: &Value) -> Option<Value> {
+    let list = rest_import::farr(nc, "exportSettings");
+    let out: Vec<Value> = list
+        .iter()
+        .map(|e| {
+            let format = match fstr(e, "imageType").or_else(|| fstr(e, "format")) {
+                Some("JPEG") => "JPG",
+                Some(other) => other,
+                None => "PNG",
+            };
+            let c = e.get("constraint");
+            let ty = match c.and_then(|c| fstr(c, "type")) {
+                Some("CONTENT_WIDTH") | Some("WIDTH") => "WIDTH",
+                Some("CONTENT_HEIGHT") | Some("HEIGHT") => "HEIGHT",
+                _ => "SCALE",
+            };
+            let value = c.and_then(|c| fnum(c, "value")).unwrap_or(1.0);
+            json!({"suffix": fstr(e, "suffix").unwrap_or(""), "format": format, "constraint": {"type": ty, "value": value}})
+        })
+        .collect();
+    (!out.is_empty()).then_some(Value::Array(out))
+}
+
+/// REST-shaped `guides` (`[{axis, offset}]`) from kiwi guides.
+fn convert_guides(nc: &Value) -> Option<Value> {
+    let out: Vec<Value> = rest_import::farr(nc, "guides")
+        .iter()
+        .filter_map(|g| {
+            let axis = fstr(g, "axis")?;
+            let offset = fnum(g, "offset").or_else(|| fnum(g, "position"))?;
+            Some(json!({"axis": axis, "offset": offset}))
+        })
+        .collect();
+    (!out.is_empty()).then_some(Value::Array(out))
+}
+
 fn convert_node(nc: &Value, id: &str, blobs: &[&[u8]]) -> Option<Map<String, Value>> {
     let ty = match fstr(nc, "type")? {
         "DOCUMENT" | "NONE" => return None,
@@ -196,6 +234,12 @@ fn convert_node(nc: &Value, id: &str, blobs: &[&[u8]]) -> Option<Map<String, Val
     copy(&mut m, nc, "size", "size");
     if let Some(t) = nc.get("transform") {
         m.insert("relativeTransform".into(), matrix_json(t));
+    }
+    if let Some(e) = convert_export_settings(nc) {
+        m.insert("exportSettings".into(), e);
+    }
+    if let Some(g) = convert_guides(nc) {
+        m.insert("guides".into(), g);
     }
     if ty == "CANVAS" {
         copy(&mut m, nc, "backgroundColor", "backgroundColor");
@@ -722,6 +766,25 @@ mod tests {
         assert_eq!(weight_from_style_name("ExtraBold"), (800, false));
         assert_eq!(weight_from_style_name("Bold"), (700, false));
         assert_eq!(weight_from_style_name("Extra-Light"), (200, false));
+    }
+
+    #[test]
+    fn kiwi_export_settings_and_guides_map_to_rest_shapes() {
+        let nc = json!({
+            "exportSettings": [
+                {"suffix": "@2x", "imageType": "JPEG", "constraint": {"type": "CONTENT_SCALE", "value": 2.0}},
+                {"imageType": "SVG", "constraint": {"type": "CONTENT_WIDTH", "value": 512.0}},
+                {"imageType": "PDF", "constraint": {"type": "CONTENT_HEIGHT", "value": 64.0}}
+            ],
+            "guides": [{"axis": "X", "offset": 10.0}, {"axis": "Y", "offset": 4.5}, {"offset": 1.0}]
+        });
+        let doc = rest_import::parse_export_settings(&json!({"exportSettings": convert_export_settings(&nc).unwrap()}));
+        use desigma_doc::{ExportConstraint as C, ExportFileFormat as F};
+        assert_eq!((doc[0].format, doc[0].constraint, doc[0].suffix.as_str()), (F::Jpg, C::Scale(2.0), "@2x"));
+        assert_eq!((doc[1].format, doc[1].constraint), (F::Svg, C::Width(512.0)));
+        assert_eq!((doc[2].format, doc[2].constraint), (F::Pdf, C::Height(64.0)));
+        assert_eq!(convert_guides(&nc).unwrap(), json!([{"axis": "X", "offset": 10.0}, {"axis": "Y", "offset": 4.5}]));
+        assert!(convert_export_settings(&json!({})).is_none() && convert_guides(&json!({})).is_none());
     }
 
     #[test]
