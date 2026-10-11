@@ -115,7 +115,7 @@ fn grid(g: &LayoutGrid) -> Value {
 }
 
 /// Full REST `TypeStyle` for `ts` (includes `fills`).
-fn type_style(ts: &TextStyle, auto: Option<TextAutoResize>) -> Value {
+fn type_style(ts: &TextStyle, auto: Option<TextAutoResize>, max_lines: Option<u32>) -> Value {
     let mut m = Map::new();
     m.insert("fontFamily".into(), ts.font_family.clone().into());
     m.insert("fontWeight".into(), ts.font_weight.into());
@@ -188,8 +188,24 @@ fn type_style(ts: &TextStyle, auto: Option<TextAutoResize>) -> Value {
             .into(),
         );
     }
+    if auto == Some(TextAutoResize::Truncate) {
+        m.insert("textTruncation".into(), "ENDING".into());
+    }
+    if let Some(n) = max_lines {
+        m.insert("maxLines".into(), n.into());
+    }
     m.insert("fills".into(), paints(&ts.fills));
     Value::Object(m)
+}
+
+/// REST geometry list: SVG path data plus winding rule.
+fn geometry(paths: &[Path]) -> Value {
+    Value::Array(
+        paths
+            .iter()
+            .map(|p| json!({"path": write_path(p), "windingRule": if p.fill_rule == FillRule::EvenOdd { "EVENODD" } else { "NONZERO" }}))
+            .collect(),
+    )
 }
 
 fn figma_id(doc: &Document, id: NodeId) -> String {
@@ -361,6 +377,13 @@ fn export_node(doc: &Document, id: NodeId, parent_abs: Option<&Affine>, depth: u
         }
     }
 
+    if let Some(g) = &node.fill_geometry {
+        m.insert("fillGeometry".into(), geometry(g));
+    }
+    if let Some(g) = &node.stroke_geometry {
+        m.insert("strokeGeometry".into(), geometry(g));
+    }
+
     match &node.kind {
         NodeKind::Frame(f) | NodeKind::Component(f) | NodeKind::ComponentSet(f) => {
             frame_fields(&mut m, f);
@@ -384,11 +407,9 @@ fn export_node(doc: &Document, id: NodeId, parent_abs: Option<&Affine>, depth: u
             m.insert("starInnerRadius".into(), n(*inner_ratio));
         }
         NodeKind::Vector { paths } => {
-            let geo: Vec<Value> = paths
-                .iter()
-                .map(|p| json!({"path": write_path(p), "windingRule": if p.fill_rule == FillRule::EvenOdd { "EVENODD" } else { "NONZERO" }}))
-                .collect();
-            m.insert("fillGeometry".into(), Value::Array(geo));
+            if node.fill_geometry.is_none() {
+                m.insert("fillGeometry".into(), geometry(paths));
+            }
         }
         NodeKind::BooleanOp(op) => {
             m.insert(
@@ -405,7 +426,7 @@ fn export_node(doc: &Document, id: NodeId, parent_abs: Option<&Affine>, depth: u
         NodeKind::Text(t) => {
             m.insert("characters".into(), t.content.clone().into());
             m.insert("fills".into(), paints(&t.style.fills));
-            m.insert("style".into(), type_style(&t.style, Some(t.auto_resize)));
+            m.insert("style".into(), type_style(&t.style, Some(t.auto_resize), t.max_lines));
             if !t.runs.is_empty() {
                 let offs = utf16_to_byte_offsets(&t.content);
                 let mut overrides = vec![0u32; offs.len() - 1];
@@ -418,7 +439,7 @@ fn export_node(doc: &Document, id: NodeId, parent_abs: Option<&Affine>, depth: u
                     for slot in overrides.iter_mut().take(cap).skip(s) {
                         *slot = id;
                     }
-                    table.insert(id.to_string(), type_style(&r.style, None));
+                    table.insert(id.to_string(), type_style(&r.style, None, None));
                 }
                 m.insert("characterStyleOverrides".into(), json!(overrides));
                 m.insert("styleOverrideTable".into(), Value::Object(table));
@@ -451,7 +472,15 @@ pub fn export_rest_json(doc: &Document) -> Value {
             Style::Effect(_) => "EFFECT",
             Style::Grid(_) => "GRID",
         };
-        styles.insert(id.clone(), json!({"key": id, "name": id, "styleType": ty, "description": ""}));
+        let mut e = Map::new();
+        let meta = doc.style_meta.get(id);
+        if let Some(k) = meta.and_then(|m| m.key.as_ref()) {
+            e.insert("key".into(), k.clone().into());
+        }
+        e.insert("name".into(), doc.style_name(id).into());
+        e.insert("styleType".into(), ty.into());
+        e.insert("description".into(), meta.map(|m| m.description.clone()).unwrap_or_default().into());
+        styles.insert(id.clone(), Value::Object(e));
     }
     // Components referenced by instances.
     let mut components = Map::new();
