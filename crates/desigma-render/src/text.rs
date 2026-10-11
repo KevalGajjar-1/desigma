@@ -206,6 +206,12 @@ struct Segment {
 }
 
 fn build_segments(props: &TextProps) -> Vec<Segment> {
+    build_segments_mapped(props, None)
+}
+
+/// Like [`build_segments`]; `map` receives, for every byte of the shaped text,
+/// the byte offset in `props.content` of the character that produced it.
+fn build_segments_mapped(props: &TextProps, mut map: Option<&mut Vec<usize>>) -> Vec<Segment> {
     let content = &props.content;
     let case_of = |idx: usize| if idx == 0 { props.style.case } else { props.runs[idx - 1].style.case };
     let style_at = |b: usize| -> usize {
@@ -244,6 +250,9 @@ fn build_segments(props: &TextProps) -> Vec<Segment> {
             }
         };
         word_start = !(ch.is_alphanumeric() || ch == '\'' || ch == '\u{2019}');
+        if let Some(m) = map.as_deref_mut() {
+            m.extend(std::iter::repeat_n(b, piece.len()));
+        }
         match segs.last_mut() {
             Some(last) if last.style == idx && last.small == small => last.text.push_str(&piece),
             _ => segs.push(Segment { text: piece, style: idx, small }),
@@ -329,33 +338,42 @@ pub fn layout(props: &TextProps, size: Vec2) -> Rc<TextLayout> {
     lay
 }
 
-fn compute_layout(fonts: &mut Fonts, props: &TextProps, size: Vec2) -> TextLayout {
-    let mut styles = vec![props.style.clone()];
-    styles.extend(props.runs.iter().map(|r| r.style.clone()));
-    let mut builders: Vec<sk::PathBuilder> = styles.iter().map(|_| sk::PathBuilder::new()).collect();
+/// Everything needed to turn segments of a [`TextProps`] into a shaped buffer.
+/// Shared by the renderer and the editor geometry so both shape identically.
+struct Shaper {
+    styles: Vec<d::TextStyle>,
+    family_names: Vec<Option<String>>,
+    ratios: Vec<f32>,
+}
 
-    let family_names: Vec<Option<String>> = styles.iter().map(|s| resolve_family(fonts, &s.font_family)).collect();
-    let ratios: Vec<f32> = styles
-        .iter()
-        .enumerate()
-        .map(|(i, s)| match s.line_height {
-            d::LineHeight::Auto => auto_line_ratio(fonts, s, family_names[i].as_deref()),
-            _ => 1.0,
-        })
-        .collect();
-    let line_height_for = |idx: usize, font_size: f32| -> f32 {
-        match styles[idx].line_height {
-            d::LineHeight::Auto => ratios[idx] * font_size,
+impl Shaper {
+    fn new(fonts: &mut Fonts, props: &TextProps) -> Self {
+        let mut styles = vec![props.style.clone()];
+        styles.extend(props.runs.iter().map(|r| r.style.clone()));
+        let family_names: Vec<Option<String>> = styles.iter().map(|s| resolve_family(fonts, &s.font_family)).collect();
+        let ratios: Vec<f32> = styles
+            .iter()
+            .enumerate()
+            .map(|(i, s)| match s.line_height {
+                d::LineHeight::Auto => auto_line_ratio(fonts, s, family_names[i].as_deref()),
+                _ => 1.0,
+            })
+            .collect();
+        Shaper { styles, family_names, ratios }
+    }
+
+    fn line_height_for(&self, idx: usize, font_size: f32) -> f32 {
+        match self.styles[idx].line_height {
+            d::LineHeight::Auto => self.ratios[idx] * font_size,
             d::LineHeight::Pixels(p) => p,
             d::LineHeight::Percent(p) => font_size * p / 100.0,
         }
-    };
+    }
 
-    let full_segs = build_segments(props);
-    let attrs_for = |seg: &Segment| -> Attrs<'_> {
-        let st = &styles[seg.style];
+    fn attrs_for(&self, seg: &Segment) -> Attrs<'_> {
+        let st = &self.styles[seg.style];
         let fsize = (st.font_size * if seg.small { 0.8 } else { 1.0 }).max(0.1);
-        let family = match &family_names[seg.style] {
+        let family = match &self.family_names[seg.style] {
             Some(n) => Family::Name(n),
             None => Family::SansSerif,
         };
@@ -363,7 +381,7 @@ fn compute_layout(fonts: &mut Fonts, props: &TextProps, size: Vec2) -> TextLayou
             .family(family)
             .weight(Weight(st.font_weight))
             .style(if st.italic { Style::Italic } else { Style::Normal })
-            .metrics(Metrics::new(fsize, line_height_for(seg.style, fsize)))
+            .metrics(Metrics::new(fsize, self.line_height_for(seg.style, fsize)))
             .metadata(seg.style)
             .cache_key_flags(CacheKeyFlags::DISABLE_HINTING);
         if st.letter_spacing != 0.0 {
@@ -379,19 +397,19 @@ fn compute_layout(fonts: &mut Fonts, props: &TextProps, size: Vec2) -> TextLayou
             a.text_decoration = deco;
         }
         a
-    };
+    }
 
-    let base_size = props.style.font_size.max(0.1);
-    let base_lh = line_height_for(0, base_size);
-    let wrap_width = if size.x > 0.0 { Some(size.x) } else { None };
-    let align = match props.style.align_h {
-        d::TextAlignH::Left => Align::Left,
-        d::TextAlignH::Center => Align::Center,
-        d::TextAlignH::Right => Align::Right,
-        d::TextAlignH::Justified => Align::Justified,
-    };
-    let default_attrs = attrs_for(&Segment { text: String::new(), style: 0, small: false });
-    let build = |fs: &mut FontSystem, segs: &[Segment]| -> Buffer {
+    fn build(&self, fs: &mut FontSystem, props: &TextProps, size: Vec2, segs: &[Segment]) -> Buffer {
+        let base_size = props.style.font_size.max(0.1);
+        let base_lh = self.line_height_for(0, base_size);
+        let wrap_width = if size.x > 0.0 { Some(size.x) } else { None };
+        let align = match props.style.align_h {
+            d::TextAlignH::Left => Align::Left,
+            d::TextAlignH::Center => Align::Center,
+            d::TextAlignH::Right => Align::Right,
+            d::TextAlignH::Justified => Align::Justified,
+        };
+        let default_attrs = self.attrs_for(&Segment { text: String::new(), style: 0, small: false });
         let mut buffer = Buffer::new(fs, Metrics::new(base_size, base_lh));
         buffer.set_hinting(Hinting::Disabled);
         buffer.set_size(wrap_width, None);
@@ -399,11 +417,19 @@ fn compute_layout(fonts: &mut Fonts, props: &TextProps, size: Vec2) -> TextLayou
             TextAutoResize::WidthAndHeight => Wrap::None,
             _ => Wrap::WordOrGlyph,
         });
-        let spans: Vec<(&str, Attrs)> = segs.iter().map(|s| (s.text.as_str(), attrs_for(s))).collect();
+        let spans: Vec<(&str, Attrs)> = segs.iter().map(|s| (s.text.as_str(), self.attrs_for(s))).collect();
         buffer.set_rich_text(spans, &default_attrs, Shaping::Advanced, Some(align));
         buffer.shape_until_scroll(fs, false);
         buffer
-    };
+    }
+}
+
+fn compute_layout(fonts: &mut Fonts, props: &TextProps, size: Vec2) -> TextLayout {
+    let shaper = Shaper::new(fonts, props);
+    let styles = shaper.styles.clone();
+    let mut builders: Vec<sk::PathBuilder> = styles.iter().map(|_| sk::PathBuilder::new()).collect();
+    let full_segs = build_segments(props);
+    let build = |fs: &mut FontSystem, segs: &[Segment]| -> Buffer { shaper.build(fs, props, size, segs) };
     let para = props.style.paragraph_spacing;
     let mut buffer = build(&mut fonts.fs, &full_segs);
 
@@ -493,9 +519,171 @@ fn compute_layout(fonts: &mut Fonts, props: &TextProps, size: Vec2) -> TextLayou
     TextLayout { styles, paths: builders.into_iter().map(|b| b.finish()).collect() }
 }
 
+// ------------------------------------------------------------------ editor geometry
+/// One shaped glyph (cluster) of a line, in byte offsets of `TextProps::content`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct GlyphSpan {
+    pub start: usize,
+    pub end: usize,
+    /// Left edge, in node-local px (alignment applied).
+    pub x: f32,
+    pub w: f32,
+}
+
+/// One visual line of laid out text, in node-local px.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LineGeom {
+    /// Index of the paragraph (`\n`-separated) this line belongs to.
+    pub para: usize,
+    pub top: f32,
+    pub height: f32,
+    pub baseline: f32,
+    pub width: f32,
+    /// Byte range of `content` shown on this line.
+    pub start: usize,
+    pub end: usize,
+    /// Left edge of an empty line (alignment).
+    pub empty_x: f32,
+    pub glyphs: Vec<GlyphSpan>,
+}
+
+/// Shaped line/glyph positions of a text node, produced by the same shaping as
+/// [`layout`] (without truncation), for caret placement and hit testing.
+#[derive(Clone, Debug, PartialEq, Default)]
+pub struct TextGeometry {
+    pub lines: Vec<LineGeom>,
+    pub width: f32,
+    pub height: f32,
+}
+
+thread_local! {
+    static GEOMS: RefCell<HashMap<u64, Rc<TextGeometry>>> = RefCell::new(HashMap::new());
+}
+
+/// Lines and glyph positions of `props` laid out in a box of `size`. Positions
+/// match the glyph outlines drawn by the renderer exactly.
+pub fn text_geometry(props: &TextProps, size: Vec2) -> Rc<TextGeometry> {
+    let key = style_hash(props, size);
+    if let Some(hit) = GEOMS.with(|g| g.borrow().get(&key).cloned()) {
+        return hit;
+    }
+    let geom = Rc::new(with_fonts(|f| compute_geometry(f, props, size)));
+    GEOMS.with(|g| {
+        let mut g = g.borrow_mut();
+        if g.len() > 256 {
+            g.clear();
+        }
+        g.insert(key, geom.clone());
+    });
+    geom
+}
+
+fn compute_geometry(fonts: &mut Fonts, props: &TextProps, size: Vec2) -> TextGeometry {
+    let shaper = Shaper::new(fonts, props);
+    let mut map = Vec::new();
+    let segs = build_segments_mapped(props, Some(&mut map));
+    map.push(props.content.len());
+    let buffer = shaper.build(&mut fonts.fs, props, size, &segs);
+    let full: String = segs.iter().map(|s| s.text.as_str()).collect();
+    let para_starts: Vec<usize> = std::iter::once(0).chain(full.match_indices('\n').map(|(i, _)| i + 1)).collect();
+    let para = props.style.paragraph_spacing;
+    let mut total_h = 0.0f32;
+    for run in buffer.layout_runs() {
+        total_h = total_h.max(run.line_top + run.line_height + run.line_i as f32 * para);
+    }
+    let oy = if size.y > 0.0 {
+        match props.style.align_v {
+            d::TextAlignV::Top => 0.0,
+            d::TextAlignV::Center => (size.y - total_h) / 2.0,
+            d::TextAlignV::Bottom => size.y - total_h,
+        }
+    } else {
+        0.0
+    };
+    let empty_x = match props.style.align_h {
+        d::TextAlignH::Center if size.x > 0.0 => size.x / 2.0,
+        d::TextAlignH::Right if size.x > 0.0 => size.x,
+        _ => 0.0,
+    };
+    let at = |shaped: usize| map.get(shaped).copied().unwrap_or(props.content.len());
+    let mut lines = Vec::new();
+    let mut width = 0.0f32;
+    for run in buffer.layout_runs() {
+        let base = para_starts.get(run.line_i).copied().unwrap_or(0);
+        let glyphs: Vec<GlyphSpan> = run.glyphs.iter().map(|g| GlyphSpan { start: at(base + g.start), end: at(base + g.end), x: g.x, w: g.w }).collect();
+        let (start, end) = match (glyphs.iter().map(|g| g.start).min(), glyphs.iter().map(|g| g.end).max()) {
+            (Some(a), Some(b)) => (a, b),
+            _ => (at(base), at(base)),
+        };
+        width = width.max(run.line_w);
+        lines.push(LineGeom {
+            para: run.line_i,
+            top: run.line_top + run.line_i as f32 * para + oy,
+            height: run.line_height,
+            baseline: run.line_y + run.line_i as f32 * para + oy,
+            width: run.line_w,
+            start,
+            end,
+            empty_x,
+            glyphs,
+        });
+    }
+    if lines.is_empty() {
+        let lh = shaper.line_height_for(0, props.style.font_size.max(0.1));
+        lines.push(LineGeom { para: 0, top: oy, height: lh, baseline: oy + lh * 0.8, width: 0.0, start: 0, end: 0, empty_x, glyphs: vec![] });
+        total_h = lh;
+    }
+    TextGeometry { lines, width, height: total_h }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn geometry_glyphs_match_drawn_ink() {
+        // Glyph positions from `text_geometry` bracket the ink the renderer draws:
+        // lay out "   X" (spaces keep X at its natural x) and compare per letter.
+        let size = Vec2::new(0.0, 0.0);
+        let text = "HIEx";
+        let p = props(text, TextAutoResize::WidthAndHeight, None);
+        let geom = text_geometry(&p, size);
+        assert_eq!(geom.lines.len(), 1);
+        let gl = &geom.lines[0].glyphs;
+        assert_eq!(gl.len(), 4);
+        for (i, g) in gl.iter().enumerate() {
+            assert_eq!((g.start, g.end), (i, i + 1));
+            // the ink of the first i+1 letters ends inside glyph i
+            let prefix = props(&text[..i + 1], TextAutoResize::WidthAndHeight, None);
+            let b = ink(&layout(&prefix, size)).bounds();
+            assert!(b.right() >= g.x && b.right() <= g.x + g.w + 0.5, "glyph {i}: ink right {} vs {}..{}", b.right(), g.x, g.x + g.w);
+        }
+        // glyphs tile the line without gaps
+        for w in gl.windows(2) {
+            assert!((w[0].x + w[0].w - w[1].x).abs() < 0.01);
+        }
+    }
+
+    #[test]
+    fn geometry_maps_runs_cases_and_paragraphs() {
+        let mut p = props("ab\n\ncd", TextAutoResize::WidthAndHeight, None);
+        p.style.case = d::TextCase::Upper;
+        let g = text_geometry(&p, Vec2::ZERO);
+        assert_eq!(g.lines.len(), 3, "empty paragraph keeps its own line");
+        assert_eq!((g.lines[1].start, g.lines[1].end), (3, 3));
+        assert_eq!((g.lines[2].start, g.lines[2].end), (4, 6));
+        assert!(g.lines[2].top > g.lines[1].top && g.lines[1].top > g.lines[0].top);
+        // bigger run makes its line taller and glyph wider
+        let mut q = props("abcd", TextAutoResize::WidthAndHeight, None);
+        let mut big = q.style.clone();
+        big.font_size = 40.0;
+        big.line_height = d::LineHeight::Pixels(48.0);
+        q.runs = vec![d::TextRun { start: 2, end: 4, style: big }];
+        let g = text_geometry(&q, Vec2::ZERO);
+        let gl = &g.lines[0].glyphs;
+        assert!(gl[2].w > gl[0].w * 2.0, "run style is shaped");
+        assert!(g.lines[0].height >= 48.0);
+    }
 
     const LONG: &str = "The quick brown fox jumps over the lazy dog and keeps running far away";
 
