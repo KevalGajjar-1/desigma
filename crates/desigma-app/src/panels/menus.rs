@@ -33,6 +33,11 @@ pub enum Action {
     BringToFront,
     SendToBack,
     ToggleSidebar,
+    CreateComponent,
+    Detach,
+    CombineVariants,
+    GoToMain,
+    ResetInstance,
 }
 
 pub fn run(app: &mut App, ctx: &Context, a: Action) {
@@ -65,6 +70,15 @@ pub fn run(app: &mut App, ctx: &Context, a: Action) {
         Action::BringToFront => app.reorder(true, true),
         Action::SendToBack => app.reorder(false, true),
         Action::ToggleSidebar => app.ui.left_collapsed = !app.ui.left_collapsed,
+        Action::CreateComponent => app.create_component(),
+        Action::Detach => app.detach_selection(),
+        Action::CombineVariants => app.combine_selection_as_variants(),
+        Action::GoToMain => {
+            if let Some(i) = app.selected_instances().first().copied() {
+                app.go_to_main(i);
+            }
+        }
+        Action::ResetInstance => app.reset_selection(),
     }
     ctx.request_repaint();
 }
@@ -82,6 +96,8 @@ fn file_items(app: &App) -> Vec<(MenuItem, Option<Action>)> {
         (MenuItem::new("Group selection").shortcut("Ctrl+G").disabled(!has_sel), Some(Action::Group)),
         (MenuItem::new("Frame selection").shortcut("Ctrl+Alt+G").disabled(!has_sel), Some(Action::FrameSelection)),
         (MenuItem::new("Add auto layout").shortcut("Shift+A").disabled(!has_sel).sep(), Some(Action::AutoLayout)),
+        (MenuItem::new("Create component").shortcut("Ctrl+Alt+K").disabled(!has_sel), Some(Action::CreateComponent)),
+        (MenuItem::new("Detach instance").shortcut("Ctrl+Alt+B").disabled(!has_sel).sep(), Some(Action::Detach)),
         (MenuItem::new("Export selection as PNG…").disabled(!has_sel), Some(Action::Export)),
     ]
 }

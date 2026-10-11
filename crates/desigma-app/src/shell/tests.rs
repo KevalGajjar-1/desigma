@@ -698,3 +698,5 @@ fn text_tool_auto_resizes_with_real_measurement() {
     assert!((x - n.size.x).abs() <= 1.0 && h > 10.0);
     s.key(Key::Escape);
 }
+
+mod components;

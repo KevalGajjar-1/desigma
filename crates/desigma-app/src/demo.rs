@@ -143,9 +143,82 @@ pub fn demo_document() -> Document {
         p.kind = NodeKind::Page { background: Color::from_hex(&format!("{:06X}", theme_page_bg())).unwrap() };
     }
 
+    components_demo(&mut d, page, brand);
+
     let mut ed = Edit::new();
     layout::layout_node(&mut d, &mut ed, card);
     d
+}
+
+/// A button component (with Show icon / Label properties) on the "Components"
+/// page and two instances of it on `page`.
+fn components_demo(d: &mut Document, page: NodeId, brand: Color) {
+    let comps = d.pages[1];
+    fn run(d: &mut Document, f: impl FnOnce(&mut Document) -> Command) {
+        let c = f(d);
+        c.apply(d).expect("demo component command");
+    }
+    let id = d.alloc_id();
+    let mut f = Node::frame(id, Rect::new(120.0, 120.0, 168.0, 44.0));
+    f.name = "Primary button".into();
+    f.fills = Vec::new();
+    let main = d.insert(comps, f).unwrap();
+    let id = d.alloc_id();
+    let bg = shape(d, main, Node::rectangle(id, Rect::new(0.0, 0.0, 168.0, 44.0)), "Bg", 10.0);
+    d.get_mut(bg).unwrap().fills = vec![Paint::solid(brand)];
+    let id = d.alloc_id();
+    let icon = shape(d, main, Node::ellipse(id, Rect::new(16.0, 14.0, 16.0, 16.0)), "Icon", 0.0);
+    d.get_mut(icon).unwrap().fills = vec![Paint::solid(Color::WHITE)];
+    let label = txt(d, main, 40.0, 12.0, "Button", 16.0, 600, Color::WHITE);
+    d.get_mut(label).unwrap().name = "Label".into();
+    run(d, |d| create_component(d, main));
+    run(d, |d| add_prop(d, main, ComponentPropDef { name: "Show icon".into(), kind: PropKind::Boolean, default: PropValue::Bool(true) }));
+    run(d, |d| add_prop(d, main, ComponentPropDef { name: "Label".into(), kind: PropKind::Text, default: PropValue::Text("Button".into()) }));
+    run(d, |d| bind_prop(d, icon, OverrideField::Visible, Some("Show icon")));
+    run(d, |d| bind_prop(d, label, OverrideField::Characters, Some("Label")));
+
+    for (i, (name, text, show_icon)) in [("Get started", "Get started", true), ("Learn more", "Learn more", false)].into_iter().enumerate() {
+        let at = Vec2::new(880.0, 120.0 + i as f32 * 64.0);
+        let cmd = create_instance(d, main, page, at);
+        let Command::Insert { nodes, .. } = &cmd else { continue };
+        let inst = nodes[0].id;
+        cmd.apply(d).expect("demo instance");
+        // Keep the original layers on top of the page's z-order.
+        d.reparent(inst, page, 0).expect("demo instance order");
+        let n = d.get_mut(inst).unwrap();
+        n.name = name.into();
+        n.component.overrides.insert(OverrideField::Name);
+        run(d, |d| set_instance_prop(d, inst, "Label", Some(PropValue::Text(text.into()))));
+        run(d, |d| set_instance_prop(d, inst, "Show icon", Some(PropValue::Bool(show_icon))));
+        // Fit the relabelled text and restyle the second button.
+        let kids = d.get(inst).unwrap().children.clone();
+        for k in kids {
+            let Some(kname) = d.get(k).map(|n| n.name.clone()) else { continue };
+            let Some(n) = d.get_mut(k) else { continue };
+            match kname.as_str() {
+                "Label" => {
+                    if let NodeKind::Text(t) = &n.kind {
+                        n.size = layout::estimate_text_size(t);
+                    }
+                    if !show_icon {
+                        n.transform = Affine::translate(16.0, n.transform.ty);
+                        n.component.overrides.insert(OverrideField::Transform);
+                    }
+                }
+                "Bg" if !show_icon => {
+                    n.size = Vec2::new(144.0, 44.0);
+                    n.fills = vec![Paint::solid(Color::rgb(0x3A, 0x3A, 0x3A))];
+                    n.component.overrides.extend([OverrideField::Size, OverrideField::Fills]);
+                }
+                _ => {}
+            }
+        }
+        if !show_icon {
+            let n = d.get_mut(inst).unwrap();
+            n.size = Vec2::new(144.0, 44.0);
+            n.component.overrides.insert(OverrideField::Size);
+        }
+    }
 }
 
 fn theme_page_bg() -> u32 {

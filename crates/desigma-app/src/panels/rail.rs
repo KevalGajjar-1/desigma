@@ -73,7 +73,9 @@ pub fn show(app: &mut App, ui: &mut Ui, rect: Rect) {
                 toggle(app, MenuKind::FileMenu, ir);
             } else {
                 app.ui.rail = if app.ui.rail == Some(*item) { None } else { Some(*item) };
-                app.show_toast(format!("{label} panel is not available in this build"), false);
+                if *item != RailItem::Assets {
+                    app.show_toast(format!("{label} panel is not available in this build"), false);
+                }
             }
         }
     }
