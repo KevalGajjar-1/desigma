@@ -1,4 +1,4 @@
-//! Command line: `desigma [file] [--screenshot out.png] [--size WxH] [--select name]`.
+//! Command line: `desigma [file] [--screenshot out.png] [--size WxH] [--select name|none] [--menu name]`.
 
 use std::path::PathBuf;
 
@@ -9,6 +9,10 @@ pub struct Options {
     pub size: Option<(u32, u32)>,
     /// Select the first layer with this name after loading (handy for screenshots).
     pub select: Option<String>,
+    /// Open a menu after loading: `main`, `main/File`, `shape`, `palette` (for screenshots).
+    pub menu: Option<String>,
+    /// Built-in test document instead of the demo (`no-selection`: the Figma page-level reference).
+    pub fixture: Option<String>,
     pub help: bool,
 }
 
@@ -29,6 +33,8 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Options, String> 
                 o.size = Some(parse_size(&v).ok_or_else(|| format!("invalid size '{v}' (expected WxH, e.g. 1600x1088)"))?);
             }
             "--select" => o.select = Some(it.next().ok_or("--select needs a layer name")?),
+            "--menu" => o.menu = Some(it.next().ok_or("--menu needs a name (main, main/File, shape, palette)")?),
+            "--fixture" => o.fixture = Some(it.next().ok_or("--fixture needs a name (no-selection)")?),
             "-h" | "--help" => o.help = true,
             s if s.starts_with("--") => return Err(format!("unknown option {s}")),
             _ => {
@@ -42,7 +48,7 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Options, String> 
     Ok(o)
 }
 
-pub const USAGE: &str = "usage: desigma [FILE] [--screenshot OUT.png] [--size WxH] [--select LAYER]\n  FILE  .fig, .json (Figma REST or native) or .desigma";
+pub const USAGE: &str = "usage: desigma [FILE] [--screenshot OUT.png] [--size WxH] [--select LAYER|none] [--menu main|main/File|shape|palette]\n  FILE  .fig, .json (Figma REST or native) or .desigma";
 
 #[cfg(test)]
 mod tests {
@@ -62,10 +68,18 @@ mod tests {
     }
 
     #[test]
+    fn parses_menu_and_select_none() {
+        let o = p(&["--menu", "main/File", "--select", "none"]).unwrap();
+        assert_eq!(o.menu.as_deref(), Some("main/File"));
+        assert_eq!(o.select.as_deref(), Some("none"));
+    }
+
+    #[test]
     fn rejects_bad_input() {
         assert!(p(&["--size", "huge"]).is_err());
         assert!(p(&["--screenshot"]).is_err());
         assert!(p(&["--bogus"]).is_err());
+        assert!(p(&["--menu"]).is_err());
         assert!(p(&["a", "b"]).is_err());
         assert_eq!(parse_size("1440X900"), Some((1440, 900)));
         assert_eq!(parse_size("10x10"), None);

@@ -52,6 +52,10 @@ pub const ICON_SELECTED: Color32 = rgb(0x7CC4F8);
 pub const DANGER: Color32 = rgb(0xF24822);
 pub const SHADOW_COLOR: Color32 = rgba(0x000000, 0x59);
 pub const SHADOW_COLOR_STRONG: Color32 = rgba(0x000000, 0x80);
+/// Elevation 400: drop shadow colour, 0.5px inset ring (#ffffff59 at half coverage) and top edge.
+pub const ELEVATION_400_SHADOW: Color32 = rgba(0x000000, 0x59);
+pub const ELEVATION_400_RING: Color32 = rgba(0xFFFFFF, 0x16);
+pub const ELEVATION_400_TOP: Color32 = rgba(0xFFFFFF, 0x0A);
 pub const INNER_HIGHLIGHT: Color32 = rgba(0xFFFFFF, 0x14);
 pub const LOGO_GRADIENT_A: Color32 = rgb(0x0C8CE9);
 pub const AVATAR_BG: Color32 = rgb(0xE13814);
@@ -103,6 +107,10 @@ pub fn font_small_strong() -> FontId {
 }
 pub fn font_body() -> FontId {
     FontId::new(FONT_SIZE_BODY, FontFamily::Proportional)
+}
+/// Menu rows: Inter at the medium instance.
+pub fn font_menu() -> FontId {
+    FontId::new(FONT_SIZE_BODY, FontFamily::Name(FAMILY_MEDIUM.into()))
 }
 pub fn font_body_strong() -> FontId {
     FontId::new(FONT_SIZE_BODY, FontFamily::Name(FAMILY_STRONG.into()))
@@ -222,8 +230,27 @@ pub const SEGMENT_GROUP_GAP: f32 = 8.0;
 pub const SWATCH_SIZE: f32 = 16.0;
 pub const SWATCH_RADIUS: u8 = 2;
 pub const SWATCH_ROW_X: f32 = 17.0;
-pub const HEX_FIELD_W: f32 = 72.0;
-pub const STYLE_ROW_H: f32 = 28.0;
+pub const STYLE_ROW_H: f32 = 32.0;
+/// Colour-style rows: circle swatch centre (from the row's left) and label x.
+pub const STYLE_SWATCH: f32 = 16.0;
+pub const STYLE_SWATCH_CX: f32 = 16.0;
+pub const STYLE_LABEL_X: f32 = 33.0;
+/// Gaps in the page-level Styles section (measured from the Figma capture).
+pub const STYLES_LABEL_GAP: f32 = 8.0;
+pub const STYLES_GROUP_GAP: f32 = 14.0;
+pub const STYLES_BOTTOM_PAD: f32 = 13.0;
+/// Gap between a group label and its first row.
+pub const STYLES_ROW_GAP: f32 = 9.0;
+/// Page background field group: offset below the title, swatch, hex and opacity columns.
+pub const PAGE_FIELD_DY: f32 = 4.0;
+pub const PAGE_BOTTOM_PAD: f32 = 16.0;
+pub const PAGE_SWATCH: f32 = 12.0;
+pub const PAGE_SWATCH_CX: f32 = 12.0;
+pub const PAGE_HEX_X: f32 = 24.0;
+pub const PAGE_DIVIDER_X: f32 = 129.0;
+pub const PAGE_OPACITY_PAD: f32 = 16.0;
+pub const PAGE_PERCENT_W: f32 = 24.0;
+pub const PAGE_PERCENT_RIGHT: f32 = 7.0;
 pub const STYLE_FOLDER_ROW_H: f32 = 24.0;
 pub const STYLE_INDENT: f32 = 12.0;
 pub const OPACITY_FIELD_W: f32 = 48.0;
@@ -234,6 +261,8 @@ pub const TOOLBELT_PADDING: f32 = 8.0;
 pub const TOOL_BUTTON: f32 = 32.0;
 pub const TOOL_CHEVRON_W: f32 = 16.0;
 pub const TOOL_CHEVRON_GAP: f32 = 0.0;
+/// Glyph size of the dropdown chevrons (the 16px box holds a ~6px wide arrow).
+pub const TOOL_CHEVRON_ICON: f32 = 11.0;
 /// The chevron glyph sits this far right of its button's right edge.
 pub const TOOL_CHEVRON_CENTER_DX: f32 = 11.0;
 pub const TOOL_GROUP_GAP: f32 = 8.0;
@@ -249,8 +278,46 @@ pub const TOOLBAR_DIVIDER_GAP_AFTER: f32 = 8.0;
 
 pub const MENU_WIDTH: f32 = 200.0;
 pub const MENU_ITEM_HEIGHT: f32 = 24.0;
+/// Vertical padding above the first and below the last row.
 pub const MENU_PADDING: f32 = 8.0;
-pub const MENU_RADIUS: u8 = 5;
+pub const MENU_RADIUS: u8 = 13;
+/// Highlight pill: inset from the panel edges, corner radius.
+pub const MENU_PILL_INSET: f32 = 8.0;
+pub const MENU_PILL_RADIUS: u8 = 5;
+pub const BG_MENU_SELECTED: Color32 = BG_BRAND;
+/// Columns (x from the panel's left edge): check, icon box, label.
+pub const MENU_CHECK_X: f32 = 12.0;
+pub const MENU_CHECK_BOX: f32 = 16.0;
+pub const MENU_ICON_X_CHECKED: f32 = 32.0;
+pub const MENU_ICON_BOX: f32 = 24.0;
+pub const MENU_LABEL_X_ICON: f32 = 60.0;
+pub const MENU_LABEL_X_PLAIN: f32 = 16.0;
+/// Label x for rows that have a check column but no icon.
+pub const MENU_LABEL_X_CHECK: f32 = 32.0;
+/// Icon x when there is no check column; the label follows 4px after the box.
+pub const MENU_ICON_X_PLAIN: f32 = 12.0;
+pub const MENU_ICON_LABEL_GAP: f32 = 4.0;
+pub const MENU_SHORTCUT_PAD: f32 = 16.0;
+pub const MENU_CHEVRON_BOX: f32 = 24.0;
+pub const MENU_CHEVRON_PAD: f32 = 8.0;
+pub const MENU_SEP_MARGIN: f32 = 8.0;
+/// Space kept between the label and a right-aligned shortcut / chevron.
+pub const MENU_LABEL_GAP: f32 = 16.0;
+pub const MENU_SHORTCUT_HIGHLIGHT: Color32 = rgba(0xFFFFFF, 0xCC);
+pub const MENU_ICON_SIZE: f32 = 16.0;
+pub const MENU_CHEVRON_SIZE: f32 = 12.0;
+/// Submenus overlap their parent by this much horizontally.
+pub const SUBMENU_OVERLAP: f32 = 0.0;
+/// Toolbar dropdown: width, gap right of the tool button, overlap into the toolbar.
+pub const TOOL_MENU_WIDTH: f32 = 232.0;
+pub const TOOL_MENU_DX: f32 = 2.5;
+pub const TOOL_MENU_OVERLAP: f32 = 4.0;
+/// Main (logo) menu placement and width.
+pub const MAIN_MENU_X: f32 = 12.0;
+pub const MAIN_MENU_Y: f32 = 44.0;
+pub const MAIN_MENU_WIDTH: f32 = 210.0;
+pub const PALETTE_WIDTH: f32 = 320.0;
+pub const PALETTE_TOP: f32 = 64.0;
 pub const TOAST_RADIUS: u8 = 13;
 pub const TOAST_HEIGHT: f32 = 40.0;
 pub const TOAST_BOTTOM: f32 = 72.0;

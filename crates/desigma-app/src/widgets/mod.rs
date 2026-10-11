@@ -61,6 +61,24 @@ pub fn elevation_shadow(p: &Painter, rect: Rect, radius: u8) {
     shadow(p, rect, radius, Vec2::new(0.0, 1.0), 3.0, theme::SHADOW_COLOR_STRONG);
 }
 
+/// Elevation 400 (menus): two drop shadows plus a half-pixel inner highlight ring
+/// and a fainter top edge highlight, drawn over the panel fill by `menu_panel`.
+pub fn elevation_400(p: &Painter, rect: Rect, radius: u8) {
+    shadow(p, rect, radius, Vec2::new(0.0, 2.0), 5.0, theme::ELEVATION_400_SHADOW);
+    shadow(p, rect, radius, Vec2::new(0.0, 10.0), 16.0, theme::ELEVATION_400_SHADOW);
+}
+
+/// Panel chrome of a menu: shadow, fill, 0.5px inset ring.
+pub fn menu_panel(p: &Painter, rect: Rect, radius: u8) {
+    elevation_400(p, rect, radius);
+    p.rect_filled(rect, theme::cr(radius), theme::BG_MENU);
+    p.rect_stroke(rect, theme::cr(radius), Stroke::new(1.0, theme::ELEVATION_400_RING), StrokeKind::Inside);
+    p.line_segment(
+        [Pos2::new(rect.left() + radius as f32, rect.top() + 0.5), Pos2::new(rect.right() - radius as f32, rect.top() + 0.5)],
+        Stroke::new(1.0, theme::ELEVATION_400_TOP),
+    );
+}
+
 /// Background for icon-like buttons: hover / pressed / selected states.
 pub fn button_bg(p: &Painter, rect: Rect, r: &Response, selected: bool, radius: CornerRadius) {
     let fill = if selected {
@@ -111,6 +129,37 @@ pub fn swatch(p: &Painter, rect: Rect, color: Color32) {
     }
     p.rect_filled(rect, r, color);
     p.rect_stroke(rect, r, Stroke::new(1.0, theme::BORDER_TRANSLUCENT), StrokeKind::Inside);
+}
+
+/// Filled circle swatch with a thin translucent ring; several colours blend along the diagonal.
+pub fn swatch_circle(p: &Painter, c: Pos2, r: f32, colors: &[Color32]) {
+    match colors {
+        [] => {}
+        [one] => {
+            p.circle_filled(c, r, *one);
+        }
+        many => {
+            const N: usize = 40;
+            let at = |t: f32| {
+                let x = t.clamp(0.0, 1.0) * (many.len() - 1) as f32;
+                let i = (x.floor() as usize).min(many.len() - 2);
+                let f = x - i as f32;
+                many[i].lerp_to_gamma(many[i + 1], f)
+            };
+            let mut mesh = egui::Mesh::default();
+            mesh.colored_vertex(c, at(0.5));
+            for k in 0..=N {
+                let a = k as f32 / N as f32 * std::f32::consts::TAU;
+                let d = Vec2::new(a.cos(), a.sin());
+                mesh.colored_vertex(c + d * r, at(0.5 + (d.x + d.y) * 0.35));
+            }
+            for k in 1..=N as u32 {
+                mesh.add_triangle(0, k, k + 1);
+            }
+            p.add(egui::Shape::mesh(mesh));
+        }
+    }
+    p.circle_stroke(c, r - 0.5, Stroke::new(1.0, theme::BORDER_TRANSLUCENT));
 }
 
 /// Test hook: remembers where a named widget was drawn so UI tests can find it.

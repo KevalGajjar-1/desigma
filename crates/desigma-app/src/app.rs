@@ -71,6 +71,8 @@ pub enum MenuKind {
     Zoom,
     ToolGroup(usize),
     FileName,
+    /// The "Actions…" command palette (Ctrl+K).
+    Palette,
 }
 
 #[derive(Default)]
@@ -86,6 +88,12 @@ pub struct UiState {
     /// Anchor of the instance "more" menu and of the add-property menu in the inspector.
     pub inst_menu: Option<egui::Rect>,
     pub prop_menu: Option<egui::Rect>,
+    /// Command palette query and highlighted row.
+    pub palette_query: String,
+    pub palette_sel: usize,
+    /// View toggles from the main menu.
+    pub pixel_grid: bool,
+    pub rulers: bool,
 }
 
 pub struct Toast {

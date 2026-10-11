@@ -38,17 +38,24 @@ impl Shell {
     pub fn build(ctx: &Context, opts: Options) -> Self {
         theme::install_fonts(ctx);
         theme::apply(ctx);
-        let mut app = App::new(demo::demo_document());
+        let mut app = App::new(if opts.fixture.as_deref() == Some("no-selection") { demo::reference_document() } else { demo::demo_document() });
         app.doc.name = "Untitled".into();
         if let Some(f) = &opts.file {
             app.open_path(f.clone());
         }
-        if let Some(name) = &opts.select {
+        if let Some(name) = opts.select.as_ref().filter(|n| n.as_str() != "none") {
             if let Some(id) = app.doc.nodes.values().find(|n| &n.name == name).map(|n| n.id) {
                 if let Some(pg) = app.doc.page_of(id) {
                     app.page = pg;
                 }
                 app.selection = vec![id];
+            }
+        }
+        if let Some(spec) = &opts.menu {
+            let (w, h) = opts.size.unwrap_or((theme::DEFAULT_WINDOW.0 as u32, theme::DEFAULT_WINDOW.1 as u32));
+            let screen = Rect::from_min_size(Pos2::ZERO, Vec2::new(w as f32, h as f32));
+            if !menus::preset_menu(ctx, &mut app, spec, screen) {
+                eprintln!("desigma: unknown menu '{spec}'");
             }
         }
         let shot = opts.screenshot.map(|path| Shot {
@@ -104,6 +111,10 @@ impl Shell {
 
     fn handle_keys(&mut self, ctx: &Context) {
         let typing = ctx.egui_wants_keyboard_input();
+        // Open menus own the keyboard (arrows, Enter, Escape, typing in the palette).
+        if self.app.ui.menu.is_some() || self.app.ui.ctx_menu.is_some() {
+            return;
+        }
         let editing_text = self.app.canvas.text.is_some();
         if typing && !editing_text {
             return;
@@ -158,6 +169,7 @@ impl Shell {
                 (Key::Equals | Key::Plus, _, _) => Some(Action::ZoomIn),
                 (Key::Minus, _, _) => Some(Action::ZoomOut),
                 (Key::Backslash, _, _) => Some(Action::ToggleSidebar),
+                (Key::K, false, false) => Some(Action::OpenPalette),
                 _ => None,
             };
             if let Some(a) = act {

@@ -1,10 +1,14 @@
 //! Application menus and the shared action dispatcher (menus + shortcuts).
 
 use crate::app::{App, MenuKind};
-use crate::canvas::tools::GROUPS;
+use crate::canvas::tools::{Tool, GROUPS};
+use crate::icons::{self, Icon};
+use crate::ops::Align;
 use crate::theme;
-use crate::widgets::menu::{popup_menu, MenuItem, MenuResult};
-use egui::{Context, Id, Pos2, Vec2};
+use crate::widgets::menu::{popup_menu, popup_tree, preset_path, MenuItem, MenuResult, TreeResult};
+use crate::widgets::{self, menu_panel};
+use desigma_doc::{NodeKind, TextDecoration};
+use egui::{Align2, Context, Id, Key, Modifiers, Pos2, Rect, Sense, Vec2};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Action {
@@ -38,6 +42,20 @@ pub enum Action {
     CombineVariants,
     GoToMain,
     ResetInstance,
+    Copy,
+    Paste,
+    TogglePixelGrid,
+    ToggleRulers,
+    TextBold,
+    TextItalic,
+    TextUnderline,
+    Align(Align),
+    Distribute,
+    Flatten,
+    OpenPalette,
+    About,
+    /// Switches to a tool (also from the command palette).
+    Tool(Tool),
 }
 
 pub fn run(app: &mut App, ctx: &Context, a: Action) {
@@ -79,8 +97,250 @@ pub fn run(app: &mut App, ctx: &Context, a: Action) {
             }
         }
         Action::ResetInstance => app.reset_selection(),
+        Action::Copy => {
+            if let Some(s) = app.copy_selection() {
+                ctx.copy_text(s);
+            }
+        }
+        Action::Paste => app.paste(None),
+        Action::TogglePixelGrid => app.ui.pixel_grid = !app.ui.pixel_grid,
+        Action::ToggleRulers => app.ui.rulers = !app.ui.rulers,
+        Action::TextBold => text_edit(app, |t| t.font_weight = if t.font_weight >= 600 { 400 } else { 700 }),
+        Action::TextItalic => text_edit(app, |t| t.italic = !t.italic),
+        Action::TextUnderline => text_edit(app, |t| t.decoration = if t.decoration == TextDecoration::Underline { TextDecoration::None } else { TextDecoration::Underline }),
+        Action::Align(a) => app.align(a),
+        Action::Distribute => {
+            app.distribute_selection();
+        }
+        Action::Flatten => app.show_toast("Flatten is not available yet", false),
+        Action::OpenPalette => {
+            app.ui.palette_query.clear();
+            app.ui.palette_sel = 0;
+            app.ui.menu = Some(MenuKind::Palette);
+            app.ui.menu_anchor = None;
+        }
+        Action::About => app.show_toast("desigma, a Figma-compatible design editor", false),
+        Action::Tool(t) => pick_tool(app, t),
     }
     ctx.request_repaint();
+}
+
+fn text_edit(app: &mut App, f: impl Fn(&mut desigma_doc::TextStyle)) {
+    let sel = app.selection.clone();
+    app.edit_nodes(&sel, |n| {
+        if let NodeKind::Text(t) = &mut n.kind {
+            f(&mut t.style);
+        }
+    });
+}
+
+/// Selects `t` and remembers it as its toolbar group's current pick.
+pub fn pick_tool(app: &mut App, t: Tool) {
+    if let Some((g, i)) = GROUPS.iter().enumerate().find_map(|(g, tools)| tools.iter().position(|x| *x == t).map(|i| (g, i))) {
+        app.group_pick[g] = i;
+    }
+    app.set_tool(t);
+}
+
+/// Label of a tool in the toolbar dropdowns.
+pub fn tool_menu_label(t: Tool) -> &'static str {
+    match t {
+        Tool::Image => "Image/video…",
+        Tool::Comment => "Comment",
+        t => t.label(),
+    }
+}
+
+// ---------------------------------------------------------------- menu tree
+/// A menu entry with the action it runs (leaves) or its children (submenus).
+struct Node {
+    item: MenuItem,
+    act: Option<Action>,
+    kids: Vec<Node>,
+}
+
+fn leaf(label: &str, shortcut: &str, act: Action) -> Node {
+    Node { item: MenuItem::new(label).shortcut(shortcut), act: Some(act), kids: vec![] }
+}
+
+fn submenu(label: &str, kids: Vec<Node>) -> Node {
+    Node { item: MenuItem::new(label), act: None, kids }
+}
+
+impl Node {
+    fn off(mut self, disabled: bool) -> Self {
+        self.item.disabled = disabled;
+        self
+    }
+    fn sep(mut self) -> Self {
+        self.item.separator_after = true;
+        self
+    }
+    fn on(mut self, checked: bool) -> Self {
+        self.item = self.item.checked(checked);
+        self
+    }
+    fn icon(mut self, i: Icon) -> Self {
+        self.item = self.item.icon(i);
+        self
+    }
+}
+
+fn to_items(nodes: &[Node]) -> Vec<MenuItem> {
+    nodes
+        .iter()
+        .map(|n| {
+            let mut it = n.item.clone();
+            it.children = to_items(&n.kids);
+            it
+        })
+        .collect()
+}
+
+fn resolve(nodes: &[Node], path: &[usize]) -> Option<Action> {
+    let (first, rest) = path.split_first()?;
+    let n = nodes.get(*first)?;
+    if rest.is_empty() {
+        n.act
+    } else {
+        resolve(&n.kids, rest)
+    }
+}
+
+fn find_path(nodes: &[Node], labels: &[&str]) -> Vec<usize> {
+    let mut out = vec![];
+    let mut cur = nodes;
+    for l in labels {
+        let Some(i) = cur.iter().position(|n| n.item.label.eq_ignore_ascii_case(l)) else { break };
+        out.push(i);
+        cur = &cur[i].kids;
+    }
+    out
+}
+
+/// A disabled placeholder (a Figma feature we do not implement) that keeps the menu's geometry.
+fn stub_sub(label: &str) -> Node {
+    submenu(label, vec![leaf("Not available", "", Action::About).off(true)]).off(true)
+}
+
+/// The logo menu: sections separated by lines, every submenu wired to real commands.
+fn main_nodes(app: &App) -> Vec<Node> {
+    let has_sel = !app.selection.is_empty();
+    let has_text = app.selection.iter().any(|id| app.doc.get(*id).is_some_and(|n| matches!(n.kind, NodeKind::Text(_))));
+    let has_inst = !app.selected_instances().is_empty();
+    let multi = app.selection.len() > 1;
+    let file = vec![
+        leaf("New file", "", Action::New),
+        leaf("Open…", "Ctrl+O", Action::Open),
+        leaf("Save", "Ctrl+S", Action::Save),
+        leaf("Save as…", "Ctrl+Shift+S", Action::SaveAs).sep(),
+        leaf("Export selection as PNG…", "", Action::Export).off(!has_sel),
+    ];
+    let edit = vec![
+        leaf("Undo", "Ctrl+Z", Action::Undo).off(!app.hist.can_undo()),
+        leaf("Redo", "Ctrl+Shift+Z", Action::Redo).off(!app.hist.can_redo()).sep(),
+        leaf("Copy", "Ctrl+C", Action::Copy).off(!has_sel),
+        leaf("Paste", "Ctrl+V", Action::Paste).off(app.clip.is_none()),
+        leaf("Duplicate", "Ctrl+D", Action::Duplicate).off(!has_sel),
+        leaf("Delete", "Del", Action::Delete).off(!has_sel).sep(),
+        leaf("Select all", "Ctrl+A", Action::SelectAll),
+    ];
+    let view = vec![
+        leaf("Zoom in", "Ctrl+=", Action::ZoomIn),
+        leaf("Zoom out", "Ctrl+-", Action::ZoomOut),
+        leaf("Zoom to fit", "Shift+1", Action::FitAll),
+        leaf("Zoom to selection", "Shift+2", Action::FitSelection).off(!has_sel),
+        leaf("Zoom to 100%", "Shift+0", Action::Zoom100).sep(),
+        leaf("Pixel grid", "Ctrl+'", Action::TogglePixelGrid).on(app.ui.pixel_grid),
+        leaf("Rulers", "Shift+R", Action::ToggleRulers).on(app.ui.rulers),
+        leaf("Show/Hide UI", "Ctrl+\\", Action::ToggleSidebar).on(!app.ui.left_collapsed),
+    ];
+    let object = vec![
+        leaf("Group selection", "Ctrl+G", Action::Group).off(!has_sel),
+        leaf("Ungroup", "Ctrl+Shift+G", Action::Ungroup).off(!has_sel),
+        leaf("Frame selection", "Ctrl+Alt+G", Action::FrameSelection).off(!has_sel),
+        leaf("Add auto layout", "Shift+A", Action::AutoLayout).off(!has_sel).sep(),
+        leaf("Create component", "Ctrl+Alt+K", Action::CreateComponent).off(!has_sel),
+        leaf("Detach instance", "Ctrl+Alt+B", Action::Detach).off(!has_inst).sep(),
+        leaf("Bring to front", "Ctrl+Shift+]", Action::BringToFront).off(!has_sel),
+        leaf("Bring forward", "Ctrl+]", Action::BringForward).off(!has_sel),
+        leaf("Send backward", "Ctrl+[", Action::SendBackward).off(!has_sel),
+        leaf("Send to back", "Ctrl+Shift+[", Action::SendToBack).off(!has_sel),
+    ];
+    let text = vec![
+        leaf("Bold", "Ctrl+B", Action::TextBold).off(!has_text),
+        leaf("Italic", "Ctrl+I", Action::TextItalic).off(!has_text),
+        leaf("Underline", "Ctrl+U", Action::TextUnderline).off(!has_text),
+    ];
+    let arrange = vec![submenu(
+        "Align and distribute",
+        vec![
+            leaf("Align left", "Alt+A", Action::Align(Align::Left)).off(!has_sel),
+            leaf("Align horizontal centers", "Alt+H", Action::Align(Align::HCenter)).off(!has_sel),
+            leaf("Align right", "Alt+D", Action::Align(Align::Right)).off(!has_sel).sep(),
+            leaf("Align top", "Alt+W", Action::Align(Align::Top)).off(!has_sel),
+            leaf("Align vertical centers", "Alt+V", Action::Align(Align::VCenter)).off(!has_sel),
+            leaf("Align bottom", "Alt+S", Action::Align(Align::Bottom)).off(!has_sel).sep(),
+            leaf("Distribute spacing", "", Action::Distribute).off(!multi),
+        ],
+    )];
+    let vector = vec![leaf("Flatten", "Ctrl+E", Action::Flatten).off(!has_sel)];
+    let help = vec![leaf("Command palette", "Ctrl+K", Action::OpenPalette), leaf("About desigma", "", Action::About)];
+    vec![
+        leaf("Back to files", "", Action::Open).sep(),
+        leaf("Actions…", "Ctrl+K", Action::OpenPalette).icon(Icon::Search).sep(),
+        submenu("File", file),
+        submenu("Edit", edit),
+        submenu("View", view),
+        submenu("Object", object),
+        submenu("Text", text),
+        submenu("Arrange", arrange),
+        submenu("Vector", vector).sep(),
+        stub_sub("Plugins"),
+        stub_sub("Widgets"),
+        stub_sub("Preferences"),
+        leaf("Libraries", "", Action::About).off(true).sep(),
+        submenu("Help and account", help),
+    ]
+}
+
+fn tool_nodes(app: &App, g: usize) -> Vec<Node> {
+    GROUPS[g].iter().map(|t| leaf(tool_menu_label(*t), t.shortcut(), Action::Tool(*t)).on(app.group_pick[g].min(GROUPS[g].len() - 1) == GROUPS[g].iter().position(|x| x == t).unwrap_or(0)).icon(super::toolbar::tool_icon(*t))).collect()
+}
+
+/// Id under which a menu keeps its highlight state.
+pub fn menu_id(kind: MenuKind) -> Id {
+    Id::new(("app-menu", kind))
+}
+
+/// Opens a menu from a CLI spec like `main`, `main/File`, `shape`, `palette` (for screenshots).
+pub fn preset_menu(ctx: &Context, app: &mut App, spec: &str, screen: Rect) -> bool {
+    let (name, sub) = spec.split_once('/').map_or((spec, ""), |(a, b)| (a, b));
+    let labels: Vec<&str> = sub.split('/').filter(|s| !s.is_empty()).collect();
+    match name {
+        "main" => {
+            app.ui.menu = Some(MenuKind::Main);
+            app.ui.menu_anchor = Some(Rect::from_min_size(Pos2::new(theme::RAIL_MENU_BUTTON_X, theme::RAIL_MENU_BUTTON_Y), Vec2::splat(theme::RAIL_MENU_BUTTON_SIZE)));
+            let path = find_path(&main_nodes(app), &labels);
+            if !path.is_empty() {
+                preset_path(ctx, menu_id(MenuKind::Main), &path);
+            }
+        }
+        "shape" | "move" | "frame" | "pen" | "text" => {
+            let g = match name {
+                "move" => 0,
+                "frame" => 1,
+                "shape" => 2,
+                "pen" => 3,
+                _ => 4,
+            };
+            app.ui.menu = Some(MenuKind::ToolGroup(g));
+            app.ui.menu_anchor = Some(super::toolbar::chevron_rect(screen, g));
+        }
+        "palette" => run(app, ctx, Action::OpenPalette),
+        _ => return false,
+    }
+    true
 }
 
 fn file_items(app: &App) -> Vec<(MenuItem, Option<Action>)> {
@@ -118,22 +378,38 @@ fn zoom_items() -> Vec<(MenuItem, Option<Action>)> {
 pub fn show(app: &mut App, ctx: &Context) {
     let Some(kind) = app.ui.menu else { return };
     let anchor = app.ui.menu_anchor;
-    let id = Id::new(("app-menu", kind));
+    let id = menu_id(kind);
+    let screen = ctx.content_rect();
     match kind {
+        MenuKind::Palette => palette(app, ctx),
         MenuKind::ToolGroup(g) => {
-            let tools = GROUPS[g];
-            let items: Vec<MenuItem> = tools.iter().map(|t| MenuItem::new(t.label()).shortcut(t.shortcut()).checked(app.tool == *t).icon(super::toolbar::tool_icon(*t))).collect();
-            let h = items.len() as f32 * theme::MENU_ITEM_HEIGHT + theme::MENU_PADDING;
-            let a = anchor.unwrap_or(egui::Rect::NOTHING);
-            let pos = Pos2::new(a.left() - 24.0, a.top() - h - 14.0);
-            match popup_menu(ctx, id, pos, 190.0, &items, anchor) {
-                MenuResult::Picked(i) => {
-                    app.set_tool(tools[i]);
-                    app.group_pick[g] = i;
+            let nodes = tool_nodes(app, g);
+            let items = to_items(&nodes);
+            let h = theme::MENU_PADDING * 2.0 + items.len() as f32 * theme::MENU_ITEM_HEIGHT;
+            let pos = super::toolbar::tool_menu_pos(screen, g, h);
+            match popup_tree(ctx, id, pos, theme::TOOL_MENU_WIDTH, &items, anchor) {
+                TreeResult::Picked(path) => {
                     app.ui.menu = None;
+                    if let Some(a) = resolve(&nodes, &path) {
+                        run(app, ctx, a);
+                    }
                 }
-                MenuResult::Closed => app.ui.menu = None,
-                MenuResult::Open => {}
+                TreeResult::Closed => app.ui.menu = None,
+                TreeResult::Open => {}
+            }
+        }
+        MenuKind::Main => {
+            let nodes = main_nodes(app);
+            let items = to_items(&nodes);
+            match popup_tree(ctx, id, Pos2::new(theme::MAIN_MENU_X, theme::MAIN_MENU_Y), theme::MAIN_MENU_WIDTH, &items, anchor) {
+                TreeResult::Picked(path) => {
+                    app.ui.menu = None;
+                    if let Some(a) = resolve(&nodes, &path) {
+                        run(app, ctx, a);
+                    }
+                }
+                TreeResult::Closed => app.ui.menu = None,
+                TreeResult::Open => {}
             }
         }
         other => {
@@ -142,9 +418,9 @@ pub fn show(app: &mut App, ctx: &Context) {
                 _ => file_items(app),
             };
             let items: Vec<MenuItem> = entries.iter().map(|e| e.0.clone()).collect();
-            let a = anchor.unwrap_or(egui::Rect::NOTHING);
+            let a = anchor.unwrap_or(Rect::NOTHING);
             let pos = match other {
-                MenuKind::Main | MenuKind::FileMenu => a.right_top() + Vec2::new(4.0, 0.0),
+                MenuKind::FileMenu => a.right_top() + Vec2::new(4.0, 0.0),
                 _ => a.left_bottom() + Vec2::new(0.0, 4.0),
             };
             match popup_menu(ctx, id, pos, theme::MENU_WIDTH, &items, anchor) {
@@ -158,5 +434,163 @@ pub fn show(app: &mut App, ctx: &Context) {
                 MenuResult::Open => {}
             }
         }
+    }
+}
+
+// ---------------------------------------------------------------- command palette
+struct Command {
+    label: String,
+    shortcut: String,
+    act: Action,
+    disabled: bool,
+}
+
+fn collect(nodes: &[Node], out: &mut Vec<Command>) {
+    for n in nodes {
+        match n.act {
+            Some(act) if !matches!(act, Action::OpenPalette) => out.push(Command { label: n.item.label.clone(), shortcut: n.item.shortcut.clone(), act, disabled: n.item.disabled }),
+            _ => collect(&n.kids, out),
+        }
+    }
+}
+
+/// Every command with its shortcut: the whole main menu plus all tools.
+fn commands(app: &App) -> Vec<Command> {
+    let mut out = Vec::new();
+    collect(&main_nodes(app), &mut out);
+    out.retain(|c| c.label != "Back to files" && c.label != "About desigma" && c.label != "Libraries" && c.label != "Not available");
+    for g in GROUPS {
+        for t in *g {
+            out.push(Command { label: tool_menu_label(*t).trim_end_matches('…').into(), shortcut: t.shortcut().into(), act: Action::Tool(*t), disabled: false });
+        }
+    }
+    out.push(Command { label: "Combine as variants".into(), shortcut: "Ctrl+Shift+K".into(), act: Action::CombineVariants, disabled: app.selection.is_empty() });
+    out
+}
+
+const PALETTE_ROWS: usize = 8;
+const PALETTE_SEARCH_H: f32 = 32.0;
+
+fn matches_query(label: &str, q: &str) -> bool {
+    let l = label.to_lowercase();
+    q.split_whitespace().all(|w| l.contains(w))
+}
+
+fn palette(app: &mut App, ctx: &Context) {
+    let cmds = commands(app);
+    let q = app.ui.palette_query.to_lowercase();
+    let list: Vec<usize> = (0..cmds.len()).filter(|i| matches_query(&cmds[*i].label, &q)).collect();
+    let n = list.len();
+    let (down, up, enter, esc) = ctx.input_mut(|i| {
+        let m = Modifiers::NONE;
+        (i.consume_key(m, Key::ArrowDown), i.consume_key(m, Key::ArrowUp), i.consume_key(m, Key::Enter), i.consume_key(m, Key::Escape))
+    });
+    if n > 0 {
+        if down {
+            app.ui.palette_sel = (app.ui.palette_sel + 1) % n;
+        }
+        if up {
+            app.ui.palette_sel = (app.ui.palette_sel + n - 1) % n;
+        }
+    }
+    app.ui.palette_sel = app.ui.palette_sel.min(n.saturating_sub(1));
+    let first = (app.ui.palette_sel + 1).saturating_sub(PALETTE_ROWS);
+    let shown = n.saturating_sub(first).min(PALETTE_ROWS);
+    let screen = ctx.content_rect();
+    let list_h = if n == 0 { theme::MENU_ITEM_HEIGHT } else { shown as f32 * theme::MENU_ITEM_HEIGHT };
+    let h = theme::MENU_PADDING + PALETTE_SEARCH_H + widgets::menu::SEP_H + list_h + theme::MENU_PADDING;
+    let rect = Rect::from_min_size(Pos2::new(screen.center().x - theme::PALETTE_WIDTH / 2.0, screen.top() + theme::PALETTE_TOP), Vec2::new(theme::PALETTE_WIDTH, h));
+    let font = theme::font_body();
+    let mut pick: Option<usize> = None;
+    let mut hover: Option<usize> = None;
+    let moved = ctx.input(|i| i.pointer.delta() != Vec2::ZERO);
+    let ptr = ctx.input(|i| i.pointer.hover_pos());
+    egui::Area::new(Id::new("palette")).order(egui::Order::Foreground).fixed_pos(rect.min).interactable(true).show(ctx, |ui| {
+        ui.allocate_exact_size(rect.size(), Sense::hover());
+        let p = ui.painter().clone();
+        menu_panel(&p, rect, theme::MENU_RADIUS);
+        let srow = Rect::from_min_size(Pos2::new(rect.left(), rect.top() + theme::MENU_PADDING), Vec2::new(rect.width(), PALETTE_SEARCH_H));
+        icons::paint(&p, Icon::Search, Pos2::new(srow.left() + theme::MENU_ICON_X_PLAIN + theme::MENU_ICON_BOX / 2.0, srow.center().y), theme::MENU_ICON_SIZE, theme::ICON_SECONDARY);
+        let field = Rect::from_min_max(
+            Pos2::new(srow.left() + theme::MENU_ICON_X_PLAIN + theme::MENU_ICON_BOX + theme::MENU_ICON_LABEL_GAP, srow.top()),
+            Pos2::new(srow.right() - theme::MENU_SHORTCUT_PAD, srow.bottom()),
+        );
+        let tid = Id::new("palette-input");
+        let mut text = app.ui.palette_query.clone();
+        let te = egui::TextEdit::singleline(&mut text)
+            .id(tid)
+            .font(font.clone())
+            .text_color(theme::TEXT)
+            .frame(egui::Frame::NONE)
+            .margin(egui::Margin::ZERO)
+            .vertical_align(egui::Align::Center)
+            .hint_text(egui::RichText::new("Search actions").font(font.clone()).color(theme::TEXT_TERTIARY))
+            .desired_width(field.width());
+        ui.put(field, te);
+        ui.memory_mut(|m| m.request_focus(tid));
+        if text != app.ui.palette_query {
+            app.ui.palette_query = text;
+            app.ui.palette_sel = 0;
+        }
+        widgets::hline(&p, rect.left(), rect.right(), srow.bottom() + theme::MENU_SEP_MARGIN, theme::BORDER_MENU);
+        let top = srow.bottom() + widgets::menu::SEP_H;
+        if n == 0 {
+            p.text(Pos2::new(rect.left() + theme::MENU_LABEL_X_PLAIN, top + theme::MENU_ITEM_HEIGHT / 2.0), Align2::LEFT_CENTER, "No matching actions", font.clone(), theme::TEXT_DISABLED);
+        }
+        for r in 0..shown {
+            let li = first + r;
+            let c = &cmds[list[li]];
+            let row = Rect::from_min_size(Pos2::new(rect.left(), top + r as f32 * theme::MENU_ITEM_HEIGHT), Vec2::new(rect.width(), theme::MENU_ITEM_HEIGHT));
+            let resp = ui.interact(row, Id::new(("palette-row", li)), if c.disabled { Sense::hover() } else { Sense::click() });
+            let lit = app.ui.palette_sel == li && !c.disabled;
+            if ptr.is_some_and(|p| row.contains(p)) {
+                hover = Some(li);
+            }
+            if resp.clicked() && !c.disabled {
+                pick = Some(list[li]);
+            }
+            if lit {
+                p.rect_filled(row.shrink2(Vec2::new(theme::MENU_PILL_INSET, 0.0)), theme::cr(theme::MENU_PILL_RADIUS), theme::BG_MENU_SELECTED);
+            }
+            let col = if c.disabled { theme::TEXT_DISABLED } else { theme::TEXT };
+            p.text(Pos2::new(row.left() + theme::MENU_LABEL_X_PLAIN, row.center().y), Align2::LEFT_CENTER, &c.label, font.clone(), col);
+            if !c.shortcut.is_empty() {
+                let sc = if c.disabled { theme::TEXT_DISABLED } else if lit { theme::MENU_SHORTCUT_HIGHLIGHT } else { theme::TEXT_SECONDARY };
+                p.text(Pos2::new(row.right() - theme::MENU_SHORTCUT_PAD, row.center().y), Align2::RIGHT_CENTER, &c.shortcut, font.clone(), sc);
+            }
+        }
+    });
+    if moved {
+        if let Some(h) = hover {
+            app.ui.palette_sel = h;
+        }
+    }
+    if enter && n > 0 {
+        let c = &cmds[list[app.ui.palette_sel]];
+        if !c.disabled {
+            pick = Some(list[app.ui.palette_sel]);
+        }
+    }
+    let outside = ctx.input(|i| i.pointer.any_pressed() && i.pointer.interact_pos().is_some_and(|p| !rect.contains(p)));
+    if esc || outside {
+        app.ui.menu = None;
+        return;
+    }
+    if let Some(ci) = pick {
+        let act = cmds[ci].act;
+        app.ui.menu = None;
+        run(app, ctx, act);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn query_matching_is_word_based() {
+        assert!(matches_query("Zoom to fit", "zoom fit"));
+        assert!(matches_query("Zoom to fit", ""));
+        assert!(!matches_query("Zoom to fit", "pen"));
     }
 }

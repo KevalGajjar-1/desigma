@@ -23,6 +23,21 @@ fn shape(doc: &mut Document, parent: NodeId, n: Node, name: &str, radius: f32) -
     doc.insert(parent, n).unwrap()
 }
 
+/// Blank document matching the Figma "nothing selected" reference capture: a near-black
+/// page and a single gradient colour style (used by `--fixture no-selection`).
+pub fn reference_document() -> Document {
+    let mut d = Document::new("Dray Insight");
+    let page = d.add_page("UI Kit");
+    if let Some(n) = d.nodes.get_mut(&page) {
+        n.kind = NodeKind::Page { background: Color::rgb(0x1E, 0x1E, 0x1E) };
+    }
+    let stops = vec![GradientStop { pos: 0.0, color: Color::rgb(0x0E, 0x6F, 0xC4) }, GradientStop { pos: 1.0, color: Color::rgb(0x03, 0x14, 0x30) }];
+    let handles = [Vec2::new(0.0, 0.0), Vec2::new(1.0, 1.0), Vec2::new(1.0, 0.0)];
+    let kind = PaintKind::LinearGradient { handles, stops };
+    d.styles.insert("Waterfront Gradient".into(), Style::Fill(vec![Paint { kind, opacity: 1.0, visible: true, blend: BlendMode::Normal }]));
+    d
+}
+
 pub fn demo_document() -> Document {
     let mut d = Document::new("Untitled");
     let page = d.add_page("Page 1");

@@ -62,6 +62,38 @@ pub fn toolbar_rect(screen: Rect) -> Rect {
     )
 }
 
+/// The 32px button of toolbar group `gi`.
+pub fn group_button_rect(screen: Rect, gi: usize) -> Rect {
+    let bar = toolbar_rect(screen);
+    let mut x = bar.left() + theme::TOOLBELT_PADDING;
+    let y = bar.top() + (bar.height() - theme::TOOL_BUTTON) / 2.0;
+    for (i, g) in GROUPS.iter().enumerate() {
+        if i > 0 {
+            x += theme::TOOL_GROUP_GAP;
+        }
+        if i == gi {
+            break;
+        }
+        x += theme::TOOL_BUTTON;
+        if has_chevron(g) {
+            x += theme::TOOL_CHEVRON_GAP + theme::TOOL_CHEVRON_W;
+        }
+    }
+    Rect::from_min_size(Pos2::new(x, y), Vec2::splat(theme::TOOL_BUTTON))
+}
+
+/// The chevron hit area right of group `gi`'s button.
+pub fn chevron_rect(screen: Rect, gi: usize) -> Rect {
+    let b = group_button_rect(screen, gi);
+    Rect::from_min_size(Pos2::new(b.right() + theme::TOOL_CHEVRON_GAP, b.top()), Vec2::new(theme::TOOL_CHEVRON_W, theme::TOOL_BUTTON))
+}
+
+/// Top-left of group `gi`'s dropdown of height `h`: above the button, slightly overlapping the bar.
+pub fn tool_menu_pos(screen: Rect, gi: usize, h: f32) -> Pos2 {
+    let b = group_button_rect(screen, gi);
+    Pos2::new(b.right() + theme::TOOL_MENU_DX, toolbar_rect(screen).top() + theme::TOOL_MENU_OVERLAP - h)
+}
+
 pub fn show(app: &mut App, ui: &mut Ui, screen: Rect) {
     let bar = toolbar_rect(screen);
     let p = ui.painter().clone();
@@ -107,7 +139,7 @@ pub fn show(app: &mut App, ui: &mut Ui, screen: Rect) {
                 p.rect_filled(cr, theme::cr(theme::RADIUS_MEDIUM), theme::BG_TOOLBAR_HOVER);
             }
             let cc = Pos2::new(br.right() + theme::TOOL_CHEVRON_CENTER_DX, cr.center().y);
-            icons::paint(&p, Icon::ChevronDown, cc, 16.0, theme::ICON_SECONDARY);
+            icons::paint(&p, Icon::ChevronDown, cc, theme::TOOL_CHEVRON_ICON, theme::ICON_SECONDARY);
             if cresp.clicked() {
                 app.ui.menu = if open { None } else { Some(MenuKind::ToolGroup(gi)) };
                 app.ui.menu_anchor = Some(cr);
@@ -124,8 +156,8 @@ pub fn show(app: &mut App, ui: &mut Ui, screen: Rect) {
         p.rect_filled(ar, theme::cr(theme::RADIUS_MEDIUM), theme::BG_TOOLBAR_HOVER);
     }
     icons::paint(&p, Icon::Sparkle, ar.center(), theme::TOOL_ICON_SIZE, theme::ICON);
-    if aresp.on_hover_text("Actions").clicked() {
-        app.show_toast("Actions are not available yet", false);
+    if aresp.on_hover_text("Actions   Ctrl+K").clicked() {
+        super::menus::run(app, ui.ctx(), super::menus::Action::OpenPalette);
     }
     x += theme::TOOL_BUTTON + theme::TOOLBAR_DIVIDER_GAP_BEFORE;
 

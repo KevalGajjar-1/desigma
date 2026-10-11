@@ -176,7 +176,7 @@ fn component_selected_shows_property_definitions_and_adds_one() {
     assert!(s.app().ui.prop_menu.is_some());
     // First entry of the popup is "Boolean".
     let at = plus.left_bottom() + Vec2::new(-150.0, 2.0);
-    s.click(at + Vec2::new(40.0, theme::MENU_PADDING / 2.0 + theme::MENU_ITEM_HEIGHT / 2.0));
+    s.click(at + Vec2::new(40.0, theme::MENU_PADDING + theme::MENU_ITEM_HEIGHT / 2.0));
     let props = &s.app().doc.get(main).unwrap().component.props;
     assert_eq!(props.len(), 3);
     assert_eq!(props[2].kind, desigma_doc::PropKind::Boolean);
@@ -199,7 +199,7 @@ fn binding_a_layer_to_a_property_from_its_inspector() {
     s.click(dd.center());
     // Options: None, Show icon.
     let at = dd.left_bottom() + Vec2::new(0.0, 2.0);
-    s.click(at + Vec2::new(30.0, theme::MENU_PADDING / 2.0 + theme::MENU_ITEM_HEIGHT * 1.5));
+    s.click(at + Vec2::new(30.0, theme::MENU_PADDING + theme::MENU_ITEM_HEIGHT * 1.5));
     assert_eq!(s.app().doc.get(bg).unwrap().component.bindings.get(&OverrideField::Visible).map(String::as_str), Some("Show icon"));
 }
 
@@ -274,9 +274,9 @@ fn context_menu_detaches_and_combines() {
     let labels = crate::panels::context::labels(s.app());
     let idx = labels.iter().position(|l| l == "Detach instance").unwrap();
     assert!(labels.contains(&"Combine as variants".to_string()) && labels.contains(&"Create component".to_string()));
-    // Items are 24px tall with a 9px separator after "Add auto layout" (index 4).
-    let sep = if idx > 4 { 9.0 } else { 0.0 };
-    let y = at.y + theme::MENU_PADDING / 2.0 + idx as f32 * theme::MENU_ITEM_HEIGHT + sep + theme::MENU_ITEM_HEIGHT / 2.0;
+    // Items are 24px tall with a 17px separator block after "Add auto layout" (index 4).
+    let sep = if idx > 4 { crate::widgets::menu::SEP_H } else { 0.0 };
+    let y = at.y + theme::MENU_PADDING + idx as f32 * theme::MENU_ITEM_HEIGHT + sep + theme::MENU_ITEM_HEIGHT / 2.0;
     s.click(Pos2::new(at.x + 60.0, y));
     assert!(s.app().ui.ctx_menu.is_none());
     assert!(matches!(s.app().doc.get(inst).unwrap().kind, NodeKind::Frame(_)));
