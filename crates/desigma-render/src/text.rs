@@ -1,0 +1,302 @@
+//! Text layout with cosmic-text. Glyph outlines are converted to tiny-skia
+//! paths (no hinting, greyscale AA via the path rasteriser), grouped by the
+//! style they belong to so fills (solid / gradient / image) apply uniformly.
+
+use cosmic_text::{
+    fontdb, Align, Attrs, Buffer, CacheKeyFlags, Command, Family, FontSystem, Hinting, Metrics, Shaping, Style, SwashCache,
+    TextDecoration as CtDecoration, UnderlineStyle, Weight, Wrap,
+};
+use desigma_doc as d;
+use desigma_doc::{TextAutoResize, TextProps, Vec2};
+use std::cell::RefCell;
+use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
+use tiny_skia as sk;
+
+struct Fonts {
+    fs: FontSystem,
+    swash: SwashCache,
+    families: HashSet<String>,
+}
+
+thread_local! {
+    static FONTS: RefCell<Option<Fonts>> = const { RefCell::new(None) };
+    static LAYOUTS: RefCell<HashMap<u64, Rc<TextLayout>>> = RefCell::new(HashMap::new());
+}
+
+/// Outlines of laid out text, one path per style (index 0 = base style,
+/// i + 1 = `runs[i].style`).
+pub struct TextLayout {
+    pub styles: Vec<d::TextStyle>,
+    pub paths: Vec<Option<sk::Path>>,
+}
+
+fn with_fonts<R>(f: impl FnOnce(&mut Fonts) -> R) -> R {
+    FONTS.with(|cell| {
+        let mut slot = cell.borrow_mut();
+        if slot.is_none() {
+            let fs = FontSystem::new();
+            let mut families = HashSet::new();
+            for face in fs.db().faces() {
+                for (name, _) in &face.families {
+                    families.insert(name.to_lowercase());
+                }
+            }
+            *slot = Some(Fonts { fs, swash: SwashCache::new(), families });
+        }
+        f(slot.as_mut().unwrap())
+    })
+}
+
+/// Registers extra font data (e.g. a bundled Inter) with the shared font system.
+pub fn load_font_data(data: Vec<u8>) {
+    with_fonts(|f| {
+        let before = f.fs.db().len();
+        f.fs.db_mut().load_font_data(data);
+        for face in f.fs.db().faces().skip(before) {
+            for (name, _) in &face.families {
+                f.families.insert(name.to_lowercase());
+            }
+        }
+    });
+    LAYOUTS.with(|l| l.borrow_mut().clear());
+}
+
+fn auto_line_ratio(fonts: &mut Fonts, st: &d::TextStyle, has_family: bool) -> f32 {
+    let fam = if has_family { fontdb::Family::Name(&st.font_family) } else { fontdb::Family::SansSerif };
+    let q = fontdb::Query {
+        families: &[fam],
+        weight: fontdb::Weight(st.font_weight),
+        stretch: fontdb::Stretch::Normal,
+        style: if st.italic { fontdb::Style::Italic } else { fontdb::Style::Normal },
+    };
+    let Some(id) = fonts.fs.db().query(&q) else { return 1.2 };
+    let Some(font) = fonts.fs.get_font(id, fontdb::Weight(st.font_weight)) else { return 1.2 };
+    let m = font.as_swash().metrics(&[]);
+    let upem = m.units_per_em as f32;
+    if upem <= 0.0 {
+        return 1.2;
+    }
+    let r = (m.ascent + m.descent + m.leading) / upem;
+    if r.is_finite() && r > 0.5 {
+        r
+    } else {
+        1.2
+    }
+}
+
+struct Segment {
+    text: String,
+    style: usize,
+    small: bool,
+}
+
+fn build_segments(props: &TextProps) -> Vec<Segment> {
+    let content = &props.content;
+    let case_of = |idx: usize| if idx == 0 { props.style.case } else { props.runs[idx - 1].style.case };
+    let style_at = |b: usize| -> usize {
+        let mut s = 0;
+        for (i, r) in props.runs.iter().enumerate() {
+            if b >= r.start && b < r.end {
+                s = i + 1;
+            }
+        }
+        s
+    };
+    let mut segs: Vec<Segment> = Vec::new();
+    let mut word_start = true;
+    for (b, ch) in content.char_indices() {
+        let idx = style_at(b);
+        let case = case_of(idx);
+        let mut small = false;
+        let piece: String = match case {
+            d::TextCase::Original => ch.to_string(),
+            d::TextCase::Upper => ch.to_uppercase().collect(),
+            d::TextCase::Lower => ch.to_lowercase().collect(),
+            d::TextCase::Title => {
+                if word_start && ch.is_alphabetic() {
+                    ch.to_uppercase().collect()
+                } else {
+                    ch.to_string()
+                }
+            }
+            d::TextCase::SmallCaps => {
+                if ch.is_lowercase() {
+                    small = true;
+                    ch.to_uppercase().collect()
+                } else {
+                    ch.to_string()
+                }
+            }
+        };
+        word_start = !(ch.is_alphanumeric() || ch == '\'' || ch == '\u{2019}');
+        match segs.last_mut() {
+            Some(last) if last.style == idx && last.small == small => last.text.push_str(&piece),
+            _ => segs.push(Segment { text: piece, style: idx, small }),
+        }
+    }
+    segs
+}
+
+fn style_hash(props: &TextProps, size: Vec2) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    format!("{:?}|{}|{}", props, size.x, size.y).hash(&mut h);
+    h.finish()
+}
+
+/// Lays out `props` inside a box of `size`; cached per content/style/size.
+pub fn layout(props: &TextProps, size: Vec2) -> Rc<TextLayout> {
+    let key = style_hash(props, size);
+    if let Some(hit) = LAYOUTS.with(|l| l.borrow().get(&key).cloned()) {
+        return hit;
+    }
+    let lay = Rc::new(with_fonts(|f| compute_layout(f, props, size)));
+    LAYOUTS.with(|l| {
+        let mut l = l.borrow_mut();
+        if l.len() > 1024 {
+            l.clear();
+        }
+        l.insert(key, lay.clone());
+    });
+    lay
+}
+
+fn compute_layout(fonts: &mut Fonts, props: &TextProps, size: Vec2) -> TextLayout {
+    let mut styles = vec![props.style.clone()];
+    styles.extend(props.runs.iter().map(|r| r.style.clone()));
+    let mut builders: Vec<sk::PathBuilder> = styles.iter().map(|_| sk::PathBuilder::new()).collect();
+
+    let has_family: Vec<bool> = styles.iter().map(|s| fonts.families.contains(&s.font_family.to_lowercase())).collect();
+    let ratios: Vec<f32> = styles
+        .iter()
+        .enumerate()
+        .map(|(i, s)| match s.line_height {
+            d::LineHeight::Auto => auto_line_ratio(fonts, s, has_family[i]),
+            _ => 1.0,
+        })
+        .collect();
+    let line_height_for = |idx: usize, font_size: f32| -> f32 {
+        match styles[idx].line_height {
+            d::LineHeight::Auto => ratios[idx] * font_size,
+            d::LineHeight::Pixels(p) => p,
+            d::LineHeight::Percent(p) => font_size * p / 100.0,
+        }
+    };
+
+    let segs = build_segments(props);
+    let attrs_for = |seg: &Segment| -> Attrs<'_> {
+        let st = &styles[seg.style];
+        let fsize = (st.font_size * if seg.small { 0.8 } else { 1.0 }).max(0.1);
+        let family = if has_family[seg.style] { Family::Name(&st.font_family) } else { Family::SansSerif };
+        let mut a = Attrs::new()
+            .family(family)
+            .weight(Weight(st.font_weight))
+            .style(if st.italic { Style::Italic } else { Style::Normal })
+            .metrics(Metrics::new(fsize, line_height_for(seg.style, fsize)))
+            .metadata(seg.style)
+            .cache_key_flags(CacheKeyFlags::DISABLE_HINTING);
+        if st.letter_spacing != 0.0 {
+            a = a.letter_spacing(st.letter_spacing / fsize);
+        }
+        let mut deco = CtDecoration::new();
+        match st.decoration {
+            d::TextDecoration::None => {}
+            d::TextDecoration::Underline => deco.underline = UnderlineStyle::Single,
+            d::TextDecoration::Strikethrough => deco.strikethrough = true,
+        }
+        if deco.has_decoration() {
+            a.text_decoration = deco;
+        }
+        a
+    };
+
+    let base_size = props.style.font_size.max(0.1);
+    let base_lh = line_height_for(0, base_size);
+    let mut buffer = Buffer::new(&mut fonts.fs, Metrics::new(base_size, base_lh));
+    buffer.set_hinting(Hinting::Disabled);
+    let wrap_width = if size.x > 0.0 { Some(size.x) } else { None };
+    buffer.set_size(wrap_width, None);
+    buffer.set_wrap(match props.auto_resize {
+        TextAutoResize::WidthAndHeight => Wrap::None,
+        _ => Wrap::WordOrGlyph,
+    });
+    let align = match props.style.align_h {
+        d::TextAlignH::Left => Align::Left,
+        d::TextAlignH::Center => Align::Center,
+        d::TextAlignH::Right => Align::Right,
+        d::TextAlignH::Justified => Align::Justified,
+    };
+    let default_attrs = attrs_for(&Segment { text: String::new(), style: 0, small: false });
+    let spans: Vec<(&str, Attrs)> = segs.iter().map(|s| (s.text.as_str(), attrs_for(s))).collect();
+    buffer.set_rich_text(spans, &default_attrs, Shaping::Advanced, Some(align));
+    buffer.shape_until_scroll(&mut fonts.fs, false);
+
+    // measure
+    let para = props.style.paragraph_spacing;
+    let mut total_h = 0.0f32;
+    for run in buffer.layout_runs() {
+        total_h = total_h.max(run.line_top + run.line_height + run.line_i as f32 * para);
+    }
+    let oy = if size.y > 0.0 {
+        match props.style.align_v {
+            d::TextAlignV::Top => 0.0,
+            d::TextAlignV::Center => (size.y - total_h) / 2.0,
+            d::TextAlignV::Bottom => size.y - total_h,
+        }
+    } else {
+        0.0
+    };
+
+    for run in buffer.layout_runs() {
+        let baseline = run.line_y + run.line_i as f32 * para + oy;
+        for g in run.glyphs {
+            let style = g.metadata.min(builders.len() - 1);
+            let phys = g.physical((0.0, 0.0), 1.0);
+            let gx = g.x + g.font_size * g.x_offset;
+            let gy = baseline + g.y - g.font_size * g.y_offset;
+            let Some(cmds) = fonts.swash.get_outline_commands(&mut fonts.fs, phys.cache_key) else { continue };
+            let pb = &mut builders[style];
+            for c in cmds {
+                match c {
+                    Command::MoveTo(p) => pb.move_to(gx + p.x, gy - p.y),
+                    Command::LineTo(p) => pb.line_to(gx + p.x, gy - p.y),
+                    Command::QuadTo(c1, p) => pb.quad_to(gx + c1.x, gy - c1.y, gx + p.x, gy - p.y),
+                    Command::CurveTo(c1, c2, p) => {
+                        pb.cubic_to(gx + c1.x, gy - c1.y, gx + c2.x, gy - c2.y, gx + p.x, gy - p.y)
+                    }
+                    Command::Close => pb.close(),
+                }
+            }
+        }
+        for span in run.decorations {
+            let glyphs = &run.glyphs[span.glyph_range.clone()];
+            let Some(first) = glyphs.first() else { continue };
+            let style = first.metadata.min(builders.len() - 1);
+            let (mut x0, mut x1) = (f32::MAX, f32::MIN);
+            for g in glyphs {
+                x0 = x0.min(g.x);
+                x1 = x1.max(g.x + g.w);
+            }
+            if x1 <= x0 {
+                continue;
+            }
+            let fs = span.font_size;
+            let td = &span.data.text_decoration;
+            let mut rect = |offset: f32, thickness: f32| {
+                let t = (thickness * fs).max(1.0);
+                let y = baseline - offset * fs;
+                if let Some(r) = sk::Rect::from_xywh(x0, y, x1 - x0, t) {
+                    builders[style].push_rect(r);
+                }
+            };
+            if !matches!(td.underline, UnderlineStyle::None) {
+                rect(span.data.underline_metrics.offset, span.data.underline_metrics.thickness);
+            }
+            if td.strikethrough {
+                rect(span.data.strikethrough_metrics.offset, span.data.strikethrough_metrics.thickness);
+            }
+        }
+    }
+    TextLayout { styles, paths: builders.into_iter().map(|b| b.finish()).collect() }
+}
