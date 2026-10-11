@@ -46,6 +46,10 @@ pub struct LibraryIndex {
     pub styles: usize,
     #[serde(default)]
     pub variables: usize,
+    /// Path of the file this library was published from, when it is saved on
+    /// this device (lets "Go to main component" open it).
+    #[serde(default)]
+    pub source_path: Option<String>,
 }
 
 impl LibraryIndex {
@@ -122,6 +126,7 @@ impl Library {
             components: 0,
             styles: 0,
             variables: 0,
+            source_path: None,
         });
         let previous = if index.versions.is_empty() { None } else { self.load_snapshot(&id, None).ok() };
         let version = index.latest_version().max(doc.library.published.as_ref().map(|p| p.version).unwrap_or(0)) + 1;
@@ -150,6 +155,13 @@ impl Library {
         index.variables = snap.count(LibraryAssetKind::Variable);
         write_atomic(&dir.join("index.json"), serde_json::to_string_pretty(&index)?.as_bytes())?;
         Ok(PublishInfo { library_id: id, name, version, description: description.into(), published_at })
+    }
+
+    /// Records where the library's source file lives on this device.
+    pub fn set_library_source(&self, id: &str, path: Option<&str>) -> Result<()> {
+        let mut index = self.library_index(id)?;
+        index.source_path = path.map(String::from);
+        write_atomic(&self.library_dir(id).join("index.json"), serde_json::to_string_pretty(&index)?.as_bytes())
     }
 
     /// Published libraries, by name. Unpublished (trashed) ones are not listed.
