@@ -79,7 +79,10 @@ impl Rect {
     }
 
     pub fn contains_rect(&self, o: &Rect) -> bool {
-        o.x >= self.x && o.y >= self.y && o.x + o.w <= self.x + self.w && o.y + o.h <= self.y + self.h
+        o.x >= self.x
+            && o.y >= self.y
+            && o.x + o.w <= self.x + self.w
+            && o.y + o.h <= self.y + self.h
     }
 
     pub fn union(&self, o: &Rect) -> Rect {

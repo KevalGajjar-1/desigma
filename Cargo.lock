@@ -841,8 +841,9 @@ dependencies = [
  "env_logger",
  "log",
  "rfd",
+ "serde",
+ "serde_json",
  "vello",
- "wgpu",
 ]
 
 [[package]]

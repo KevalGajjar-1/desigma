@@ -197,7 +197,12 @@ impl Editor {
         let ids = self
             .page()
             .children_of(parent)
-            .map(|c| c.iter().filter(|n| n.visible && !n.locked).map(|n| n.id).collect())
+            .map(|c| {
+                c.iter()
+                    .filter(|n| n.visible && !n.locked)
+                    .map(|n| n.id)
+                    .collect()
+            })
             .unwrap_or_default();
         self.selection = ids;
     }
@@ -211,7 +216,9 @@ impl Editor {
             .copied()
             .filter(|id| {
                 page.path_to(*id).is_some_and(|path| {
-                    !path[..path.len() - 1].iter().any(|a| self.selection.contains(a))
+                    !path[..path.len() - 1]
+                        .iter()
+                        .any(|a| self.selection.contains(a))
                 })
             })
             .collect()
@@ -227,7 +234,11 @@ impl Editor {
         let mut max = 0;
         for n in &self.page().children {
             n.walk(&mut |n| {
-                if let Some(num) = n.name.strip_prefix(base).and_then(|r| r.trim().parse::<u32>().ok()) {
+                if let Some(num) = n
+                    .name
+                    .strip_prefix(base)
+                    .and_then(|r| r.trim().parse::<u32>().ok())
+                {
                     max = max.max(num);
                 }
             });
@@ -246,7 +257,11 @@ impl Editor {
         node.name = match &node.kind {
             NodeKind::Text(t) => {
                 let first_line = t.content.lines().next().unwrap_or("").trim();
-                if first_line.is_empty() { "Text".into() } else { first_line.chars().take(40).collect() }
+                if first_line.is_empty() {
+                    "Text".into()
+                } else {
+                    first_line.chars().take(40).collect()
+                }
             }
             k => self.next_name(k.label()),
         };
@@ -262,11 +277,11 @@ impl Editor {
     /// for checkpointing once per gesture.
     pub fn translate_selection(&mut self, delta: Vec2) {
         for id in self.selection_roots() {
-            if let Some(n) = self.page_mut().find_mut(id) {
-                if !n.locked {
-                    n.x += delta.x;
-                    n.y += delta.y;
-                }
+            if let Some(n) = self.page_mut().find_mut(id)
+                && !n.locked
+            {
+                n.x += delta.x;
+                n.y += delta.y;
             }
         }
         self.page_mut().fit_groups();
@@ -282,10 +297,10 @@ impl Editor {
                 n.scale_children(w / n.width, h / n.height);
             }
             let width_changed = (w - n.width).abs() > f64::EPSILON;
-            if let Some(t) = n.text_mut() {
-                if width_changed {
-                    t.auto_width = false;
-                }
+            if let Some(t) = n.text_mut()
+                && width_changed
+            {
+                t.auto_width = false;
             }
             n.x = world.x - origin.x;
             n.y = world.y - origin.y;
@@ -298,10 +313,23 @@ impl Editor {
     /// Scales every selected root from `from` to `to` (both page space),
     /// as when dragging a handle of a multi-selection.
     pub fn resize_selection(&mut self, originals: &[(NodeId, Rect)], from: Rect, to: Rect) {
-        let sx = if from.w.abs() > f64::EPSILON { to.w / from.w } else { 1.0 };
-        let sy = if from.h.abs() > f64::EPSILON { to.h / from.h } else { 1.0 };
+        let sx = if from.w.abs() > f64::EPSILON {
+            to.w / from.w
+        } else {
+            1.0
+        };
+        let sy = if from.h.abs() > f64::EPSILON {
+            to.h / from.h
+        } else {
+            1.0
+        };
         for (id, r) in originals {
-            let nr = Rect::new(to.x + (r.x - from.x) * sx, to.y + (r.y - from.y) * sy, r.w * sx, r.h * sy);
+            let nr = Rect::new(
+                to.x + (r.x - from.x) * sx,
+                to.y + (r.y - from.y) * sy,
+                r.w * sx,
+                r.h * sy,
+            );
             self.set_world_rect(*id, nr);
         }
     }
@@ -310,13 +338,20 @@ impl Editor {
     /// (or out to the page), keeping its on-canvas position.
     pub fn drop_into_frames(&mut self, ids: &[NodeId]) {
         for id in ids {
-            let Some(r) = self.page().world_rect(*id) else { continue };
-            let Some(loc) = self.page().locate(*id) else { continue };
+            let Some(r) = self.page().world_rect(*id) else {
+                continue;
+            };
+            let Some(loc) = self.page().locate(*id) else {
+                continue;
+            };
             // Children of groups stay with their group.
-            if let Some(p) = loc.parent {
-                if self.page().find(p).is_some_and(|n| matches!(n.kind, NodeKind::Group)) {
-                    continue;
-                }
+            if let Some(p) = loc.parent
+                && self
+                    .page()
+                    .find(p)
+                    .is_some_and(|n| matches!(n.kind, NodeKind::Group))
+            {
+                continue;
             }
             let target = self.page().frame_at(r.center(), &[*id]);
             if target != loc.parent {
@@ -349,8 +384,12 @@ impl Editor {
         self.checkpoint();
         let mut new_sel = vec![];
         for id in roots {
-            let Some(loc) = self.page().locate(id) else { continue };
-            let Some(orig) = self.page().find(id).cloned() else { continue };
+            let Some(loc) = self.page().locate(id) else {
+                continue;
+            };
+            let Some(orig) = self.page().find(id).cloned() else {
+                continue;
+            };
             let mut copy = self.doc.clone_with_new_ids(&orig);
             copy.x += offset.x;
             copy.y += offset.y;
@@ -406,7 +445,9 @@ impl Editor {
         self.checkpoint();
         let mut new_sel = vec![];
         for gid in targets {
-            let Some((group, loc)) = self.page_mut().remove(gid) else { continue };
+            let Some((group, loc)) = self.page_mut().remove(gid) else {
+                continue;
+            };
             for (i, mut c) in group.children.into_iter().enumerate() {
                 c.x += group.x;
                 c.y += group.y;
@@ -425,7 +466,9 @@ impl Editor {
         }
         self.checkpoint();
         for id in roots {
-            let Some((node, loc)) = self.page_mut().remove(id) else { continue };
+            let Some((node, loc)) = self.page_mut().remove(id) else {
+                continue;
+            };
             let len = self.page().children_of(loc.parent).map_or(0, |c| c.len());
             let idx = match order {
                 ZOrder::Forward => (loc.index + 1).min(len),
@@ -439,15 +482,21 @@ impl Editor {
 
     /// Moves `id` to `index` within `parent` (used by layer-panel drag and drop).
     pub fn move_layer(&mut self, id: NodeId, parent: Option<NodeId>, index: usize) {
-        if let Some(p) = parent {
-            if self.page().find(id).is_some_and(|n| n.contains_id(p)) {
-                return;
-            }
+        if let Some(p) = parent
+            && self.page().find(id).is_some_and(|n| n.contains_id(p))
+        {
+            return;
         }
         self.checkpoint();
         let world = self.page().world_rect(id);
-        let Some((mut node, loc)) = self.page_mut().remove(id) else { return };
-        let idx = if loc.parent == parent && loc.index < index { index - 1 } else { index };
+        let Some((mut node, loc)) = self.page_mut().remove(id) else {
+            return;
+        };
+        let idx = if loc.parent == parent && loc.index < index {
+            index - 1
+        } else {
+            index
+        };
         if let Some(w) = world {
             let origin = self.page().content_origin(parent);
             node.x = w.x - origin.x;
@@ -496,7 +545,10 @@ mod tests {
 
     fn editor_with_frame() -> (Editor, NodeId) {
         let mut ed = Editor::default();
-        let f = ed.create_node(NodeKind::Frame { clip_content: true }, Rect::new(0.0, 0.0, 400.0, 300.0));
+        let f = ed.create_node(
+            NodeKind::Frame { clip_content: true },
+            Rect::new(0.0, 0.0, 400.0, 300.0),
+        );
         (ed, f)
     }
 
@@ -557,17 +609,25 @@ mod tests {
         ed.selection = vec![a, b];
         let g = ed.group_selection().unwrap();
         assert_eq!(ed.page().children.len(), 1);
-        assert_eq!(ed.page().find(g).unwrap().rect(), Rect::new(0.0, 0.0, 30.0, 30.0));
+        assert_eq!(
+            ed.page().find(g).unwrap().rect(),
+            Rect::new(0.0, 0.0, 30.0, 30.0)
+        );
         ed.ungroup_selection();
         assert_eq!(ed.page().children.len(), 2);
-        assert_eq!(ed.page().world_rect(b).unwrap(), Rect::new(20.0, 20.0, 10.0, 10.0));
+        assert_eq!(
+            ed.page().world_rect(b).unwrap(),
+            Rect::new(20.0, 20.0, 10.0, 10.0)
+        );
     }
 
     #[test]
     fn duplicate_places_copy_above() {
         let mut ed = Editor::default();
         let a = ed.create_node(NodeKind::Rectangle, Rect::new(0.0, 0.0, 10.0, 10.0));
-        ed.edit_selected("fill", |n| n.fills = vec![crate::Paint::solid(Color::BLACK)]);
+        ed.edit_selected("fill", |n| {
+            n.fills = vec![crate::Paint::solid(Color::BLACK)]
+        });
         ed.duplicate_selection(Vec2::new(10.0, 0.0));
         let page = ed.page();
         assert_eq!(page.children.len(), 2);
@@ -583,7 +643,10 @@ mod tests {
         let b = ed.create_node(NodeKind::Rectangle, Rect::new(0.0, 0.0, 10.0, 10.0));
         ed.select_only(a);
         ed.reorder_selection(ZOrder::Front);
-        assert_eq!(ed.page().children.iter().map(|n| n.id).collect::<Vec<_>>(), vec![b, a]);
+        assert_eq!(
+            ed.page().children.iter().map(|n| n.id).collect::<Vec<_>>(),
+            vec![b, a]
+        );
         ed.reorder_selection(ZOrder::Back);
         assert_eq!(ed.page().children[0].id, a);
     }
@@ -596,6 +659,9 @@ mod tests {
         ed.selection = vec![a, b];
         let g = ed.group_selection().unwrap();
         ed.set_world_rect(g, Rect::new(0.0, 0.0, 40.0, 40.0));
-        assert_eq!(ed.page().world_rect(b).unwrap(), Rect::new(20.0, 20.0, 20.0, 20.0));
+        assert_eq!(
+            ed.page().world_rect(b).unwrap(),
+            Rect::new(20.0, 20.0, 20.0, 20.0)
+        );
     }
 }

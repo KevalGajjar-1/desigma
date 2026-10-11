@@ -59,7 +59,9 @@ impl Color {
                 Some(Self::from_rgb8(out[0], out[1], out[2]).with_alpha(alpha))
             }
             6 => Some(Self::from_rgb8(byte(0)?, byte(2)?, byte(4)?).with_alpha(alpha)),
-            8 => Some(Self::from_rgb8(byte(0)?, byte(2)?, byte(4)?).with_alpha(byte(6)? as f32 / 255.0)),
+            8 => Some(
+                Self::from_rgb8(byte(0)?, byte(2)?, byte(4)?).with_alpha(byte(6)? as f32 / 255.0),
+            ),
             _ => None,
         }
     }
@@ -87,7 +89,10 @@ fn default_true() -> bool {
 
 impl Paint {
     pub fn solid(color: Color) -> Self {
-        Paint::Solid { color, visible: true }
+        Paint::Solid {
+            color,
+            visible: true,
+        }
     }
 
     pub fn is_visible(&self) -> bool {
@@ -106,7 +111,10 @@ mod tests {
         let c = Color::parse_hex("#0d99ff", 1.0).unwrap();
         assert_eq!(c.to_hex(), "0D99FF");
         assert_eq!(Color::parse_hex("fff", 1.0).unwrap().to_hex(), "FFFFFF");
-        assert_eq!(Color::parse_hex("00000080", 1.0).unwrap().to_rgba8()[3], 128);
+        assert_eq!(
+            Color::parse_hex("00000080", 1.0).unwrap().to_rgba8()[3],
+            128
+        );
         assert!(Color::parse_hex("zz", 1.0).is_none());
     }
 }

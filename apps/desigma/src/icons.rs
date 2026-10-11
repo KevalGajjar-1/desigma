@@ -1,6 +1,6 @@
 //! Vector icons drawn with the egui painter, modeled on Figma's 24px icon set.
 
-use egui::{Color32, Painter, Pos2, Rect, Shape, Stroke, StrokeKind, pos2, vec2};
+use egui::{Color32, Painter, Rect, Shape, Stroke, StrokeKind, pos2, vec2};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Icon {
@@ -22,7 +22,9 @@ pub enum Icon {
     AlignLeft,
     AlignCenter,
     AlignRight,
-    Menu,
+    Opacity,
+    Radius,
+    StrokeWeight,
 }
 
 /// Draws `icon` centered in `rect`, scaled to a 16px glyph.
@@ -33,7 +35,13 @@ pub fn paint(p: &Painter, rect: Rect, icon: Icon, color: Color32) {
     let at = |x: f32, y: f32| pos2(c.x + x * s, c.y + y * s);
     match icon {
         Icon::Move => {
-            let pts = vec![at(-4.5, -6.5), at(4.5, 1.5), at(0.5, 1.8), at(-1.8, 6.0), at(-4.5, -6.5)];
+            let pts = vec![
+                at(-4.5, -6.5),
+                at(4.5, 1.5),
+                at(0.5, 1.8),
+                at(-1.8, 6.0),
+                at(-4.5, -6.5),
+            ];
             p.add(Shape::convex_polygon(pts.clone(), Color32::TRANSPARENT, st));
             p.add(Shape::line(pts, st));
         }
@@ -46,7 +54,12 @@ pub fn paint(p: &Painter, rect: Rect, icon: Icon, color: Color32) {
             }
         }
         Icon::Rectangle => {
-            p.rect_stroke(Rect::from_center_size(c, vec2(12.0, 12.0)), 1.0, st, StrokeKind::Middle);
+            p.rect_stroke(
+                Rect::from_center_size(c, vec2(12.0, 12.0)),
+                1.0,
+                st,
+                StrokeKind::Middle,
+            );
         }
         Icon::Ellipse => {
             p.circle_stroke(c, 6.5, st);
@@ -91,7 +104,11 @@ pub fn paint(p: &Painter, rect: Rect, icon: Icon, color: Color32) {
         Icon::Lock | Icon::Unlock => {
             let body = Rect::from_min_max(at(-4.5, -1.0), at(4.5, 6.0));
             p.rect_stroke(body, 1.0, st, StrokeKind::Middle);
-            let (x0, x1) = if icon == Icon::Lock { (-2.8, 2.8) } else { (0.2, 5.8) };
+            let (x0, x1) = if icon == Icon::Lock {
+                (-2.8, 2.8)
+            } else {
+                (0.2, 5.8)
+            };
             let mut arc = vec![];
             for i in 0..=10 {
                 let t = std::f32::consts::PI * (1.0 + i as f32 / 10.0);
@@ -111,10 +128,42 @@ pub fn paint(p: &Painter, rect: Rect, icon: Icon, color: Color32) {
             p.line_segment([at(-5.5, 0.0), at(5.5, 0.0)], st);
         }
         Icon::ChevronRight => {
-            p.add(Shape::convex_polygon(vec![at(-1.5, -3.0), at(2.0, 0.0), at(-1.5, 3.0)], color, Stroke::NONE));
+            p.add(Shape::convex_polygon(
+                vec![at(-1.5, -3.0), at(2.0, 0.0), at(-1.5, 3.0)],
+                color,
+                Stroke::NONE,
+            ));
         }
         Icon::ChevronDown => {
-            p.add(Shape::convex_polygon(vec![at(-3.0, -1.5), at(3.0, -1.5), at(0.0, 2.0)], color, Stroke::NONE));
+            p.add(Shape::convex_polygon(
+                vec![at(-3.0, -1.5), at(3.0, -1.5), at(0.0, 2.0)],
+                color,
+                Stroke::NONE,
+            ));
+        }
+        Icon::Opacity => {
+            let r = Rect::from_center_size(c, vec2(10.0, 10.0));
+            p.rect_stroke(r, 1.0, st, StrokeKind::Middle);
+            p.rect_filled(
+                Rect::from_min_max(r.center_top(), r.right_bottom()),
+                0.0,
+                color,
+            );
+        }
+        Icon::Radius => {
+            let mut arc = vec![at(-4.5, 5.0)];
+            for i in 0..=8 {
+                let t = std::f32::consts::FRAC_PI_2 * (2.0 + i as f32 / 8.0);
+                arc.push(at(1.5 + 6.0 * t.cos(), 1.0 + 6.0 * t.sin()).max(at(-4.5, -5.0)));
+            }
+            arc.push(at(5.0, -5.0));
+            p.add(Shape::line(arc, st));
+        }
+        Icon::StrokeWeight => {
+            for (i, w) in [1.0f32, 1.5, 2.5].iter().enumerate() {
+                let y = -4.0 + i as f32 * 4.0;
+                p.line_segment([at(-5.5, y), at(5.5, y)], Stroke::new(*w, color));
+            }
         }
         Icon::AlignLeft | Icon::AlignCenter | Icon::AlignRight => {
             for (i, w) in [12.0f32, 8.0, 12.0, 8.0].iter().enumerate() {
@@ -127,18 +176,24 @@ pub fn paint(p: &Painter, rect: Rect, icon: Icon, color: Color32) {
                 p.line_segment([at(x0, y), at(x0 + w, y)], st);
             }
         }
-        Icon::Menu => {
-            for y in [-4.0, 0.0, 4.0] {
-                p.line_segment([at(-6.0, y), at(6.0, y)], st);
-            }
-        }
     }
 }
 
 pub fn dashed_rect(p: &Painter, r: Rect, color: Color32) {
-    let corners = [r.left_top(), r.right_top(), r.right_bottom(), r.left_bottom(), r.left_top()];
+    let corners = [
+        r.left_top(),
+        r.right_top(),
+        r.right_bottom(),
+        r.left_bottom(),
+        r.left_top(),
+    ];
     for w in corners.windows(2) {
-        p.extend(Shape::dashed_line(&[w[0], w[1]], Stroke::new(1.0, color), 2.0, 2.0));
+        p.extend(Shape::dashed_line(
+            &[w[0], w[1]],
+            Stroke::new(1.0, color),
+            2.0,
+            2.0,
+        ));
     }
 }
 
@@ -156,8 +211,4 @@ pub fn icon_button(ui: &mut egui::Ui, icon: Icon, selected: bool, size: f32) -> 
     painter.rect_filled(rect, crate::theme::RADIUS, bg);
     paint(painter, rect, icon, crate::theme::TEXT);
     resp
-}
-
-pub fn center(rect: Rect) -> Pos2 {
-    rect.center()
 }

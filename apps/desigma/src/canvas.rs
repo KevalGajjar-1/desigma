@@ -4,8 +4,8 @@
 use desigma_core::{Editor, NodeId, NodeKind, Rect as DRect, TextData, Vec2 as DVec2};
 use desigma_render::{Fonts, render_page, to_peniko};
 use egui::{
-    Align2, Color32, CursorIcon, Key, Painter, PointerButton, Pos2, Rect, Sense, Shape, Stroke, StrokeKind, Ui,
-    pos2, vec2,
+    Align2, Color32, CursorIcon, Key, Painter, PointerButton, Pos2, Rect, Sense, Shape, Stroke,
+    StrokeKind, Ui, pos2, vec2,
 };
 use egui_wgpu::wgpu;
 use vello::kurbo::Affine;
@@ -56,7 +56,10 @@ pub struct Viewport {
 
 impl Default for Viewport {
     fn default() -> Self {
-        Self { pan: egui::Vec2::ZERO, zoom: 1.0 }
+        Self {
+            pan: egui::Vec2::ZERO,
+            zoom: 1.0,
+        }
     }
 }
 
@@ -64,17 +67,20 @@ pub const MIN_ZOOM: f32 = 0.02;
 pub const MAX_ZOOM: f32 = 256.0;
 
 impl Viewport {
-    pub fn to_screen(&self, origin: Pos2, p: DVec2) -> Pos2 {
+    pub fn to_screen(self, origin: Pos2, p: DVec2) -> Pos2 {
         origin + self.pan + vec2(p.x as f32, p.y as f32) * self.zoom
     }
 
-    pub fn to_world(&self, origin: Pos2, p: Pos2) -> DVec2 {
+    pub fn to_world(self, origin: Pos2, p: Pos2) -> DVec2 {
         let v = (p - origin - self.pan) / self.zoom;
         DVec2::new(v.x as f64, v.y as f64)
     }
 
     pub fn rect_to_screen(&self, origin: Pos2, r: DRect) -> Rect {
-        Rect::from_min_max(self.to_screen(origin, r.min()), self.to_screen(origin, r.max()))
+        Rect::from_min_max(
+            self.to_screen(origin, r.min()),
+            self.to_screen(origin, r.max()),
+        )
     }
 
     /// Zooms by `factor` keeping the page point under `anchor` (canvas-local) fixed.
@@ -156,10 +162,28 @@ impl Handle {
             let s = (out.w / r.w).max(out.h / r.h);
             let (w, h) = (r.w * s, r.h * s);
             // Anchor at the corner opposite the dragged one.
-            let ax = if matches!(self, Handle::NW | Handle::SW) { r.x + r.w } else { r.x };
-            let ay = if matches!(self, Handle::NW | Handle::NE) { r.y + r.h } else { r.y };
-            let fx = if x1 < x0 { -1.0 } else { 1.0 } * if matches!(self, Handle::NW | Handle::SW) { -1.0 } else { 1.0 };
-            let fy = if y1 < y0 { -1.0 } else { 1.0 } * if matches!(self, Handle::NW | Handle::NE) { -1.0 } else { 1.0 };
+            let ax = if matches!(self, Handle::NW | Handle::SW) {
+                r.x + r.w
+            } else {
+                r.x
+            };
+            let ay = if matches!(self, Handle::NW | Handle::NE) {
+                r.y + r.h
+            } else {
+                r.y
+            };
+            let fx = if x1 < x0 { -1.0 } else { 1.0 }
+                * if matches!(self, Handle::NW | Handle::SW) {
+                    -1.0
+                } else {
+                    1.0
+                };
+            let fy = if y1 < y0 { -1.0 } else { 1.0 }
+                * if matches!(self, Handle::NW | Handle::NE) {
+                    -1.0
+                } else {
+                    1.0
+                };
             out = DRect::from_points(DVec2::new(ax, ay), DVec2::new(ax + w * fx, ay + h * fy));
         }
         out
@@ -262,12 +286,24 @@ impl Canvas {
         }
     }
 
-    pub fn request_fit(&mut self) {
+    /// Clears per-document state (view, drag, text editing) but keeps GPU resources.
+    pub fn reset(&mut self) {
+        self.view = Viewport::default();
+        self.editing_text = None;
+        self.drag = Drag::None;
+        self.guides.clear();
+        self.hovered = None;
         self.needs_initial_fit = true;
     }
 
     pub fn zoom_to_fit(&mut self, editor: &Editor) {
-        let ids: Vec<NodeId> = editor.page().children.iter().filter(|n| n.visible).map(|n| n.id).collect();
+        let ids: Vec<NodeId> = editor
+            .page()
+            .children
+            .iter()
+            .filter(|n| n.visible)
+            .map(|n| n.id)
+            .collect();
         match editor.page().selection_bounds(&ids) {
             Some(b) => self.view.fit(b, self.size, true),
             None => {
@@ -288,7 +324,8 @@ impl Canvas {
     }
 
     pub fn set_zoom(&mut self, zoom: f32) {
-        self.view.zoom_around(self.size / 2.0, zoom / self.view.zoom);
+        self.view
+            .zoom_around(self.size / 2.0, zoom / self.view.zoom);
     }
 
     pub fn is_interacting(&self) -> bool {
@@ -297,7 +334,14 @@ impl Canvas {
 
     // ------------------------------------------------------------------
 
-    pub fn ui(&mut self, ui: &mut Ui, editor: &mut Editor, fonts: &Fonts, tool: &mut Tool, frame: &eframe::Frame) {
+    pub fn ui(
+        &mut self,
+        ui: &mut Ui,
+        editor: &mut Editor,
+        fonts: &Fonts,
+        tool: &mut Tool,
+        frame: &eframe::Frame,
+    ) {
         let (rect, resp) = ui.allocate_exact_size(ui.available_size(), Sense::click_and_drag());
         self.size = rect.size();
         let origin = rect.min;
@@ -314,7 +358,10 @@ impl Canvas {
             }
         }
 
-        if self.editing_text.is_some_and(|id| editor.page().find(id).is_none()) {
+        if self
+            .editing_text
+            .is_some_and(|id| editor.page().find(id).is_none())
+        {
             self.editing_text = None;
         }
 
@@ -331,7 +378,8 @@ impl Canvas {
 
     /// Scroll to pan, Ctrl/Cmd+scroll or pinch to zoom, middle-drag / Space+drag / Hand tool to pan.
     fn navigate(&mut self, ui: &Ui, resp: &egui::Response, rect: Rect) {
-        let (scroll, zoom, pointer) = ui.input(|i| (i.smooth_scroll_delta, i.zoom_delta(), i.pointer.hover_pos()));
+        let (scroll, zoom, pointer) =
+            ui.input(|i| (i.smooth_scroll_delta, i.zoom_delta(), i.pointer.hover_pos()));
         if resp.contains_pointer() {
             if zoom != 1.0 {
                 if let Some(p) = pointer {
@@ -348,20 +396,58 @@ impl Canvas {
     }
 
     fn selection_handles(&self, editor: &Editor, origin: Pos2) -> Vec<(Handle, Rect)> {
-        let Some(b) = editor.selection_bounds() else { return vec![] };
+        let Some(b) = editor.selection_bounds() else {
+            return vec![];
+        };
         let r = self.view.rect_to_screen(origin, b);
         let hs = 8.0;
         let edge = 6.0;
         let mut out = vec![
-            (Handle::NW, Rect::from_center_size(r.left_top(), vec2(hs, hs))),
-            (Handle::NE, Rect::from_center_size(r.right_top(), vec2(hs, hs))),
-            (Handle::SW, Rect::from_center_size(r.left_bottom(), vec2(hs, hs))),
-            (Handle::SE, Rect::from_center_size(r.right_bottom(), vec2(hs, hs))),
+            (
+                Handle::NW,
+                Rect::from_center_size(r.left_top(), vec2(hs, hs)),
+            ),
+            (
+                Handle::NE,
+                Rect::from_center_size(r.right_top(), vec2(hs, hs)),
+            ),
+            (
+                Handle::SW,
+                Rect::from_center_size(r.left_bottom(), vec2(hs, hs)),
+            ),
+            (
+                Handle::SE,
+                Rect::from_center_size(r.right_bottom(), vec2(hs, hs)),
+            ),
         ];
-        out.push((Handle::N, Rect::from_min_max(pos2(r.left(), r.top() - edge / 2.0), pos2(r.right(), r.top() + edge / 2.0))));
-        out.push((Handle::S, Rect::from_min_max(pos2(r.left(), r.bottom() - edge / 2.0), pos2(r.right(), r.bottom() + edge / 2.0))));
-        out.push((Handle::W, Rect::from_min_max(pos2(r.left() - edge / 2.0, r.top()), pos2(r.left() + edge / 2.0, r.bottom()))));
-        out.push((Handle::E, Rect::from_min_max(pos2(r.right() - edge / 2.0, r.top()), pos2(r.right() + edge / 2.0, r.bottom()))));
+        out.push((
+            Handle::N,
+            Rect::from_min_max(
+                pos2(r.left(), r.top() - edge / 2.0),
+                pos2(r.right(), r.top() + edge / 2.0),
+            ),
+        ));
+        out.push((
+            Handle::S,
+            Rect::from_min_max(
+                pos2(r.left(), r.bottom() - edge / 2.0),
+                pos2(r.right(), r.bottom() + edge / 2.0),
+            ),
+        ));
+        out.push((
+            Handle::W,
+            Rect::from_min_max(
+                pos2(r.left() - edge / 2.0, r.top()),
+                pos2(r.left() + edge / 2.0, r.bottom()),
+            ),
+        ));
+        out.push((
+            Handle::E,
+            Rect::from_min_max(
+                pos2(r.right() - edge / 2.0, r.top()),
+                pos2(r.right() + edge / 2.0, r.bottom()),
+            ),
+        ));
         out
     }
 
@@ -380,7 +466,14 @@ impl Canvas {
         out
     }
 
-    fn interact(&mut self, ui: &mut Ui, resp: &egui::Response, rect: Rect, editor: &mut Editor, tool: &mut Tool) {
+    fn interact(
+        &mut self,
+        ui: &mut Ui,
+        resp: &egui::Response,
+        rect: Rect,
+        editor: &mut Editor,
+        tool: &mut Tool,
+    ) {
         let origin = rect.min;
         let input = ui.input(|i| i.clone());
         let pointer = input.pointer.interact_pos().or(input.pointer.hover_pos());
@@ -397,49 +490,54 @@ impl Canvas {
             }
         }
 
-        let primary_pressed = input.pointer.primary_pressed() && resp.hovered() && matches!(self.drag, Drag::None);
+        let primary_pressed =
+            input.pointer.primary_pressed() && resp.hovered() && matches!(self.drag, Drag::None);
         let released = input.pointer.any_released();
+        // Where the button went down; with slow frames, press, drag and release can share a frame.
+        let press = input.pointer.press_origin().or(pointer);
 
         // Clicking outside the text being edited commits it.
-        if primary_pressed && self.editing_text.is_some() {
-            if let (Some(id), Some(p)) = (self.editing_text, pointer) {
-                let inside = editor
-                    .page()
-                    .world_rect(id)
-                    .map(|r| self.view.rect_to_screen(origin, r).expand(4.0).contains(p))
-                    .unwrap_or(false);
-                if inside {
-                    return;
-                }
-                self.finish_text_edit(editor);
+        if primary_pressed
+            && self.editing_text.is_some()
+            && let (Some(id), Some(p)) = (self.editing_text, press)
+        {
+            let inside = editor
+                .page()
+                .world_rect(id)
+                .map(|r| self.view.rect_to_screen(origin, r).expand(4.0).contains(p))
+                .unwrap_or(false);
+            if inside {
+                return;
             }
+            self.finish_text_edit(editor);
         }
 
-        if primary_pressed && !space {
-            if let (Some(w), Some(p)) = (world, pointer) {
-                self.on_press(ui, editor, tool, w, p, origin, mods, resp.double_clicked());
-            }
+        if primary_pressed
+            && !space
+            && let Some(p) = press
+        {
+            let w = self.view.to_world(origin, p);
+            self.on_press(ui, editor, tool, w, p, origin, mods, resp.double_clicked());
         }
 
         // Double click on a text layer edits it, on a group enters it.
-        if resp.double_clicked() && *tool == Tool::Move {
-            if let Some(w) = world {
-                if let Some(id) = editor.page().hit_test_deep(w) {
-                    let node = editor.page().find(id);
-                    if node.is_some_and(|n| n.text().is_some()) {
-                        editor.select_only(id);
-                        self.start_text_edit(id);
-                    } else if editor.selection.len() == 1 {
-                        // Select the next level down under the cursor.
-                        let sel = editor.selection[0];
-                        if let Some(path) = editor.page().path_to(id) {
-                            if let Some(pos) = path.iter().position(|x| *x == sel) {
-                                if let Some(next) = path.get(pos + 1) {
-                                    editor.select_only(*next);
-                                }
-                            }
-                        }
-                    }
+        if resp.double_clicked()
+            && *tool == Tool::Move
+            && let Some(w) = world
+            && let Some(id) = editor.page().hit_test_deep(w)
+        {
+            let node = editor.page().find(id);
+            if node.is_some_and(|n| n.text().is_some()) {
+                editor.select_only(id);
+                self.start_text_edit(id);
+            } else if editor.selection.len() == 1 {
+                // Select the next level down under the cursor.
+                let sel = editor.selection[0];
+                if let Some(path) = editor.page().path_to(id)
+                    && let Some(pos) = path.iter().position(|x| *x == sel)
+                    && let Some(next) = path.get(pos + 1)
+                {
+                    editor.select_only(*next);
                 }
             }
         }
@@ -454,16 +552,29 @@ impl Canvas {
 
         // Hover + cursor.
         self.hovered = None;
-        if matches!(self.drag, Drag::None) && resp.hovered() && *tool == Tool::Move {
-            if let (Some(w), Some(p)) = (world, pointer) {
-                let handle = self.selection_handles(editor, origin).into_iter().find(|(_, r)| r.contains(p));
-                if let Some((h, _)) = handle {
-                    ui.ctx().set_cursor_icon(h.cursor());
-                } else if let Some((id, _, _)) = self.frame_labels(editor, origin).into_iter().find(|(_, r, _)| r.contains(p)) {
-                    self.hovered = Some(id);
+        if matches!(self.drag, Drag::None)
+            && resp.hovered()
+            && *tool == Tool::Move
+            && let (Some(w), Some(p)) = (world, pointer)
+        {
+            let handle = self
+                .selection_handles(editor, origin)
+                .into_iter()
+                .find(|(_, r)| r.contains(p));
+            if let Some((h, _)) = handle {
+                ui.ctx().set_cursor_icon(h.cursor());
+            } else if let Some((id, _, _)) = self
+                .frame_labels(editor, origin)
+                .into_iter()
+                .find(|(_, r, _)| r.contains(p))
+            {
+                self.hovered = Some(id);
+            } else {
+                self.hovered = if mods.command {
+                    editor.page().hit_test_deep(w)
                 } else {
-                    self.hovered = if mods.command { editor.page().hit_test_deep(w) } else { editor.page().hit_test(w) };
-                }
+                    editor.page().hit_test(w)
+                };
             }
         }
         if resp.hovered() || self.is_interacting() {
@@ -504,16 +615,27 @@ impl Canvas {
                 };
                 let start = round(w);
                 let id = editor.create_node(kind, DRect::new(start.x, start.y, 0.01, 0.01));
-                self.drag = Drag::Create { id, start, moved: false };
+                self.drag = Drag::Create {
+                    id,
+                    start,
+                    moved: false,
+                };
             }
             Tool::Text => {
                 let start = round(w);
-                let id = editor.create_node(NodeKind::Text(TextData::new("")), DRect::new(start.x, start.y, 1.0, 14.0));
+                let id = editor.create_node(
+                    NodeKind::Text(TextData::new("")),
+                    DRect::new(start.x, start.y, 1.0, 14.0),
+                );
                 self.start_text_edit(id);
                 *tool = Tool::Move;
             }
             Tool::Move => {
-                if let Some((handle, _)) = self.selection_handles(editor, origin).into_iter().find(|(_, r)| r.contains(p)) {
+                if let Some((handle, _)) = self
+                    .selection_handles(editor, origin)
+                    .into_iter()
+                    .find(|(_, r)| r.contains(p))
+                {
                     let roots = editor.selection_roots();
                     let originals = roots
                         .iter()
@@ -521,13 +643,26 @@ impl Canvas {
                         .collect();
                     if let Some(from) = editor.selection_bounds() {
                         editor.checkpoint();
-                        self.drag = Drag::Resize { handle, start: w, from, originals };
+                        self.drag = Drag::Resize {
+                            handle,
+                            start: w,
+                            from,
+                            originals,
+                        };
                     }
                     return;
                 }
-                let label_hit = self.frame_labels(editor, origin).into_iter().find(|(_, r, _)| r.contains(p)).map(|x| x.0);
+                let label_hit = self
+                    .frame_labels(editor, origin)
+                    .into_iter()
+                    .find(|(_, r, _)| r.contains(p))
+                    .map(|x| x.0);
                 let hit = label_hit.or_else(|| {
-                    if mods.command { editor.page().hit_test_deep(w) } else { editor.page().hit_test(w) }
+                    if mods.command {
+                        editor.page().hit_test_deep(w)
+                    } else {
+                        editor.page().hit_test(w)
+                    }
                 });
                 // Keep a child selection when clicking inside an already-selected ancestor chain.
                 let hit = hit.map(|h| {
@@ -555,11 +690,19 @@ impl Canvas {
                         if inside_selection && !mods.shift {
                             self.begin_move(editor, w, mods.alt);
                         } else {
-                            let base = if mods.shift { editor.selection.clone() } else { vec![] };
+                            let base = if mods.shift {
+                                editor.selection.clone()
+                            } else {
+                                vec![]
+                            };
                             if !mods.shift {
                                 editor.clear_selection();
                             }
-                            self.drag = Drag::Marquee { start: w, base, current: w };
+                            self.drag = Drag::Marquee {
+                                start: w,
+                                base,
+                                current: w,
+                            };
                         }
                     }
                 }
@@ -570,19 +713,23 @@ impl Canvas {
 
     fn begin_move(&mut self, editor: &Editor, w: DVec2, duplicate: bool) {
         let roots = editor.selection_roots();
-        let Some(orig_bounds) = editor.page().selection_bounds(&roots) else { return };
+        let Some(orig_bounds) = editor.page().selection_bounds(&roots) else {
+            return;
+        };
         // Snap targets: every visible layer outside the moving set.
         let page = editor.page();
         let mut targets = vec![];
         for id in page.all_ids() {
-            let Some(path) = page.path_to(id) else { continue };
+            let Some(path) = page.path_to(id) else {
+                continue;
+            };
             if path.iter().any(|a| roots.contains(a)) {
                 continue;
             }
-            if page.find(id).is_some_and(|n| n.visible) {
-                if let Some(r) = page.world_rect(id) {
-                    targets.push(r);
-                }
+            if page.find(id).is_some_and(|n| n.visible)
+                && let Some(r) = page.world_rect(id)
+            {
+                targets.push(r);
             }
         }
         self.drag = Drag::Move {
@@ -598,7 +745,14 @@ impl Canvas {
     fn on_drag(&mut self, editor: &mut Editor, w: DVec2, mods: egui::Modifiers) {
         let zoom = self.view.zoom as f64;
         match &mut self.drag {
-            Drag::Move { start, applied, started, duplicate, orig_bounds, targets } => {
+            Drag::Move {
+                start,
+                applied,
+                started,
+                duplicate,
+                orig_bounds,
+                targets,
+            } => {
                 let mut total = w - *start;
                 if !*started && (total.x.abs() * zoom < 3.0 && total.y.abs() * zoom < 3.0) {
                     return;
@@ -610,7 +764,8 @@ impl Canvas {
                         total.x = 0.0;
                     }
                 }
-                let (snapped, guides) = snap(*orig_bounds, round(total), targets, 6.0 / zoom, mods.shift);
+                let (snapped, guides) =
+                    snap(*orig_bounds, round(total), targets, 6.0 / zoom, mods.shift);
                 self.guides = guides;
                 let diff = snapped - *applied;
                 if diff.x == 0.0 && diff.y == 0.0 {
@@ -627,10 +782,20 @@ impl Canvas {
                 editor.translate_selection(diff);
                 *applied = snapped;
             }
-            Drag::Resize { handle, start, from, originals } => {
+            Drag::Resize {
+                handle,
+                start,
+                from,
+                originals,
+            } => {
                 let d = round(w - *start);
                 let to = handle.apply(*from, d, mods.shift);
-                let to = DRect::new(to.x.round(), to.y.round(), to.w.round().max(1.0), to.h.round().max(1.0));
+                let to = DRect::new(
+                    to.x.round(),
+                    to.y.round(),
+                    to.w.round().max(1.0),
+                    to.h.round().max(1.0),
+                );
                 editor.resize_selection(originals, *from, to);
             }
             Drag::Create { id, start, moved } => {
@@ -646,7 +811,11 @@ impl Canvas {
                     editor.set_world_rect(*id, r);
                 }
             }
-            Drag::Marquee { start, base, current } => {
+            Drag::Marquee {
+                start,
+                base,
+                current,
+            } => {
                 *current = w;
                 let area = DRect::from_points(*start, w);
                 let mut sel = base.clone();
@@ -716,7 +885,13 @@ impl Canvas {
         painter.rect_filled(rect, 0.0, theme::to_color32(bg));
         let (Some(rs), Some(renderer)) = (frame.wgpu_render_state(), self.renderer.as_mut()) else {
             if let Some(err) = &self.gpu_error {
-                painter.text(rect.center(), Align2::CENTER_CENTER, err, theme::font(13.0), theme::TEXT_SECONDARY);
+                painter.text(
+                    rect.center(),
+                    Align2::CENTER_CENTER,
+                    err,
+                    theme::font(13.0),
+                    theme::TEXT_SECONDARY,
+                );
             }
             return;
         };
@@ -744,18 +919,22 @@ impl Canvas {
         if self.target.as_ref().is_none_or(|t| t.size != [w, h]) {
             let texture = rs.device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("desigma-canvas"),
-                size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+                size: wgpu::Extent3d {
+                    width: w,
+                    height: h,
+                    depth_or_array_layers: 1,
+                },
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
                 format: wgpu::TextureFormat::Rgba8Unorm,
                 usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
-                view_formats: &[wgpu::TextureFormat::Rgba8UnormSrgb],
+                view_formats: &[],
             });
             let storage_view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-            // vello writes sRGB-encoded values; sampling through an sRGB view hands egui linear color.
+            // vello writes gamma-encoded values, which is what egui expects from textures.
             let sample_view = texture.create_view(&wgpu::TextureViewDescriptor {
-                format: Some(wgpu::TextureFormat::Rgba8UnormSrgb),
+                usage: Some(wgpu::TextureUsages::TEXTURE_BINDING),
                 ..Default::default()
             });
             let mut egui_renderer = rs.renderer.write();
@@ -770,9 +949,18 @@ impl Canvas {
                     old.texture.destroy();
                     old.egui_id
                 }
-                None => egui_renderer.register_native_texture(&rs.device, &sample_view, wgpu::FilterMode::Nearest),
+                None => egui_renderer.register_native_texture(
+                    &rs.device,
+                    &sample_view,
+                    wgpu::FilterMode::Nearest,
+                ),
             };
-            self.target = Some(GpuTarget { texture, storage_view, egui_id, size: [w, h] });
+            self.target = Some(GpuTarget {
+                texture,
+                storage_view,
+                egui_id,
+                size: [w, h],
+            });
         }
         let target = self.target.as_ref().expect("target created above");
         let params = RenderParams {
@@ -781,7 +969,13 @@ impl Canvas {
             height: h,
             antialiasing_method: AaConfig::Area,
         };
-        if let Err(e) = renderer.render_to_texture(&rs.device, &rs.queue, &self.scene, &target.storage_view, &params) {
+        if let Err(e) = renderer.render_to_texture(
+            &rs.device,
+            &rs.queue,
+            &self.scene,
+            &target.storage_view,
+            &params,
+        ) {
             log::error!("vello render failed: {e}");
             return;
         }
@@ -803,20 +997,30 @@ impl Canvas {
             let color = if active { blue } else { theme::FRAME_LABEL };
             let galley = painter.layout_no_wrap(name, theme::font(11.0), color);
             let clip = painter.with_clip_rect(r.intersect(painter.clip_rect()));
-            clip.galley(pos2(r.left(), r.bottom() - galley.size().y - 2.0), galley, color);
+            clip.galley(
+                pos2(r.left(), r.bottom() - galley.size().y - 2.0),
+                galley,
+                color,
+            );
         }
 
         // Hover outline.
-        if let Some(id) = self.hovered {
-            if !editor.is_selected(id) {
-                if let Some(r) = page.world_rect(id) {
-                    let sr = self.view.rect_to_screen(origin, r);
-                    if page.find(id).is_some_and(|n| matches!(n.kind, NodeKind::Ellipse)) {
-                        painter.add(Shape::ellipse_stroke(sr.center(), sr.size() / 2.0, Stroke::new(2.0, blue)));
-                    } else {
-                        painter.rect_stroke(sr, 0.0, Stroke::new(2.0, blue), StrokeKind::Middle);
-                    }
-                }
+        if let Some(id) = self.hovered
+            && !editor.is_selected(id)
+            && let Some(r) = page.world_rect(id)
+        {
+            let sr = self.view.rect_to_screen(origin, r);
+            if page
+                .find(id)
+                .is_some_and(|n| matches!(n.kind, NodeKind::Ellipse))
+            {
+                painter.add(Shape::ellipse_stroke(
+                    sr.center(),
+                    sr.size() / 2.0,
+                    Stroke::new(2.0, blue),
+                ));
+            } else {
+                painter.rect_stroke(sr, 0.0, Stroke::new(2.0, blue), StrokeKind::Middle);
             }
         }
 
@@ -824,7 +1028,12 @@ impl Canvas {
         if self.editing_text.is_none() {
             for id in &editor.selection {
                 if let Some(r) = page.world_rect(*id) {
-                    painter.rect_stroke(self.view.rect_to_screen(origin, r), 0.0, Stroke::new(1.0, blue), StrokeKind::Middle);
+                    painter.rect_stroke(
+                        self.view.rect_to_screen(origin, r),
+                        0.0,
+                        Stroke::new(1.0, blue),
+                        StrokeKind::Middle,
+                    );
                 }
             }
             if let Some(b) = editor.selection_bounds() {
@@ -834,7 +1043,12 @@ impl Canvas {
                     for (h, r) in self.selection_handles(editor, origin) {
                         if h.is_corner() {
                             painter.rect_filled(r.shrink(0.5), 1.0, Color32::WHITE);
-                            painter.rect_stroke(r.shrink(0.5), 1.0, Stroke::new(1.0, blue), StrokeKind::Middle);
+                            painter.rect_stroke(
+                                r.shrink(0.5),
+                                1.0,
+                                Stroke::new(1.0, blue),
+                                StrokeKind::Middle,
+                            );
                         }
                     }
                 }
@@ -842,14 +1056,22 @@ impl Canvas {
                 let text = format!("{} × {}", fmt_num(b.w), fmt_num(b.h));
                 let galley = painter.layout_no_wrap(text, theme::font_medium(11.0), Color32::WHITE);
                 let size = galley.size() + vec2(8.0, 4.0);
-                let badge = Rect::from_min_size(pos2(sr.center().x - size.x / 2.0, sr.bottom() + 6.0), size);
+                let badge = Rect::from_min_size(
+                    pos2(sr.center().x - size.x / 2.0, sr.bottom() + 6.0),
+                    size,
+                );
                 painter.rect_filled(badge, 2.0, blue);
                 painter.galley(badge.min + vec2(4.0, 2.0), galley, Color32::WHITE);
             }
-        } else if let Some(id) = self.editing_text {
-            if let Some(r) = page.world_rect(id) {
-                painter.rect_stroke(self.view.rect_to_screen(origin, r), 0.0, Stroke::new(1.0, blue), StrokeKind::Middle);
-            }
+        } else if let Some(id) = self.editing_text
+            && let Some(r) = page.world_rect(id)
+        {
+            painter.rect_stroke(
+                self.view.rect_to_screen(origin, r),
+                0.0,
+                Stroke::new(1.0, blue),
+                StrokeKind::Middle,
+            );
         }
 
         // Snap guides, in Figma's red.
@@ -871,7 +1093,9 @@ impl Canvas {
 
         // Marquee.
         if let Drag::Marquee { start, current, .. } = &self.drag {
-            let r = self.view.rect_to_screen(origin, DRect::from_points(*start, *current));
+            let r = self
+                .view
+                .rect_to_screen(origin, DRect::from_points(*start, *current));
             painter.rect_filled(r, 0.0, blue.gamma_multiply(0.1));
             painter.rect_stroke(r, 0.0, Stroke::new(1.0, blue), StrokeKind::Middle);
         }
@@ -880,9 +1104,15 @@ impl Canvas {
     /// On-canvas text editing with an egui text field drawn in the same font.
     fn text_editor(&mut self, ui: &mut Ui, rect: Rect, editor: &mut Editor, _fonts: &Fonts) {
         let Some(id) = self.editing_text else { return };
-        let Some(node) = editor.page().find(id) else { return };
-        let Some(text) = node.text().cloned() else { return };
-        let Some(world) = editor.page().world_rect(id) else { return };
+        let Some(node) = editor.page().find(id) else {
+            return;
+        };
+        let Some(text) = node.text().cloned() else {
+            return;
+        };
+        let Some(world) = editor.page().world_rect(id) else {
+            return;
+        };
         let color = node
             .fills
             .iter()
@@ -891,9 +1121,16 @@ impl Canvas {
             .unwrap_or(Color32::BLACK);
         let zoom = self.view.zoom;
         let sr = self.view.rect_to_screen(rect.min, world);
-        let font = egui::FontId::new(text.font_size as f32 * zoom, theme::family_for_weight(text.font_weight));
+        let font = egui::FontId::new(
+            text.font_size as f32 * zoom,
+            theme::family_for_weight(text.font_weight),
+        );
         let mut content = text.content.clone();
-        let width = if text.auto_width { f32::INFINITY } else { sr.width() };
+        let width = if text.auto_width {
+            f32::INFINITY
+        } else {
+            sr.width()
+        };
         let align = match text.align {
             desigma_core::TextAlign::Left => egui::Align::Min,
             desigma_core::TextAlign::Center => egui::Align::Center,
@@ -909,7 +1146,14 @@ impl Canvas {
             .desired_width(width)
             .horizontal_align(align);
         let area = Rect::from_min_size(sr.min, vec2(sr.width().max(4.0), sr.height().max(4.0)));
-        let put_rect = if text.auto_width { Rect::from_min_size(area.min, vec2(rect.right() - area.left() + 4000.0, area.height())) } else { area };
+        let put_rect = if text.auto_width {
+            Rect::from_min_size(
+                area.min,
+                vec2(rect.right() - area.left() + 4000.0, area.height()),
+            )
+        } else {
+            area
+        };
         let resp = ui
             .scope_builder(egui::UiBuilder::new().max_rect(put_rect), |ui| {
                 ui.set_clip_rect(rect);
@@ -922,10 +1166,33 @@ impl Canvas {
         }
         if resp.changed() {
             editor.edit_node(id, &format!("text:{}", id.0), |n| {
-                let first_line: String = content.lines().next().unwrap_or("").trim().chars().take(40).collect();
-                let old_first: String = n.text().map(|t| t.content.lines().next().unwrap_or("").trim().chars().take(40).collect()).unwrap_or_default();
+                let first_line: String = content
+                    .lines()
+                    .next()
+                    .unwrap_or("")
+                    .trim()
+                    .chars()
+                    .take(40)
+                    .collect();
+                let old_first: String = n
+                    .text()
+                    .map(|t| {
+                        t.content
+                            .lines()
+                            .next()
+                            .unwrap_or("")
+                            .trim()
+                            .chars()
+                            .take(40)
+                            .collect()
+                    })
+                    .unwrap_or_default();
                 if n.name == old_first || n.name == "Text" {
-                    n.name = if first_line.is_empty() { "Text".into() } else { first_line };
+                    n.name = if first_line.is_empty() {
+                        "Text".into()
+                    } else {
+                        first_line
+                    };
                 }
                 if let Some(t) = n.text_mut() {
                     t.content = content.clone();
@@ -953,7 +1220,13 @@ pub fn fmt_num(v: f64) -> String {
 
 /// Snaps a moved bounding box's edges and center to nearby layer edges and
 /// centers. Returns the adjusted delta and the guides to draw.
-fn snap(orig: DRect, delta: DVec2, targets: &[DRect], threshold: f64, axis_locked: bool) -> (DVec2, Vec<Guide>) {
+fn snap(
+    orig: DRect,
+    delta: DVec2,
+    targets: &[DRect],
+    threshold: f64,
+    axis_locked: bool,
+) -> (DVec2, Vec<Guide>) {
     let moved = orig.translate(delta);
     let xs = [moved.x, moved.x + moved.w / 2.0, moved.x + moved.w];
     let ys = [moved.y, moved.y + moved.h / 2.0, moved.y + moved.h];
@@ -999,7 +1272,10 @@ fn snap(orig: DRect, delta: DVec2, targets: &[DRect], threshold: f64, axis_locke
     if let Some((_, line)) = best_x {
         let (mut y0, mut y1) = (snapped.y, snapped.y + snapped.h);
         for t in targets {
-            if [t.x, t.x + t.w / 2.0, t.x + t.w].iter().any(|v| (v - line).abs() < 1e-6) {
+            if [t.x, t.x + t.w / 2.0, t.x + t.w]
+                .iter()
+                .any(|v| (v - line).abs() < 1e-6)
+            {
                 y0 = y0.min(t.y);
                 y1 = y1.max(t.y + t.h);
             }
@@ -1009,7 +1285,10 @@ fn snap(orig: DRect, delta: DVec2, targets: &[DRect], threshold: f64, axis_locke
     if let Some((_, line)) = best_y {
         let (mut x0, mut x1) = (snapped.x, snapped.x + snapped.w);
         for t in targets {
-            if [t.y, t.y + t.h / 2.0, t.y + t.h].iter().any(|v| (v - line).abs() < 1e-6) {
+            if [t.y, t.y + t.h / 2.0, t.y + t.h]
+                .iter()
+                .any(|v| (v - line).abs() < 1e-6)
+            {
                 x0 = x0.min(t.x);
                 x1 = x1.max(t.x + t.w);
             }
@@ -1025,7 +1304,10 @@ mod tests {
 
     #[test]
     fn viewport_roundtrip() {
-        let v = Viewport { pan: vec2(10.0, 20.0), zoom: 2.0 };
+        let v = Viewport {
+            pan: vec2(10.0, 20.0),
+            zoom: 2.0,
+        };
         let o = pos2(5.0, 5.0);
         let p = DVec2::new(3.0, 4.0);
         let s = v.to_screen(o, p);
@@ -1036,7 +1318,10 @@ mod tests {
 
     #[test]
     fn zoom_keeps_anchor_fixed() {
-        let mut v = Viewport { pan: vec2(0.0, 0.0), zoom: 1.0 };
+        let mut v = Viewport {
+            pan: vec2(0.0, 0.0),
+            zoom: 1.0,
+        };
         let anchor = vec2(100.0, 100.0);
         let before = v.to_world(Pos2::ZERO, anchor.to_pos2());
         v.zoom_around(anchor, 2.0);
@@ -1047,8 +1332,14 @@ mod tests {
     #[test]
     fn handle_resize_and_flip() {
         let r = DRect::new(0.0, 0.0, 100.0, 50.0);
-        assert_eq!(Handle::SE.apply(r, DVec2::new(10.0, 10.0), false), DRect::new(0.0, 0.0, 110.0, 60.0));
-        assert_eq!(Handle::W.apply(r, DVec2::new(150.0, 0.0), false), DRect::new(100.0, 0.0, 50.0, 50.0));
+        assert_eq!(
+            Handle::SE.apply(r, DVec2::new(10.0, 10.0), false),
+            DRect::new(0.0, 0.0, 110.0, 60.0)
+        );
+        assert_eq!(
+            Handle::W.apply(r, DVec2::new(150.0, 0.0), false),
+            DRect::new(100.0, 0.0, 50.0, 50.0)
+        );
         let a = Handle::SE.apply(r, DVec2::new(100.0, 0.0), true);
         assert_eq!((a.w, a.h), (200.0, 100.0));
     }

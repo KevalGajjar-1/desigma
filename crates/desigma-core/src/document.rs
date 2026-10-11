@@ -189,7 +189,9 @@ impl Page {
     }
 
     pub fn selection_bounds(&self, ids: &[NodeId]) -> Option<Rect> {
-        ids.iter().filter_map(|id| self.world_rect(*id)).reduce(|a, b| a.union(&b))
+        ids.iter()
+            .filter_map(|id| self.world_rect(*id))
+            .reduce(|a, b| a.union(&b))
     }
 
     pub fn remove(&mut self, id: NodeId) -> Option<(Node, Location)> {
@@ -212,10 +214,10 @@ impl Page {
 
     /// Moves `id` under `new_parent` (on top), keeping its on-canvas position.
     pub fn reparent(&mut self, id: NodeId, new_parent: Option<NodeId>) -> bool {
-        if let Some(p) = new_parent {
-            if self.find(id).is_some_and(|n| n.contains_id(p)) {
-                return false;
-            }
+        if let Some(p) = new_parent
+            && self.find(id).is_some_and(|n| n.contains_id(p))
+        {
+            return false;
         }
         let Some(world) = self.world_rect(id) else {
             return false;
@@ -272,7 +274,10 @@ impl Page {
                 _ => n.shape_contains(local).then_some(n.id),
             }
         }
-        self.children.iter().rev().find_map(|n| rec(n, Vec2::ZERO, p, true))
+        self.children
+            .iter()
+            .rev()
+            .find_map(|n| rec(n, Vec2::ZERO, p, true))
     }
 
     /// The deepest visible, unlocked leaf layer under `p` (Figma's Ctrl/Cmd+click
@@ -295,7 +300,10 @@ impl Page {
                 _ => n.shape_contains(local).then_some(n.id),
             }
         }
-        self.children.iter().rev().find_map(|n| rec(n, Vec2::ZERO, p))
+        self.children
+            .iter()
+            .rev()
+            .find_map(|n| rec(n, Vec2::ZERO, p))
     }
 
     /// Layers picked by a marquee drag, following the same rules as [`Page::hit_test`].
@@ -346,7 +354,12 @@ impl Page {
             for n in nodes {
                 rec(&mut n.children);
                 if matches!(n.kind, NodeKind::Group) {
-                    let Some(b) = n.children.iter().map(|c| c.rect()).reduce(|a, b| a.union(&b)) else {
+                    let Some(b) = n
+                        .children
+                        .iter()
+                        .map(|c| c.rect())
+                        .reduce(|a, b| a.union(&b))
+                    else {
                         continue;
                     };
                     for c in &mut n.children {
@@ -389,8 +402,16 @@ mod tests {
         let mut doc = Document::default();
         let fid = doc.alloc_id();
         let rid = doc.alloc_id();
-        let mut frame = Node::new(fid, NodeKind::Frame { clip_content: true }, Rect::new(100.0, 100.0, 200.0, 200.0));
-        frame.children.push(Node::new(rid, NodeKind::Rectangle, Rect::new(10.0, 10.0, 50.0, 50.0)));
+        let mut frame = Node::new(
+            fid,
+            NodeKind::Frame { clip_content: true },
+            Rect::new(100.0, 100.0, 200.0, 200.0),
+        );
+        frame.children.push(Node::new(
+            rid,
+            NodeKind::Rectangle,
+            Rect::new(10.0, 10.0, 50.0, 50.0),
+        ));
         doc.pages[0].children.push(frame);
         (doc, fid, rid)
     }
@@ -398,7 +419,10 @@ mod tests {
     #[test]
     fn world_rect_accumulates_parent_offsets() {
         let (doc, _, rid) = page_with_frame();
-        assert_eq!(doc.pages[0].world_rect(rid), Some(Rect::new(110.0, 110.0, 50.0, 50.0)));
+        assert_eq!(
+            doc.pages[0].world_rect(rid),
+            Some(Rect::new(110.0, 110.0, 50.0, 50.0))
+        );
     }
 
     #[test]
@@ -415,9 +439,11 @@ mod tests {
     fn empty_frame_is_hit_by_area() {
         let mut doc = Document::default();
         let id = doc.alloc_id();
-        doc.pages[0]
-            .children
-            .push(Node::new(id, NodeKind::Frame { clip_content: true }, Rect::new(0.0, 0.0, 10.0, 10.0)));
+        doc.pages[0].children.push(Node::new(
+            id,
+            NodeKind::Frame { clip_content: true },
+            Rect::new(0.0, 0.0, 10.0, 10.0),
+        ));
         assert_eq!(doc.pages[0].hit_test(Vec2::new(5.0, 5.0)), Some(id));
     }
 
@@ -425,7 +451,11 @@ mod tests {
     fn ellipse_hit_uses_shape() {
         let mut doc = Document::default();
         let id = doc.alloc_id();
-        doc.pages[0].children.push(Node::new(id, NodeKind::Ellipse, Rect::new(0.0, 0.0, 100.0, 100.0)));
+        doc.pages[0].children.push(Node::new(
+            id,
+            NodeKind::Ellipse,
+            Rect::new(0.0, 0.0, 100.0, 100.0),
+        ));
         assert_eq!(doc.pages[0].hit_test(Vec2::new(50.0, 50.0)), Some(id));
         assert_eq!(doc.pages[0].hit_test(Vec2::new(2.0, 2.0)), None);
     }
@@ -436,7 +466,10 @@ mod tests {
         let page = &mut doc.pages[0];
         assert!(page.reparent(rid, None));
         assert_eq!(page.locate(rid).unwrap().parent, None);
-        assert_eq!(page.world_rect(rid), Some(Rect::new(110.0, 110.0, 50.0, 50.0)));
+        assert_eq!(
+            page.world_rect(rid),
+            Some(Rect::new(110.0, 110.0, 50.0, 50.0))
+        );
         assert!(page.reparent(rid, Some(fid)));
         assert_eq!(page.find(rid).unwrap().x, 10.0);
         // A frame cannot be moved into its own descendant.
@@ -450,12 +483,23 @@ mod tests {
         let a = doc.alloc_id();
         let b = doc.alloc_id();
         let mut g = Node::new(gid, NodeKind::Group, Rect::default());
-        g.children.push(Node::new(a, NodeKind::Rectangle, Rect::new(10.0, 20.0, 10.0, 10.0)));
-        g.children.push(Node::new(b, NodeKind::Rectangle, Rect::new(50.0, 40.0, 10.0, 10.0)));
+        g.children.push(Node::new(
+            a,
+            NodeKind::Rectangle,
+            Rect::new(10.0, 20.0, 10.0, 10.0),
+        ));
+        g.children.push(Node::new(
+            b,
+            NodeKind::Rectangle,
+            Rect::new(50.0, 40.0, 10.0, 10.0),
+        ));
         doc.pages[0].children.push(g);
         doc.pages[0].fit_groups();
         let page = &doc.pages[0];
-        assert_eq!(page.find(gid).unwrap().rect(), Rect::new(10.0, 20.0, 50.0, 30.0));
+        assert_eq!(
+            page.find(gid).unwrap().rect(),
+            Rect::new(10.0, 20.0, 50.0, 30.0)
+        );
         assert_eq!(page.world_rect(a), Some(Rect::new(10.0, 20.0, 10.0, 10.0)));
         assert_eq!(page.hit_test(Vec2::new(55.0, 45.0)), Some(gid));
     }
@@ -464,8 +508,14 @@ mod tests {
     fn marquee_selects_children_of_partially_covered_frame() {
         let (doc, fid, rid) = page_with_frame();
         let page = &doc.pages[0];
-        assert_eq!(page.nodes_in_rect(Rect::new(105.0, 105.0, 20.0, 20.0)), vec![rid]);
-        assert_eq!(page.nodes_in_rect(Rect::new(0.0, 0.0, 500.0, 500.0)), vec![fid]);
+        assert_eq!(
+            page.nodes_in_rect(Rect::new(105.0, 105.0, 20.0, 20.0)),
+            vec![rid]
+        );
+        assert_eq!(
+            page.nodes_in_rect(Rect::new(0.0, 0.0, 500.0, 500.0)),
+            vec![fid]
+        );
     }
 
     #[test]

@@ -1,6 +1,8 @@
 //! Figma (UI3, dark) look and feel: colors, metrics, fonts and egui style.
 
-use egui::{Color32, CornerRadius, FontData, FontDefinitions, FontFamily, FontId, Margin, Stroke, TextStyle};
+use egui::{
+    Color32, CornerRadius, FontData, FontDefinitions, FontFamily, FontId, Margin, Stroke, TextStyle,
+};
 
 pub const PANEL_BG: Color32 = Color32::from_rgb(0x2C, 0x2C, 0x2C);
 pub const INPUT_BG: Color32 = Color32::from_rgb(0x38, 0x38, 0x38);
@@ -13,8 +15,6 @@ pub const BLUE: Color32 = Color32::from_rgb(0x0D, 0x99, 0xFF);
 pub const SELECTED_ROW: Color32 = Color32::from_rgb(0x2E, 0x45, 0x5A);
 pub const SELECTED_CHILD_ROW: Color32 = Color32::from_rgb(0x2D, 0x37, 0x40);
 pub const FRAME_LABEL: Color32 = Color32::from_rgb(0xA0, 0xA0, 0xA0);
-/// Purple used for component-ish accents; kept for parity with Figma's palette.
-pub const PURPLE: Color32 = Color32::from_rgb(0x97, 0x47, 0xFF);
 
 pub const PANEL_WIDTH: f32 = 240.0;
 pub const ROW_HEIGHT: f32 = 32.0;
@@ -66,7 +66,11 @@ pub fn install(ctx: &egui::Context) {
         .entry(FontFamily::Proportional)
         .or_default()
         .insert(0, "Inter".into());
-    let fallback = fonts.families.get(&FontFamily::Proportional).cloned().unwrap_or_default();
+    let fallback = fonts
+        .families
+        .get(&FontFamily::Proportional)
+        .cloned()
+        .unwrap_or_default();
     for name in [MEDIUM, SEMIBOLD] {
         let mut fam = vec![name.to_string()];
         fam.extend(fallback.iter().skip(1).cloned());
@@ -110,7 +114,12 @@ pub fn install(ctx: &egui::Context) {
         v.widgets.noninteractive.bg_stroke = Stroke::new(1.0, BORDER);
         v.widgets.noninteractive.fg_stroke = Stroke::new(1.0, TEXT);
         v.widgets.noninteractive.corner_radius = r;
-        for w in [&mut v.widgets.inactive, &mut v.widgets.hovered, &mut v.widgets.active, &mut v.widgets.open] {
+        for w in [
+            &mut v.widgets.inactive,
+            &mut v.widgets.hovered,
+            &mut v.widgets.active,
+            &mut v.widgets.open,
+        ] {
             w.corner_radius = r;
             w.expansion = 0.0;
         }

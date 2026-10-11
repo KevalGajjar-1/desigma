@@ -12,7 +12,9 @@ pub enum FileError {
     Io(#[from] std::io::Error),
     #[error("file is not a valid Desigma document: {0}")]
     Parse(#[from] serde_json::Error),
-    #[error("file was saved by a newer version of Desigma (format {0}, supported {FORMAT_VERSION})")]
+    #[error(
+        "file was saved by a newer version of Desigma (format {0}, supported {FORMAT_VERSION})"
+    )]
     TooNew(u32),
 }
 
@@ -46,22 +48,30 @@ pub fn load(path: &Path) -> Result<Document, FileError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{NodeKind, Rect, TextData};
     use crate::editor::Editor;
+    use crate::{NodeKind, Rect, TextData};
 
     #[test]
     fn roundtrip_preserves_document() {
         let mut ed = Editor::default();
-        ed.create_node(NodeKind::Frame { clip_content: true }, Rect::new(0.0, 0.0, 100.0, 100.0));
-        ed.create_node(NodeKind::Text(TextData::new("Hello")), Rect::new(10.0, 10.0, 40.0, 14.0));
+        ed.create_node(
+            NodeKind::Frame { clip_content: true },
+            Rect::new(0.0, 0.0, 100.0, 100.0),
+        );
+        ed.create_node(
+            NodeKind::Text(TextData::new("Hello")),
+            Rect::new(10.0, 10.0, 40.0, 14.0),
+        );
         let s = to_string(&ed.doc).unwrap();
         assert_eq!(from_str(&s).unwrap(), ed.doc);
     }
 
     #[test]
     fn rejects_newer_format() {
-        let mut doc = Document::default();
-        doc.format_version = FORMAT_VERSION + 1;
+        let doc = Document {
+            format_version: FORMAT_VERSION + 1,
+            ..Document::default()
+        };
         let s = serde_json::to_string(&doc).unwrap();
         assert!(matches!(from_str(&s), Err(FileError::TooNew(_))));
     }

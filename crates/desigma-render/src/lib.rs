@@ -2,12 +2,14 @@
 
 mod text;
 
-use desigma_core::{Color, Node, NodeKind, Paint, Page};
+use desigma_core::{Color, Node, NodeKind, Page, Paint};
 use vello::kurbo::{Affine, Ellipse, Rect, RoundedRect, Shape, Stroke};
 use vello::peniko::{self, Fill, Mix};
 use vello::{Glyph, Scene};
 
-pub use text::{Fonts, PlacedGlyph, TextLayout, inter_medium_bytes, inter_regular_bytes, inter_semibold_bytes};
+pub use text::{
+    Fonts, PlacedGlyph, TextLayout, inter_medium_bytes, inter_regular_bytes, inter_semibold_bytes,
+};
 
 pub fn to_peniko(c: Color) -> peniko::Color {
     peniko::Color::new([c.r, c.g, c.b, c.a])
@@ -31,7 +33,13 @@ fn render_node(scene: &mut Scene, n: &Node, parent: Affine, fonts: &Fonts) {
     let bounds = Rect::new(0.0, 0.0, n.width, n.height);
     let layered = n.opacity < 1.0;
     if layered {
-        scene.push_layer(Fill::NonZero, Mix::Normal, n.opacity, Affine::IDENTITY, &EVERYWHERE);
+        scene.push_layer(
+            Fill::NonZero,
+            Mix::Normal,
+            n.opacity,
+            Affine::IDENTITY,
+            &EVERYWHERE,
+        );
     }
 
     match &n.kind {
@@ -47,7 +55,9 @@ fn render_node(scene: &mut Scene, n: &Node, parent: Affine, fonts: &Fonts) {
             if *clip_content {
                 scene.pop_layer();
             }
-            stroke_inside(scene, xf, n, |inset| rounded(inset, (n.corner_radius - n.stroke_weight / 2.0).max(0.0)).to_path(0.1));
+            stroke_inside(scene, xf, n, |inset| {
+                rounded(inset, (n.corner_radius - n.stroke_weight / 2.0).max(0.0)).to_path(0.1)
+            });
         }
         NodeKind::Group => {
             for c in &n.children {
@@ -57,7 +67,9 @@ fn render_node(scene: &mut Scene, n: &Node, parent: Affine, fonts: &Fonts) {
         NodeKind::Rectangle => {
             let shape = rounded(bounds, n.corner_radius);
             fill_all(scene, xf, &n.fills, &shape);
-            stroke_inside(scene, xf, n, |inset| rounded(inset, (n.corner_radius - n.stroke_weight / 2.0).max(0.0)).to_path(0.1));
+            stroke_inside(scene, xf, n, |inset| {
+                rounded(inset, (n.corner_radius - n.stroke_weight / 2.0).max(0.0)).to_path(0.1)
+            });
         }
         NodeKind::Ellipse => {
             let shape = Ellipse::from_rect(bounds);
@@ -77,7 +89,11 @@ fn render_node(scene: &mut Scene, n: &Node, parent: Affine, fonts: &Fonts) {
                     .brush(to_peniko(*color))
                     .draw(
                         Fill::NonZero,
-                        layout.glyphs.iter().map(|g| Glyph { id: g.id, x: g.x, y: g.y }),
+                        layout.glyphs.iter().map(|g| Glyph {
+                            id: g.id,
+                            x: g.x,
+                            y: g.y,
+                        }),
                     );
             }
         }
@@ -101,12 +117,22 @@ fn fill_all(scene: &mut Scene, xf: Affine, fills: &[Paint], shape: &impl Shape) 
 }
 
 /// Strokes aligned inside the shape, Figma's default for rectangles, ellipses and frames.
-fn stroke_inside(scene: &mut Scene, xf: Affine, n: &Node, shape_at: impl Fn(Rect) -> vello::kurbo::BezPath) {
+fn stroke_inside(
+    scene: &mut Scene,
+    xf: Affine,
+    n: &Node,
+    shape_at: impl Fn(Rect) -> vello::kurbo::BezPath,
+) {
     if n.stroke_weight <= 0.0 {
         return;
     }
     let half = n.stroke_weight / 2.0;
-    let inset = Rect::new(half, half, (n.width - half).max(half), (n.height - half).max(half));
+    let inset = Rect::new(
+        half,
+        half,
+        (n.width - half).max(half),
+        (n.height - half).max(half),
+    );
     let path = shape_at(inset);
     let style = Stroke::new(n.stroke_weight);
     for paint in n.strokes.iter().filter(|p| p.is_visible()) {
