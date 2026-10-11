@@ -43,6 +43,11 @@ pub struct TileView {
 }
 
 impl TileView {
+    /// Document revision, bumped whenever the document changed (autosave watches it).
+    pub fn rev(&self) -> u64 {
+        self.rev
+    }
+
     /// Re-renders everything (stale tiles stay visible until replaced).
     pub fn invalidate_all(&mut self) {
         self.cache.invalidate_all();

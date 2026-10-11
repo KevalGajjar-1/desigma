@@ -5,7 +5,7 @@ use crate::panels::rail;
 use desigma_doc::{PaintKind, VariableKind, VariableValue};
 
 fn open_modal(s: &mut Sim) {
-    let top = rail::cell_tops()[4];
+    let top = rail::cell_tops()[3];
     s.click(Pos2::new(28.0, top + 20.0));
     assert!(s.app().vars.open, "the Variables rail item opens the modal");
 }

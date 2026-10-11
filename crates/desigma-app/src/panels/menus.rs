@@ -62,13 +62,19 @@ pub enum Action {
     Flatten,
     OpenPalette,
     About,
+    /// Home screen (file browser).
+    BackToFiles,
+    SaveToLibrary,
+    Shortcuts,
+    AboutDesigma,
+    OpenGithub,
     /// Switches to a tool (also from the command palette).
     Tool(Tool),
 }
 
 pub fn run(app: &mut App, ctx: &Context, a: Action) {
     match a {
-        Action::New => app.new_document(),
+        Action::New => app.new_file_here(),
         Action::Open => app.open_dialog(),
         Action::Save => app.save(false),
         Action::SaveAs => app.save(true),
@@ -134,6 +140,11 @@ pub fn run(app: &mut App, ctx: &Context, a: Action) {
             app.ui.menu_anchor = None;
         }
         Action::About => app.show_toast("desigma, a Figma-compatible design editor", false),
+        Action::BackToFiles => app.go_home(),
+        Action::SaveToLibrary => app.begin_save_to_library(),
+        Action::Shortcuts => app.show_shortcuts(),
+        Action::AboutDesigma => app.show_about(),
+        Action::OpenGithub => app.confirm_open_github(),
         Action::Tool(t) => pick_tool(app, t),
     }
     ctx.request_repaint();
@@ -238,7 +249,8 @@ fn main_nodes(app: &App) -> Vec<Node> {
         leaf("New file", "", Action::New),
         leaf("Open…", "Ctrl+O", Action::Open),
         leaf("Save", "Ctrl+S", Action::Save),
-        leaf("Save as…", "Ctrl+Shift+S", Action::SaveAs).sep(),
+        leaf("Save as…", "Ctrl+Shift+S", Action::SaveAs),
+        leaf("Save to library…", "", Action::SaveToLibrary).off(app.lib.is_none() || app.lib_file.is_some()).sep(),
         leaf("Export selection as PNG…", "", Action::Export).off(!has_sel),
     ];
     let edit = vec![
@@ -296,9 +308,14 @@ fn main_nodes(app: &App) -> Vec<Node> {
         ],
     )];
     let vector = vec![leaf("Flatten", "Ctrl+E", Action::Flatten).off(!has_sel)];
-    let help = vec![leaf("Command palette", "Ctrl+K", Action::OpenPalette), leaf("About desigma", "", Action::About)];
+    let help = vec![
+        leaf("Command palette", "Ctrl+K", Action::OpenPalette),
+        leaf("Keyboard shortcuts", "", Action::Shortcuts).sep(),
+        leaf("About desigma", "", Action::AboutDesigma),
+        leaf("desigma on GitHub", "", Action::OpenGithub),
+    ];
     vec![
-        leaf("Back to files", "", Action::Open).sep(),
+        leaf("Back to files", "", Action::BackToFiles).sep(),
         leaf("Actions…", "Ctrl+K", Action::OpenPalette).icon(Icon::Search).sep(),
         submenu("File", file),
         submenu("Edit", edit),
@@ -311,7 +328,7 @@ fn main_nodes(app: &App) -> Vec<Node> {
         stub_sub("Widgets"),
         stub_sub("Preferences"),
         leaf("Libraries", "", Action::About).off(true).sep(),
-        submenu("Help and account", help),
+        submenu("Help", help),
     ]
 }
 
@@ -368,7 +385,8 @@ fn file_items(app: &App) -> Vec<(MenuItem, Option<Action>)> {
         (MenuItem::new("New file"), Some(Action::New)),
         (MenuItem::new("Open…").shortcut("Ctrl+O"), Some(Action::Open)),
         (MenuItem::new("Save").shortcut("Ctrl+S"), Some(Action::Save)),
-        (MenuItem::new("Save as…").shortcut("Ctrl+Shift+S").sep(), Some(Action::SaveAs)),
+        (MenuItem::new("Save as…").shortcut("Ctrl+Shift+S"), Some(Action::SaveAs)),
+        (MenuItem::new("Save to library…").disabled(app.lib.is_none() || app.lib_file.is_some()).sep(), Some(Action::SaveToLibrary)),
         (MenuItem::new("Undo").shortcut("Ctrl+Z").disabled(!app.hist.can_undo()), Some(Action::Undo)),
         (MenuItem::new("Redo").shortcut("Ctrl+Shift+Z").disabled(!app.hist.can_redo()).sep(), Some(Action::Redo)),
         (MenuItem::new("Select all").shortcut("Ctrl+A"), Some(Action::SelectAll)),
@@ -479,7 +497,7 @@ fn collect(nodes: &[Node], out: &mut Vec<Command>) {
 fn commands(app: &App) -> Vec<Command> {
     let mut out = Vec::new();
     collect(&main_nodes(app), &mut out);
-    out.retain(|c| c.label != "Back to files" && c.label != "About desigma" && c.label != "Libraries" && c.label != "Not available");
+    out.retain(|c| c.label != "Libraries" && c.label != "Not available");
     for g in GROUPS {
         for t in *g {
             out.push(Command {

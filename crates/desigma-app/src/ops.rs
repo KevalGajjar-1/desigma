@@ -768,6 +768,10 @@ impl App {
 
     // ------------------------------------------------------------ files
     pub fn replace_document(&mut self, doc: Document, path: Option<PathBuf>) {
+        // Pending edits of the library file being left are saved first.
+        self.flush_autosave();
+        self.lib_file = None;
+        self.renaming_file = false;
         let mut doc = doc;
         io::ensure_page(&mut doc);
         self.page = doc.pages[0];
@@ -812,6 +816,11 @@ impl App {
     }
 
     pub fn save(&mut self, as_new: bool) {
+        // Library files save back to the library; "Save as…" writes an external copy.
+        if !as_new && self.lib_file.is_some() {
+            self.save_library_file_with_toast();
+            return;
+        }
         let target = match (&self.file_path, as_new) {
             (Some(p), false) if p.extension().map(|e| e == io::NATIVE_EXT).unwrap_or(false) => Some(p.clone()),
             _ => io::pick_save(&self.doc.name),
@@ -820,7 +829,9 @@ impl App {
         match io::save_path(&self.doc, &path) {
             Ok(p) => {
                 self.show_toast(format!("Saved {}", p.display()), false);
-                self.file_path = Some(p);
+                if self.lib_file.is_none() {
+                    self.file_path = Some(p);
+                }
             }
             Err(e) => self.show_toast(e, true),
         }

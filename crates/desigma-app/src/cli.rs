@@ -31,7 +31,21 @@ pub struct Options {
     pub select_text: Option<(usize, usize)>,
     /// Add a layout grid to the selected frame: `grid`, `columns` or `rows`.
     pub layout_grid: Option<String>,
+    /// Show the projects home screen (default when launched without a file).
+    pub home: bool,
+    /// Library root directory (`--library DIR`, default `$DESIGMA_LIBRARY` or the user data dir).
+    pub library: Option<PathBuf>,
+    /// Open this library file id on start (used by "Open in new window").
+    pub open_id: Option<String>,
     pub help: bool,
+}
+
+impl Options {
+    /// Whether a launch with these options starts on the home screen: explicitly
+    /// with `--home`, or interactively with nothing else to open.
+    pub fn wants_home(&self) -> bool {
+        self.open_id.is_none() && (self.home || (self.file.is_none() && self.screenshot.is_none() && self.fixture.is_none()))
+    }
 }
 
 pub fn parse_size(s: &str) -> Option<(u32, u32)> {
@@ -97,6 +111,9 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Options, String> 
                 }
                 o.layout_grid = Some(k);
             }
+            "--home" => o.home = true,
+            "--library" => o.library = Some(it.next().ok_or("--library needs a directory")?.into()),
+            "--open-id" => o.open_id = Some(it.next().ok_or("--open-id needs a library file id")?),
             "-h" | "--help" => o.help = true,
             s if s.starts_with("--") => return Err(format!("unknown option {s}")),
             _ => {
@@ -110,7 +127,9 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Options, String> 
     Ok(o)
 }
 
-pub const USAGE: &str = "usage: desigma [FILE] [--screenshot OUT.png] [--size WxH] [--select LAYER|none] [--menu main|main/File|shape|palette] [--panel variables]\n               [--zoom PERCENT] [--rulers] [--grid] [--layout-grid grid|columns|rows] [--edit-text LAYER [--select-text START-END]]\n  FILE  .fig, .json (Figma REST or native) or .desigma";
+pub const USAGE: &str = "usage: desigma [FILE] [--screenshot OUT.png] [--size WxH] [--select LAYER|none] [--menu main|main/File|shape|palette] [--panel variables]\n               [--zoom PERCENT] [--rulers] [--grid] [--home] [--library DIR] [--layout-grid grid|columns|rows] [--edit-text LAYER [--select-text START-END]]\n  FILE  .fig, .json (Figma REST or native), .svg or .desigma; without a file the projects home screen opens
+  --home     show the home screen (also in --screenshot mode)
+  --library  use DIR as the projects library instead of the default location";
 
 #[cfg(test)]
 mod tests {
@@ -175,6 +194,25 @@ mod tests {
         assert!(p(&["--zoom", "0"]).is_err() && p(&["--zoom", "x"]).is_err() && p(&["--zoom"]).is_err());
         assert!(p(&["--layout-grid", "diagonal"]).is_err());
         assert!(p(&["--select-text", "5"]).is_err());
+    }
+
+    #[test]
+    fn parses_home_and_library() {
+        let o = p(&["--home", "--library", "/tmp/lib", "--screenshot", "h.png"]).unwrap();
+        assert!(o.home && o.wants_home());
+        assert_eq!(o.library, Some("/tmp/lib".into()));
+        assert!(p(&["--library"]).is_err());
+        assert_eq!(p(&["--open-id", "abc"]).unwrap().open_id.as_deref(), Some("abc"));
+        assert!(p(&["--open-id"]).is_err());
+    }
+
+    #[test]
+    fn home_is_the_default_only_for_a_bare_interactive_launch() {
+        assert!(p(&[]).unwrap().wants_home());
+        assert!(!p(&["a.desigma"]).unwrap().wants_home(), "a file argument opens the editor");
+        assert!(!p(&["--screenshot", "x.png"]).unwrap().wants_home(), "existing screenshot flows keep the editor");
+        assert!(!p(&["--fixture", "no-selection"]).unwrap().wants_home());
+        assert!(!p(&["--home", "--open-id", "x"]).unwrap().wants_home());
     }
 
     #[test]

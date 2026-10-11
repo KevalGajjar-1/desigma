@@ -6,6 +6,7 @@ mod comp_ops;
 mod demo;
 mod edit;
 mod fonts;
+mod home;
 mod icons;
 mod io;
 mod layout;

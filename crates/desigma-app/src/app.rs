@@ -54,7 +54,6 @@ impl View {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RailItem {
     File,
-    Agents,
     Assets,
     Tools,
     Variables,
@@ -139,6 +138,17 @@ pub struct App {
     pub scrub: Option<std::collections::BTreeMap<NodeId, desigma_doc::Node>>,
     /// Zoom (as a factor) to apply on the first frame instead of fitting the page (`--zoom`).
     pub startup_zoom: Option<f32>,
+    /// The projects library (None until opened; tests run without one).
+    pub lib: Option<desigma_library::Library>,
+    /// The library file open in the editor, if any (autosaved, shown in the header).
+    pub lib_file: Option<crate::home::LibFile>,
+    /// Some while the home screen (file browser) is showing instead of the editor.
+    pub home: Option<crate::home::Home>,
+    /// The open modal dialog (prompts, confirmations, shortcuts, About).
+    pub dialog: Option<crate::home::Dialog>,
+    pub autosave: crate::home::Autosave,
+    /// The header file name is being renamed (double-click).
+    pub renaming_file: bool,
 }
 
 impl App {
@@ -172,6 +182,12 @@ impl App {
             fonts: FontLoader::default(),
             scrub: None,
             startup_zoom: None,
+            lib: None,
+            lib_file: None,
+            home: None,
+            dialog: None,
+            autosave: Default::default(),
+            renaming_file: false,
         }
     }
 

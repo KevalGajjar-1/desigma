@@ -29,7 +29,6 @@ pub const BG_SELECTED_HOVER: Color32 = rgb(0x4A5878);
 pub const BG_SELECTED_SECONDARY: Color32 = rgb(0x32394D);
 pub const BG_BRAND: Color32 = rgb(0x0C8CE9);
 pub const BG_BRAND_HOVER: Color32 = rgb(0x0A6DC2);
-pub const BG_BRAND_PRESSED: Color32 = rgb(0x105CAD);
 pub const BG_TOOLBAR: Color32 = rgb(0x2C2C2C);
 pub const BG_TOOLBAR_HOVER: Color32 = rgb(0x111111);
 pub const BG_TOOLBAR_SELECTED: Color32 = rgb(0x0C8CE9);
@@ -58,11 +57,6 @@ pub const ELEVATION_400_RING: Color32 = rgba(0xFFFFFF, 0x16);
 pub const ELEVATION_400_TOP: Color32 = rgba(0xFFFFFF, 0x0A);
 pub const INNER_HIGHLIGHT: Color32 = rgba(0xFFFFFF, 0x14);
 pub const LOGO_GRADIENT_A: Color32 = rgb(0x0C8CE9);
-pub const AVATAR_BG: Color32 = rgb(0xE13814);
-pub const AVATAR_FG: Color32 = rgb(0xFFFFFF);
-/// Measured on the Figma capture: bg_selected at roughly 70% over the panel.
-pub const BADGE_BG: Color32 = rgb(0x31374F);
-pub const BADGE_TEXT: Color32 = TEXT_BRAND;
 pub const CHECKER_A: Color32 = rgb(0xFFFFFF);
 pub const CHECKER_B: Color32 = rgb(0xCCCCCC);
 
@@ -84,6 +78,7 @@ pub const LIGHT_BG_THRESHOLD: f32 = 0.5;
 pub const FONT_SIZE_SMALL: f32 = 9.0;
 pub const FONT_SIZE_BODY: f32 = 11.0;
 pub const FONT_SIZE_LARGE: f32 = 13.0;
+pub const FONT_SIZE_TITLE: f32 = 20.0;
 pub const CHEVRON_SMALL: f32 = 10.0;
 pub const FONT_SIZE_LABEL_CANVAS: f32 = 11.0;
 pub const FAMILY_STRONG: &str = "desigma-strong";
@@ -121,6 +116,10 @@ pub fn font_large() -> FontId {
 pub fn font_large_strong() -> FontId {
     FontId::new(FONT_SIZE_LARGE, FontFamily::Name(FAMILY_STRONG.into()))
 }
+/// Page titles on the home screen.
+pub fn font_title() -> FontId {
+    FontId::new(FONT_SIZE_TITLE, FontFamily::Name(FAMILY_STRONG.into()))
+}
 pub fn font_mono() -> FontId {
     FontId::new(FONT_SIZE_BODY, FontFamily::Monospace)
 }
@@ -129,7 +128,6 @@ pub fn font_mono() -> FontId {
 pub const RADIUS_SMALL: u8 = 2;
 pub const RADIUS_MEDIUM: u8 = 5;
 pub const RADIUS_LARGE: u8 = 13;
-pub const RADIUS_FULL: u8 = 255;
 
 pub fn cr(r: u8) -> CornerRadius {
     CornerRadius::same(r)
@@ -164,7 +162,6 @@ pub const LEFT_SUBLABEL_Y: f32 = 40.0;
 pub const LEFT_ACTION_Y: f32 = 12.0;
 pub const LEFT_SIDEBAR_BTN_RIGHT_PAD: f32 = 12.0;
 pub const PAGES_SEARCH_DX: f32 = 28.0;
-pub const BADGE_GAP: f32 = 8.0;
 pub const PANEL_TITLE_ROW_HEIGHT: f32 = 40.0;
 pub const PANEL_ACTION_BUTTON: f32 = 24.0;
 pub const PANEL_ACTION_RIGHT_PAD: f32 = 8.0;
@@ -183,16 +180,10 @@ pub const LAYER_ICON_SIZE: f32 = 16.0;
 pub const LAYER_ICON_GAP: f32 = 0.0;
 pub const LAYER_TOGGLE_SIZE: f32 = 24.0;
 pub const LAYER_DROP_THICKNESS: f32 = 2.0;
-pub const BADGE_HEIGHT: f32 = 16.0;
-pub const BADGE_PAD_X: f32 = 5.0;
 
 pub const RIGHT_PANEL_WIDTH: f32 = 240.0;
-pub const RIGHT_AVATAR_X: f32 = 9.0;
-pub const RIGHT_AVATAR_Y: f32 = 12.0;
-pub const RIGHT_AVATAR_W: f32 = 50.0;
-pub const RIGHT_AVATAR_H: f32 = 24.0;
-pub const RIGHT_AVATAR_CIRCLE: f32 = 24.0;
-pub const RIGHT_PRESENT_FROM_RIGHT: f32 = 116.0;
+/// The present button sits at the right edge, level with the zoom dropdown (8px from the edge).
+pub const RIGHT_PRESENT_FROM_RIGHT: f32 = 56.0;
 /// Outlined play triangle of the present button.
 pub const PRESENT_ICON_W: f32 = 15.0;
 pub const PRESENT_ICON_H: f32 = 16.0;
@@ -200,8 +191,6 @@ pub const PRESENT_ICON_STROKE: f32 = 1.2;
 pub const RIGHT_BTN_Y: f32 = 8.0;
 pub const RIGHT_BTN_SIZE: f32 = 32.0;
 pub const RIGHT_PRESENT_CHEVRON_W: f32 = 16.0;
-pub const RIGHT_SHARE_FROM_RIGHT: f32 = 63.0;
-pub const RIGHT_SHARE_W: f32 = 55.0;
 pub const RIGHT_TABS_Y: f32 = 48.0;
 pub const RIGHT_TABS_H: f32 = 24.0;
 pub const RIGHT_TABS_X: f32 = 9.0;
@@ -480,3 +469,16 @@ pub fn is_light(c: Color32) -> bool {
     let l = (0.299 * c.r() as f32 + 0.587 * c.g() as f32 + 0.114 * c.b() as f32) / 255.0;
     l > LIGHT_BG_THRESHOLD
 }
+
+// ---------------------------------------------------------------- projects library (home screen)
+pub const HOME_SIDEBAR_W: f32 = 264.0;
+pub const HOME_PAD: f32 = 32.0;
+pub const HOME_HEADER_H: f32 = 64.0;
+pub const HOME_CARD_W: f32 = 224.0;
+pub const HOME_THUMB_H: f32 = 140.0;
+/// Thumbnail plus the three text lines under it.
+pub const HOME_CARD_H: f32 = HOME_THUMB_H + 58.0;
+pub const HOME_CARD_GAP: f32 = 24.0;
+pub const HOME_FOLDER_H: f32 = 48.0;
+pub const HOME_LIST_ROW_H: f32 = 44.0;
+pub const HOME_THUMB_BG: Color32 = rgb(0x3A3A3A);
