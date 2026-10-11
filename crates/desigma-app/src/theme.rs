@@ -244,6 +244,11 @@ pub const PEN_POINT_SIZE: f32 = 4.0;
 pub const PEN_LINE_WIDTH: f32 = 1.5;
 /// Insertion line shown while reordering inside an auto-layout frame.
 pub const AL_INDICATOR_WIDTH: f32 = 2.0;
+/// Vector edit mode: vertex square, handle dot, hit radii (px).
+pub const VEDIT_POINT_SIZE: f32 = 6.0;
+pub const VEDIT_HANDLE_RADIUS: f32 = 3.0;
+pub const VEDIT_HIT: f32 = 6.0;
+pub const VEDIT_SEGMENT_HIT: f32 = 5.0;
 pub const DRAG_THRESHOLD_PX: f32 = 3.0;
 pub const ZOOM_MIN: f32 = 0.02;
 pub const ZOOM_MAX: f32 = 256.0;

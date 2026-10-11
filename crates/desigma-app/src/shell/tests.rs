@@ -602,3 +602,73 @@ fn dragging_out_of_an_auto_layout_frame_leaves_the_flow() {
     s.cmd_key(Key::Z);
     assert_eq!(s.app().doc.get(bar).unwrap().parent, Some(card));
 }
+
+/// Draws a three-point open path with the pen and leaves it selected in Move mode.
+fn sim_with_vector() -> (Sim, NodeId) {
+    let mut s = Sim::new();
+    s.key(Key::P);
+    for (x, y) in [(300.0, 800.0), (370.0, 840.0), (300.0, 880.0)] {
+        let p = s.screen(x, y);
+        s.click(p);
+    }
+    s.key(Key::Enter);
+    let id = s.app().selection[0];
+    assert!(matches!(s.app().doc.get(id).unwrap().kind, NodeKind::Vector { .. }));
+    (s, id)
+}
+
+fn vector_cmds(s: &Sim, id: NodeId) -> Vec<desigma_doc::PathCmd> {
+    match &s.app().doc.get(id).unwrap().kind {
+        NodeKind::Vector { paths } => paths[0].cmds.clone(),
+        _ => panic!("not a vector"),
+    }
+}
+
+#[test]
+fn enter_starts_vector_editing_and_drag_is_one_undo_step() {
+    let (mut s, id) = sim_with_vector();
+    assert!(s.app().canvas.vedit.is_none());
+    s.key(Key::Enter);
+    assert!(s.app().canvas.vedit.is_some(), "Enter on a selected vector enters point editing");
+    let before = vector_cmds(&s, id);
+    let world_before = s.app().doc.world_transform(id);
+    let a = s.screen(370.0, 840.0);
+    s.drag(a, a + Vec2::new(30.0, 0.0));
+    let after = vector_cmds(&s, id);
+    assert_ne!(before, after);
+    // the middle vertex followed the pointer (30 screen px)
+    let mid_page = |cmds: &[desigma_doc::PathCmd], w: desigma_doc::Affine| match cmds[1] {
+        desigma_doc::PathCmd::LineTo(p) => w.apply(p),
+        _ => panic!(),
+    };
+    let moved = mid_page(&after, s.app().doc.world_transform(id)).x - mid_page(&before, world_before).x;
+    let want = 30.0 / s.app().view.zoom;
+    assert!((moved - want).abs() < 2.0, "moved {moved}, wanted {want}");
+    s.cmd_key(Key::Z);
+    assert_eq!(vector_cmds(&s, id), before, "a whole drag is one step");
+    assert!(s.app().canvas.vedit.is_some(), "still editing after undo");
+    s.key(Key::Escape);
+    assert!(s.app().canvas.vedit.is_none());
+    assert_eq!(s.app().selection, vec![id], "Escape leaves edit mode but keeps the selection");
+}
+
+#[test]
+fn clicking_a_segment_adds_a_point_and_delete_removes_it() {
+    let (mut s, id) = sim_with_vector();
+    s.key(Key::Enter);
+    let n0 = vector_cmds(&s, id).len();
+    // middle of the first segment (300,800)-(370,840)
+    let p = s.screen(335.0, 820.0);
+    s.click(p);
+    assert_eq!(vector_cmds(&s, id).len(), n0 + 1);
+    let sel = s.app().canvas.vedit.as_ref().unwrap().sel;
+    assert_eq!(sel, Some((0, 1)), "the new vertex is selected");
+    s.key(Key::Delete);
+    assert_eq!(vector_cmds(&s, id).len(), n0);
+    s.cmd_key(Key::Z);
+    assert_eq!(vector_cmds(&s, id).len(), n0 + 1);
+    s.cmd_key(Key::Z);
+    assert_eq!(vector_cmds(&s, id).len(), n0);
+    s.key(Key::Enter);
+    assert!(s.app().canvas.vedit.is_none(), "Enter exits");
+}

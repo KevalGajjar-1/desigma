@@ -114,7 +114,7 @@ pub fn overlays(app: &App, ui: &Ui, rect: ERect) {
             let small = w.min(h) <= theme::CANVAS_HANDLE_SIZE * 3.0;
             let only_corners = small && !is_line;
             let dvs = corners.map(|c| dv(to_s(c)));
-            if app.canvas.text.is_none() && matches!(app.tool, tools::Tool::Move | tools::Tool::Scale) {
+            if app.canvas.text.is_none() && app.canvas.vedit.is_none() && matches!(app.tool, tools::Tool::Move | tools::Tool::Scale) {
                 for hnd in Handle::ALL {
                     if is_line && !matches!(hnd, Handle::L | Handle::R) {
                         continue;
@@ -141,6 +141,8 @@ pub fn overlays(app: &App, ui: &Ui, rect: ERect) {
             }
         }
     }
+
+    vector::overlay(app, &p, rect);
 
     // Snap guides & measurements.
     let gcol = theme::GUIDE_COLOR;

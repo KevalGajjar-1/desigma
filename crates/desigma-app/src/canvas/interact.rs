@@ -4,6 +4,7 @@ use super::create::{self, PenPoint};
 use super::handles::{self, Handle, HandleHit};
 use super::hit;
 use super::reorder;
+use super::vector;
 use super::snap;
 use super::tools::{press_action, PressAction, PressTarget, Tool};
 use super::*;
@@ -141,6 +142,14 @@ pub fn process(app: &mut App, ui: &mut Ui, rect: ERect, resp: &Response) {
         text_keys(app, &ctx);
     }
 
+    if let Some(v) = &app.canvas.vedit {
+        if app.selection != [v.id] || !matches!(app.tool, Tool::Move) {
+            vector::exit(app);
+        } else {
+            vector::reload(app);
+        }
+    }
+
     app.canvas.pointer_page = inp.pos.filter(|p| rect.contains(*p)).map(|p| app.view.to_page(rect.min, p));
 
     if (inp.pressed || inp.mid_pressed) && hovered {
@@ -167,7 +176,7 @@ pub fn process(app: &mut App, ui: &mut Ui, rect: ERect, resp: &Response) {
 
 // ------------------------------------------------------------------ press
 fn handle_hit(app: &App, rect: ERect, pos: Pos2) -> Option<HandleHit> {
-    if !matches!(app.tool, Tool::Move | Tool::Scale) {
+    if !matches!(app.tool, Tool::Move | Tool::Scale) || app.canvas.vedit.is_some() {
         return None;
     }
     let (corners, is_line) = selection_box(app)?;
@@ -196,6 +205,9 @@ fn on_press(app: &mut App, rect: ERect, inp: &Inp) {
         finish_text(app, true);
     }
     let mid = inp.mid_pressed && !inp.pressed;
+    if app.canvas.vedit.is_some() && !mid && !inp.space && vector::press(app, rect, pos, inp.mods) {
+        return;
+    }
     let deep = inp.mods.command;
     let target = if let Some(h) = handle_hit(app, rect, pos) {
         PressTarget::Handle(h)
@@ -398,6 +410,7 @@ fn on_drag(app: &mut App, ui: &Ui, rect: ERect, inp: &Inp) {
                 pts.push(cur);
             }
         }
+        Interaction::VectorDrag => vector::drag(app, cur, inp.mods),
         Interaction::PenDrag => {
             if let Some(pen) = &mut app.canvas.pen {
                 if let Some(last) = pen.pts.last_mut() {
@@ -613,6 +626,7 @@ fn on_release(app: &mut App, rect: ERect, inp: &Inp) {
                 app.tool = Tool::Move;
             }
         }
+        Interaction::VectorDrag => vector::release(app),
         Interaction::PenDrag | Interaction::Pan | Interaction::Marquee { .. } | Interaction::None => {}
     }
     app.changed();
@@ -673,6 +687,8 @@ fn on_double_click(app: &mut App, rect: ERect, inp: &Inp) {
         let is_text = matches!(app.doc.get(id).map(|n| &n.kind), Some(NodeKind::Text(_)));
         if is_text {
             begin_text_edit(app, id);
+        } else if vector::is_vector(app, id) {
+            vector::enter(app, id);
         } else if app.is_selected(id) {
             // already the deepest hit: nothing further to enter
         } else {

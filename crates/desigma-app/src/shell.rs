@@ -162,6 +162,19 @@ impl Shell {
             }
             return;
         }
+        if app.canvas.vedit.is_some() {
+            match key {
+                Key::Escape | Key::Enter => {
+                    canvas::vector::exit(app);
+                    return;
+                }
+                Key::Delete | Key::Backspace => {
+                    canvas::vector::delete_selected(app);
+                    return;
+                }
+                _ => {}
+            }
+        }
         match key {
             Key::Delete | Key::Backspace => menus::run(app, ctx, Action::Delete),
             Key::Escape => {
@@ -193,6 +206,8 @@ impl Shell {
                         if matches!(n.kind, desigma_doc::NodeKind::Text(_)) {
                             let id = *one;
                             interact::begin_text_edit(app, id);
+                        } else if matches!(n.kind, desigma_doc::NodeKind::Vector { .. }) {
+                            canvas::vector::enter(app, *one);
                         } else if !n.children.is_empty() {
                             app.selection = n.children.clone();
                         }

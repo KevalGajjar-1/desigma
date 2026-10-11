@@ -9,6 +9,7 @@ pub mod interact;
 pub mod reorder;
 pub mod snap;
 pub mod tools;
+pub mod vector;
 
 use crate::app::App;
 use crate::edit::Tx;
@@ -83,6 +84,8 @@ pub enum Interaction {
     Draw(DrawState),
     Pencil(Vec<DV>),
     PenDrag,
+    /// Dragging a vertex/handle in vector edit mode (state lives in `CanvasState::vedit`).
+    VectorDrag,
 }
 
 pub struct PenState {
@@ -118,6 +121,8 @@ pub struct CanvasState {
     pub measures: Vec<snap::Measure>,
     pub pen: Option<PenState>,
     pub text: Option<TextSession>,
+    /// Point editing of a Vector node.
+    pub vedit: Option<vector::VectorEdit>,
     pub pointer_page: Option<DV>,
     pub cursor: Option<egui::CursorIcon>,
     pub last_render_ms: f32,
@@ -132,6 +137,7 @@ impl CanvasState {
         self.measures.clear();
         self.pen = None;
         self.text = None;
+        self.vedit = None;
     }
 }
 
@@ -144,6 +150,12 @@ impl App {
             Interaction::Resize(r) => r.tx.cancel(&mut self.doc),
             Interaction::Rotate(r) => r.tx.cancel(&mut self.doc),
             Interaction::Draw(d) => d.tx.cancel(&mut self.doc),
+            Interaction::VectorDrag => {
+                if let Some(d) = self.canvas.vedit.as_mut().and_then(|v| v.drag.take()) {
+                    d.tx.cancel(&mut self.doc);
+                }
+                vector::reload(self);
+            }
             _ => {}
         }
         self.canvas.guides.clear();
