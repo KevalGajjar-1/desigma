@@ -99,6 +99,29 @@ fn effect(e: &Effect) -> Value {
         }),
         Effect::LayerBlur { radius, visible } => json!({"type": "LAYER_BLUR", "radius": n(*radius), "visible": visible}),
         Effect::BackgroundBlur { radius, visible } => json!({"type": "BACKGROUND_BLUR", "radius": n(*radius), "visible": visible}),
+        // Field names for the newer effect types are best guesses at Figma's
+        // REST shape; import reads the same names back.
+        Effect::Noise(e) => {
+            let (mode, color, secondary) = match &e.mode {
+                NoiseMode::Mono { color } => ("MONOTONE", Some(*color), None),
+                NoiseMode::Duo { color, secondary } => ("DUOTONE", Some(*color), Some(*secondary)),
+                NoiseMode::Multi => ("MULTITONE", None, None),
+            };
+            json!({
+                "type": "NOISE", "noiseType": mode, "color": color.map(col), "secondaryColor": secondary.map(col),
+                "noiseSize": n(e.size), "density": n(e.density), "opacity": n(e.opacity),
+                "blendMode": blend_name(e.blend), "seed": e.seed, "visible": e.visible
+            })
+        }
+        Effect::Texture(e) => json!({
+            "type": "TEXTURE", "noiseSize": n(e.size), "radius": n(e.radius),
+            "clipToShape": e.clip_to_shape, "seed": e.seed, "visible": e.visible
+        }),
+        Effect::Glass(e) => json!({
+            "type": "GLASS", "lightAngle": n(e.light_angle), "lightIntensity": n(e.light_intensity),
+            "refraction": n(e.refraction), "depth": n(e.depth), "dispersion": n(e.dispersion),
+            "radius": n(e.frost), "visible": e.visible
+        }),
     }
 }
 

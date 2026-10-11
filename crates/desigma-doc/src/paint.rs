@@ -164,10 +164,102 @@ pub struct Stroke {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Effect {
-    DropShadow { color: Color, offset: Vec2, radius: f32, spread: f32, visible: bool, show_behind: bool },
-    InnerShadow { color: Color, offset: Vec2, radius: f32, spread: f32, visible: bool },
-    LayerBlur { radius: f32, visible: bool },
-    BackgroundBlur { radius: f32, visible: bool },
+    DropShadow {
+        color: Color,
+        offset: Vec2,
+        radius: f32,
+        spread: f32,
+        visible: bool,
+        show_behind: bool,
+    },
+    InnerShadow {
+        color: Color,
+        offset: Vec2,
+        radius: f32,
+        spread: f32,
+        visible: bool,
+    },
+    LayerBlur {
+        radius: f32,
+        visible: bool,
+    },
+    BackgroundBlur {
+        radius: f32,
+        visible: bool,
+    },
+    /// Grain over the layer's shape.
+    Noise(NoiseEffect),
+    /// Displaces the layer's edges with a rough, paper-like texture.
+    Texture(TextureEffect),
+    /// Frosted, refractive glass over what is behind the layer.
+    Glass(GlassEffect),
+}
+
+impl Effect {
+    pub fn visible(&self) -> bool {
+        match self {
+            Effect::DropShadow { visible, .. }
+            | Effect::InnerShadow { visible, .. }
+            | Effect::LayerBlur { visible, .. }
+            | Effect::BackgroundBlur { visible, .. } => *visible,
+            Effect::Noise(e) => e.visible,
+            Effect::Texture(e) => e.visible,
+            Effect::Glass(e) => e.visible,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum NoiseMode {
+    /// One color at `opacity`.
+    Mono { color: Color },
+    /// Two colors mixed per grain.
+    Duo { color: Color, secondary: Color },
+    /// Random hue per grain.
+    Multi,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct NoiseEffect {
+    pub mode: NoiseMode,
+    /// Grain size in px.
+    pub size: f32,
+    /// Share of covered pixels, 0..1.
+    pub density: f32,
+    pub opacity: f32,
+    pub blend: BlendMode,
+    /// Deterministic seed so renders are reproducible.
+    pub seed: u32,
+    pub visible: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct TextureEffect {
+    /// Texture scale in px.
+    pub size: f32,
+    /// Edge displacement in px.
+    pub radius: f32,
+    /// Keep the textured result inside the original shape.
+    pub clip_to_shape: bool,
+    pub seed: u32,
+    pub visible: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct GlassEffect {
+    /// Light direction in degrees (0 = from the right, clockwise).
+    pub light_angle: f32,
+    /// Highlight strength, 0..1.
+    pub light_intensity: f32,
+    /// How strongly the backdrop bends at the edges, 0..1.
+    pub refraction: f32,
+    /// Bevel depth in px.
+    pub depth: f32,
+    /// Chromatic split at the edges, 0..1.
+    pub dispersion: f32,
+    /// Backdrop blur radius in px.
+    pub frost: f32,
+    pub visible: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
