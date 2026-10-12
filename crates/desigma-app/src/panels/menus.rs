@@ -98,6 +98,10 @@ pub enum Action {
     Shortcuts,
     AboutDesigma,
     OpenGithub,
+    /// Dev mode: marks the selected frames and sections Ready for dev.
+    MarkReadyForDev,
+    MarkCompleted,
+    ClearDevStatus,
     /// Switches to a tool (also from the command palette).
     Tool(Tool),
 }
@@ -200,6 +204,18 @@ pub fn run(app: &mut App, ctx: &Context, a: Action) {
         Action::Shortcuts => app.show_shortcuts(),
         Action::AboutDesigma => app.show_about(),
         Action::OpenGithub => app.confirm_open_github(),
+        Action::MarkReadyForDev => {
+            let sel = app.top_selection();
+            app.dev_mark_ready(&sel);
+        }
+        Action::MarkCompleted => {
+            let sel = app.top_selection();
+            app.dev_mark_completed(&sel);
+        }
+        Action::ClearDevStatus => {
+            let sel = app.top_selection();
+            app.dev_clear_status(&sel);
+        }
         Action::Tool(t) => pick_tool(app, t),
     }
     ctx.request_repaint();

@@ -96,6 +96,20 @@ impl Shell {
                 eprintln!("desigma: unknown menu '{spec}'");
             }
         }
+        if let Some(l) = &opts.dev {
+            app.ui.dev_mode = true;
+            app.ui.right_tab = Some(crate::app::RightTab::Design);
+            app.dev.lang = match l.as_str() {
+                "tailwind" => crate::dev::Language::Tailwind,
+                "swiftui" => crate::dev::Language::SwiftUi,
+                "compose" => crate::dev::Language::Compose,
+                "react" => crate::dev::Language::React,
+                _ => crate::dev::Language::Css,
+            };
+            if opts.dev_demo {
+                crate::dev::preset::apply(&mut app);
+            }
+        }
         app.ui.rulers = opts.rulers;
         if opts.grid {
             app.ui.pixel_grid = true;
@@ -150,6 +164,7 @@ impl Shell {
         match opts.panel.as_deref() {
             Some("libraries") => app.open_libraries(),
             Some("version-history") => crate::history::preset::apply(&mut app, opts.library.clone()),
+            Some(p @ ("dev-annotate" | "dev-compare")) => crate::dev::preset::panel(&mut app, p),
             Some(panel @ ("variables" | "variables-floating")) => {
                 app.vars.full = panel == "variables";
                 app.open_variables();
@@ -213,7 +228,7 @@ impl Shell {
     }
 
     fn handle_keys(&mut self, ctx: &Context) {
-        if self.app.dialog.is_some() || self.app.history.save_modal.is_some() {
+        if self.app.dialog.is_some() || self.app.history.save_modal.is_some() || self.app.dev.compare.is_some() {
             return;
         }
         let typing = ctx.egui_wants_keyboard_input();
@@ -542,6 +557,7 @@ impl Shell {
         }
         self.app.autosave_tick(&ctx);
         self.app.history_tick();
+        self.app.dev_tick(&ctx);
         if self.app.proto.present.is_some() {
             crate::present::show(&mut self.app, ui);
             return;
@@ -588,6 +604,7 @@ impl Shell {
         }
         crate::home::dialog::show(&mut self.app, &ctx);
         crate::history::modal::show(&mut self.app, &ctx);
+        crate::dev::compare::show(&mut self.app, &ctx);
         crate::libraries::show(&mut self.app, &ctx);
         self.toast(ui, full);
 

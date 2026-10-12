@@ -449,6 +449,34 @@ pub const FIND_CANVAS_MATCH_MAX: usize = 600;
 pub const NUDGE: f32 = 1.0;
 pub const NUDGE_BIG: f32 = 10.0;
 
+// ---------------------------------------------------------------- dev mode
+/// Syntax colours of the Inspect code blocks.
+pub const SYNTAX_PLAIN: Color32 = TEXT;
+pub const SYNTAX_PROPERTY: Color32 = rgb(0x7CC4F8);
+pub const SYNTAX_KEYWORD: Color32 = rgb(0xC792EA);
+pub const SYNTAX_STRING: Color32 = rgb(0x9CD67D);
+pub const SYNTAX_NUMBER: Color32 = rgb(0xF2A365);
+pub const SYNTAX_TYPE: Color32 = rgb(0xFFCB6B);
+pub const SYNTAX_FUNCTION: Color32 = rgb(0x82AAFF);
+pub const SYNTAX_COMMENT: Color32 = rgb(0x8A8A8A);
+pub const SYNTAX_PUNCT: Color32 = rgb(0xB3B3B3);
+/// Dev status pills: Ready for dev, Completed, Changed.
+pub const DEV_READY: Color32 = rgb(0x14AE5C);
+pub const DEV_COMPLETED: Color32 = rgb(0x9747FF);
+pub const DEV_CHANGED: Color32 = rgb(0xFFA629);
+/// Box model diagram: margin, padding and content tints (as in Figma's Inspect).
+pub const BOX_MARGIN: Color32 = rgb(0xF9CB9C);
+pub const BOX_PADDING: Color32 = rgb(0xB6D7A8);
+pub const BOX_CONTENT: Color32 = rgb(0x9FC5E8);
+pub const BOX_TEXT: Color32 = rgb(0x1E1E1E);
+/// Annotation callouts on the canvas.
+pub const ANNOTATION_BG: Color32 = rgb(0xFFE08A);
+pub const ANNOTATION_TEXT: Color32 = rgb(0x1E1E1E);
+pub const ANNOTATION_LINE: Color32 = rgb(0xFFB800);
+/// Measurement overlay red (distances between layers).
+pub const MEASURE: Color32 = rgb(0xF24822);
+pub const CODE_LINE_HEIGHT: f32 = 16.0;
+
 // ---------------------------------------------------------------- prototype
 /// Noodles, hotspots and flow flags use the brand blue.
 pub const PROTO_BLUE: Color32 = BG_BRAND;

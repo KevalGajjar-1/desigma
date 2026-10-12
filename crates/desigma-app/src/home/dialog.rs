@@ -24,6 +24,8 @@ pub enum Intent {
     /// Names the version history entry with this number.
     NameVersion(u32),
     OpenGithub,
+    /// Opens a dev link (annotation / Dev Mode link) after confirmation.
+    OpenDevLink(String),
     Shortcuts,
     About,
 }
@@ -356,7 +358,7 @@ pub fn show(app: &mut App, ctx: &Context) {
 
 /// Runs the confirmed dialog.
 pub fn finish(app: &mut App, d: Dialog) {
-    if crate::history::finish_dialog(app, &d) {
+    if crate::history::finish_dialog(app, &d) || crate::dev::finish_dialog(app, &d) {
         return;
     }
     let Some(lib) = app.lib.clone() else { return };
@@ -411,7 +413,7 @@ pub fn finish(app: &mut App, d: Dialog) {
             }
             Ok(())
         }
-        Intent::Shortcuts | Intent::About | Intent::AuthorName | Intent::NameVersion(_) => {
+        Intent::Shortcuts | Intent::About | Intent::AuthorName | Intent::NameVersion(_) | Intent::OpenDevLink(_) => {
             dirty = false;
             Ok(())
         }
