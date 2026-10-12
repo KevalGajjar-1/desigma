@@ -218,6 +218,9 @@ fn type_style(ts: &TextStyle, auto: Option<TextAutoResize>, max_lines: Option<u3
         m.insert("maxLines".into(), n.into());
     }
     m.insert("fills".into(), paints(&ts.fills));
+    if let Some(flags) = crate::textfmt::flags_value(&ts.features) {
+        m.insert("opentypeFlags".into(), flags);
+    }
     Value::Object(m)
 }
 
@@ -511,7 +514,12 @@ fn export_node(doc: &Document, id: NodeId, parent_abs: Option<&Affine>, depth: u
         NodeKind::Text(t) => {
             m.insert("characters".into(), t.content.clone().into());
             m.insert("fills".into(), paints(&t.style.fills));
-            m.insert("style".into(), type_style(&t.style, Some(t.auto_resize), t.max_lines));
+            let mut style = type_style(&t.style, Some(t.auto_resize), t.max_lines);
+            if let Some(sm) = style.as_object_mut() {
+                crate::textfmt::export_paragraph(t, sm);
+            }
+            m.insert("style".into(), style);
+            crate::textfmt::export_lines(t, &mut m);
             if !t.runs.is_empty() {
                 let offs = utf16_to_byte_offsets(&t.content);
                 let mut overrides = vec![0u32; offs.len() - 1];

@@ -198,11 +198,23 @@ pub fn figma_like_schema() -> Schema {
     let t = def(&b, "TextDecoration");
     b.field(so, "textDecoration", t, false, 5);
 
+    enum_def(&mut b, "LineType", &["PLAIN", "ORDERED_LIST", "UNORDERED_LIST"]);
+    enum_def(&mut b, "Directionality", &["AUTO", "LTR", "RTL"]);
+    enum_def(&mut b, "LeadingTrim", &["NONE", "CAP_HEIGHT"]);
+    enum_def(&mut b, "OpenTypeFeature", &["LIGA", "SS01", "TNUM"]);
+    let tl = b.define("TextLine", DefKind::Message);
+    let t = def(&b, "LineType");
+    b.field(tl, "lineType", t, false, 1);
+    b.field(tl, "indentationLevel", nat(Uint), false, 2);
+    let t = def(&b, "Directionality");
+    b.field(tl, "sourceDirectionality", t, false, 3);
     let td = b.define("TextData", DefKind::Message);
     b.field(td, "characters", nat(String), false, 1);
     b.field(td, "characterStyleIDs", nat(Uint), true, 2);
     let t = def(&b, "StyleOverride");
     b.field(td, "styleOverrideTable", t, true, 3);
+    let t = def(&b, "TextLine");
+    b.field(td, "lines", t, true, 4);
 
     let nc = b.define("NodeChange", DefKind::Message);
     let mut id = 0;
@@ -291,6 +303,11 @@ pub fn figma_like_schema() -> Schema {
     f(&mut b, "textAutoResize", ar, false);
     f(&mut b, "textCase", tc, false);
     f(&mut b, "textDecoration", tdc, false);
+    let (lt, otf) = (def(&b, "LeadingTrim"), def(&b, "OpenTypeFeature"));
+    f(&mut b, "leadingTrim", lt, false);
+    f(&mut b, "paragraphIndent", nat(Float), false);
+    f(&mut b, "toggledOnOTFeatures", otf, true);
+    f(&mut b, "toggledOffOTFeatures", otf, true);
     let sidt = def(&b, "StyleId");
     f(&mut b, "styleIdForFill", sidt, false);
     for n in ["styleIdForStrokeFill", "styleIdForText", "styleIdForEffect", "styleIdForGrid"] {
@@ -666,6 +683,38 @@ pub fn upgrade_message() -> V {
     let lh_none = text(7, "g", "LhNone", vec![]);
     let lh_px = text(8, "h", "LhPx", vec![("lineHeight", num(18.0, "PIXELS"))]);
     let plain = text(9, "i", "Plain", vec![]);
+    // Lists: bullet, nested number, plain line, in a right-to-left, cap-trimmed layer.
+    let line = |ty: &str, level: u32| msg(vec![("lineType", en(ty)), ("indentationLevel", V::Uint(level)), ("sourceDirectionality", en("RTL"))]);
+    let listy = node(
+        (2, 50),
+        (0, 1),
+        "o",
+        "TEXT",
+        "Listy",
+        vec![
+            size(80.0, 40.0),
+            ("fontSize", fl(10.0)),
+            (
+                "textData",
+                msg(vec![
+                    (
+                        "characters",
+                        V::String(
+                            "one
+two
+three"
+                                .into(),
+                        ),
+                    ),
+                    ("lines", V::Array(vec![line("UNORDERED_LIST", 1), line("ORDERED_LIST", 2), line("PLAIN", 0)])),
+                ]),
+            ),
+            ("leadingTrim", en("CAP_HEIGHT")),
+            ("paragraphIndent", fl(6.0)),
+            ("toggledOnOTFeatures", V::Array(vec![en("TNUM"), en("SS01")])),
+            ("toggledOffOTFeatures", V::Array(vec![en("LIGA")])),
+        ],
+    );
 
     // Component with a label, background and a nested frame.
     let card = node((2, 10), (0, 1), "j", "SYMBOL", "Card", vec![size(100.0, 50.0), ("transform", matrix(0.0, 300.0))]);
@@ -773,7 +822,7 @@ pub fn upgrade_message() -> V {
 
     let mut nodes = vec![doc, page, internal];
     nodes.extend(styles);
-    nodes.extend([grids, boolean, star, clamp, lh_auto, lh_pct, lh_none, lh_px, plain]);
+    nodes.extend([grids, boolean, star, clamp, lh_auto, lh_pct, lh_none, lh_px, plain, listy]);
     nodes.extend([card, label, bg, inner, dot, wrapper, card_in, wrap_inst, card_a, card_b]);
     msg(vec![
         ("nodeChanges", V::Array(nodes)),

@@ -296,6 +296,9 @@ pub(crate) fn apply_type_style(ts: &mut TextStyle, v: &Value) {
             _ => TextDecoration::None,
         };
     }
+    if let Some(f) = v.get("opentypeFlags") {
+        crate::textfmt::merge_features(&mut ts.features, crate::textfmt::features_from_flags(f));
+    }
     if let Some(f) = v.get("fills") {
         ts.fills = parse_paints(Some(f));
     }
@@ -1143,6 +1146,7 @@ impl Ctx {
         if let NodeKind::Text(t) = &mut n.kind {
             if let Some(st) = set.get("style") {
                 apply_type_style(&mut t.style, st);
+                crate::textfmt::apply_paragraph(t, st);
                 if let Some(a) = fstr(st, "textAutoResize") {
                     t.auto_resize = auto_resize(a);
                 }
@@ -1158,6 +1162,10 @@ impl Ctx {
                     t.runs.clear(); // byte ranges no longer apply
                 }
                 t.content = c.to_string();
+                t.lists.clear();
+            }
+            if set.get("lineTypes").is_some() {
+                crate::textfmt::apply_lines(t, set);
             }
             if set.get("characterStyleOverrides").is_some() {
                 let ids: Vec<u64> = farr(set, "characterStyleOverrides").iter().map(|x| x.as_u64().unwrap_or(0)).collect();
@@ -1251,6 +1259,9 @@ pub(crate) fn override_field(key: &str, is_text: bool) -> Option<OverrideField> 
         | "fontFamily"
         | "textAutoResize"
         | "textTruncation"
+        | "lineTypes"
+        | "lineIndentations"
+        | "opentypeFlags"
         | "maxLines" => OverrideField::TextStyle,
         "layoutMode"
         | "itemSpacing"
@@ -1357,7 +1368,12 @@ fn text_props(v: &Value) -> TextProps {
 
     let overrides: Vec<u64> = farr(v, "characterStyleOverrides").iter().map(|x| x.as_u64().unwrap_or(0)).collect();
     let runs = build_runs(&content, &style, &overrides, v.get("styleOverrideTable"));
-    TextProps { content, style, runs, auto_resize: auto, max_lines, ..Default::default() }
+    let mut tp = TextProps { content, style, runs, auto_resize: auto, max_lines, ..Default::default() };
+    if let Some(st) = st {
+        crate::textfmt::apply_paragraph(&mut tp, st);
+    }
+    crate::textfmt::apply_lines(&mut tp, v);
+    tp
 }
 
 /// Style runs over byte ranges from per-UTF-16-unit override ids.
