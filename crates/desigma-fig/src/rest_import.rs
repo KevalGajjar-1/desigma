@@ -327,6 +327,14 @@ struct Ctx {
     /// `.fig` instance overrides / derived data, keyed by instance.
     overrides: BTreeMap<NodeId, Overrides>,
     next_clone: u64,
+    /// `.fig` override keys (`_overrideKey`): the id override paths use for a
+    /// node. Clones inherit the key of the node they copy.
+    override_keys: BTreeMap<NodeId, String>,
+    /// `.fig` `uniformScaleFactor` of instances made with the scale tool.
+    scales: BTreeMap<NodeId, f32>,
+    /// Library components and sets of `.fig` internal canvases: node ->
+    /// (`componentKey`, `sourceLibraryKey`).
+    library_keys: BTreeMap<NodeId, (String, Option<String>)>,
     /// Instance-swap property values naming a component by REST id:
     /// (node, property name, REST component id, is a definition default).
     pending_swaps: Vec<(NodeId, String, String, bool)>,
@@ -430,6 +438,9 @@ pub(crate) fn import_rest_value(v: &Value, expand_instances: bool) -> Result<Doc
         component_keys: BTreeMap::new(),
         overrides: BTreeMap::new(),
         next_clone: 0,
+        override_keys: BTreeMap::new(),
+        scales: BTreeMap::new(),
+        library_keys: BTreeMap::new(),
         pending_swaps: Vec::new(),
         rest_overrides: Vec::new(),
         proto: Vec::new(),
@@ -450,7 +461,19 @@ pub(crate) fn import_rest_value(v: &Value, expand_instances: bool) -> Result<Doc
     for p in pages {
         cx.import_page(p);
     }
+    // `.fig` internal-only canvases: what the file uses from libraries.
+    let library_pages = farr(v, "libraryPages");
+    if !library_pages.is_empty() {
+        let lib = ensure_library_page(&mut cx.doc);
+        let info = ParentInfo { origin: Vec2::ZERO, layout: None };
+        for p in library_pages {
+            for c in farr(p, "children") {
+                cx.import_node(c, lib, info, 0);
+            }
+        }
+    }
     cx.finish(expand_instances);
+    cx.register_library_assets();
     cx.link_remote_components(v);
     crate::variables::import_variables_value(&mut cx.doc, v);
     cx.doc.style_meta = style_meta(v.get("styles"), &cx.doc);
@@ -496,6 +519,12 @@ impl Ctx {
             self.ids.insert(src.clone(), id);
         }
         crate::proto::apply_scroll(&mut node, v);
+        if let Some(k) = fstr(v, "_overrideKey") {
+            self.override_keys.insert(id, k.to_string());
+        }
+        if let (Some(k), true) = (fstr(v, "componentKey"), matches!(node.kind, NodeKind::Component(_) | NodeKind::ComponentSet(_))) {
+            self.library_keys.insert(id, (k.to_string(), fstr(v, "sourceLibraryKey").map(String::from)));
+        }
         let is_instance = matches!(node.kind, NodeKind::Instance { .. });
         let origin = abs_origin(v).unwrap_or(pinfo.origin);
         let container = node.kind.is_container();
@@ -525,6 +554,9 @@ impl Ctx {
         if is_instance {
             if let Some(cid) = fstr(v, "componentId") {
                 self.instances.push((id, cid.to_string()));
+            }
+            if let Some(s) = fnum(v, "_uniformScale").filter(|s| *s > 0.0 && (*s - 1.0).abs() > 1e-4) {
+                self.scales.insert(id, s);
             }
             for e in farr(v, "overrides") {
                 if let Some(nid) = fstr(e, "id") {
@@ -955,6 +987,78 @@ impl Ctx {
             return;
         }
         let Some(&comp) = targets.get(&inst) else { return };
+        self.expand_nested(comp, targets, done);
+        self.expand_instance(inst, comp);
+        if let Some(s) = self.scales.get(&inst).copied() {
+            self.scale_contents(inst, s);
+        }
+        // Property values first: an instance swap changes which nodes the overrides address.
+        self.apply_props(inst, targets, done);
+        self.apply_overrides(inst);
+    }
+
+    /// Scales the copied children of an instance made with the scale tool
+    /// (`uniformScaleFactor`): positions, sizes, radii, strokes, text sizes,
+    /// layout spacing and geometry. Overrides and derived data are applied after.
+    fn scale_contents(&mut self, inst: NodeId, s: f32) {
+        fn scale_path(p: &mut Path, s: f32) {
+            let f = |v: &mut Vec2| *v = Vec2::new(v.x * s, v.y * s);
+            for c in &mut p.cmds {
+                match c {
+                    PathCmd::MoveTo(a) | PathCmd::LineTo(a) => f(a),
+                    PathCmd::QuadTo(a, b) => {
+                        f(a);
+                        f(b);
+                    }
+                    PathCmd::CubicTo(a, b, c) => {
+                        f(a);
+                        f(b);
+                        f(c);
+                    }
+                    PathCmd::Close => {}
+                }
+            }
+        }
+        let mut stack: Vec<NodeId> = self.doc.get(inst).map(|n| n.children.clone()).unwrap_or_default();
+        while let Some(d) = stack.pop() {
+            let Some(n) = self.doc.get_mut(d) else { continue };
+            stack.extend(n.children.iter().copied());
+            n.transform.tx *= s;
+            n.transform.ty *= s;
+            n.size = Vec2::new(n.size.x * s, n.size.y * s);
+            for r in &mut n.corner_radii {
+                *r *= s;
+            }
+            n.stroke.weight *= s;
+            for g in n.fill_geometry.iter_mut().chain(n.stroke_geometry.iter_mut()).flatten() {
+                scale_path(g, s);
+            }
+            match &mut n.kind {
+                NodeKind::Text(t) => {
+                    t.style.font_size *= s;
+                    for r in &mut t.runs {
+                        r.style.font_size *= s;
+                    }
+                }
+                NodeKind::Vector { paths, network } => {
+                    paths.iter_mut().for_each(|p| scale_path(p, s));
+                    if let Some(net) = network {
+                        *net = net.transformed(&Affine::scale(s, s));
+                    }
+                }
+                k => {
+                    if let Some(al) = k.frame_props_mut().and_then(|f| f.auto_layout.as_mut()) {
+                        al.item_spacing *= s;
+                        al.counter_spacing *= s;
+                        al.padding.iter_mut().for_each(|p| *p *= s);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Expands the instances inside `comp` (innermost first).
+    fn expand_nested(&mut self, comp: NodeId, targets: &BTreeMap<NodeId, NodeId>, done: &mut BTreeSet<NodeId>) {
         let mut stack = vec![comp];
         let mut nested = Vec::new();
         while let Some(n) = stack.pop() {
@@ -969,8 +1073,90 @@ impl Ctx {
         for n in nested {
             self.expand_rec(n, targets, done);
         }
-        self.expand_instance(inst, comp);
-        self.apply_overrides(inst);
+    }
+
+    /// Applies the instance's component property values to the nodes of its
+    /// copy that are bound to them: visibility, text, and instance swaps.
+    fn apply_props(&mut self, inst: NodeId, targets: &BTreeMap<NodeId, NodeId>, done: &mut BTreeSet<NodeId>) {
+        let values = match self.doc.get(inst) {
+            Some(n) if !n.component.values.is_empty() => n.component.values.clone(),
+            _ => return,
+        };
+        let mut stack: Vec<NodeId> = self.doc.get(inst).map(|n| n.children.clone()).unwrap_or_default();
+        while let Some(d) = stack.pop() {
+            let Some(n) = self.doc.get(d) else { continue };
+            stack.extend(n.children.iter().copied());
+            let bindings: Vec<(OverrideField, String)> = n.component.bindings.iter().map(|(f, p)| (*f, p.clone())).collect();
+            for (field, prop) in bindings {
+                match (field, values.get(&prop)) {
+                    (OverrideField::Visible, Some(PropValue::Bool(b))) => {
+                        if let Some(n) = self.doc.get_mut(d) {
+                            n.visible = *b;
+                        }
+                    }
+                    (OverrideField::Characters, Some(PropValue::Text(s))) => {
+                        if let Some(NodeKind::Text(t)) = self.doc.get_mut(d).map(|n| &mut n.kind) {
+                            t.content = s.clone();
+                            t.runs.clear();
+                            t.lists.clear();
+                        }
+                    }
+                    (OverrideField::MainComponent, Some(PropValue::Instance(target))) => self.swap_nested(d, *target, targets, done),
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    /// Points the nested instance `d` at `target` and rebuilds its children.
+    fn swap_nested(&mut self, d: NodeId, target: NodeId, targets: &BTreeMap<NodeId, NodeId>, done: &mut BTreeSet<NodeId>) {
+        let current = match self.doc.get(d).map(|n| &n.kind) {
+            Some(NodeKind::Instance { component, .. }) => *component,
+            _ => return,
+        };
+        if current == Some(target) || !matches!(self.doc.get(target).map(|n| &n.kind), Some(NodeKind::Component(_))) {
+            return;
+        }
+        self.expand_nested(target, targets, done);
+        for k in self.doc.get(d).map(|n| n.children.clone()).unwrap_or_default() {
+            let _ = self.doc.remove(k);
+        }
+        if let Some(NodeKind::Instance { component, component_key, .. }) = self.doc.get_mut(d).map(|n| &mut n.kind) {
+            *component = Some(target);
+            *component_key = None;
+        }
+        self.expand_instance(d, target);
+    }
+
+    /// `.fig` library components of internal-only canvases become external
+    /// assets of placeholder libraries (one per `sourceLibraryKey`), and the
+    /// instances using them learn their component key.
+    fn register_library_assets(&mut self) {
+        let Some(lp) = self.doc.library_page else { return };
+        let keys = std::mem::take(&mut self.library_keys);
+        for (node, (key, lib)) in &keys {
+            let Some(n) = self.doc.get(*node) else { continue };
+            let in_set = n.parent.and_then(|p| self.doc.get(p)).is_some_and(|p| matches!(p.kind, NodeKind::ComponentSet(_)));
+            if in_set || !self.doc.is_ancestor(lp, *node) {
+                continue;
+            }
+            let kind = if matches!(n.kind, NodeKind::ComponentSet(_)) { LibraryAssetKind::ComponentSet } else { LibraryAssetKind::Component };
+            let library_id = format!("{}{}", REMOTE_LIBRARY_PREFIX, lib.as_deref().unwrap_or("file"));
+            self.doc.library.external.insert(local_key(&library_id, key), ExternalAsset { library_id, version: 0, kind, node: Some(*node), local_key: None });
+        }
+        let insts: Vec<NodeId> = self.doc.nodes.values().filter(|n| matches!(n.kind, NodeKind::Instance { .. })).map(|n| n.id).collect();
+        for i in insts {
+            let comp = match self.doc.get(i).map(|n| &n.kind) {
+                Some(NodeKind::Instance { component: Some(c), .. }) => *c,
+                _ => continue,
+            };
+            if let Some((key, _)) = keys.get(&comp) {
+                if let Some(NodeKind::Instance { component_key, .. }) = self.doc.get_mut(i).map(|n| &mut n.kind) {
+                    component_key.get_or_insert_with(|| key.clone());
+                }
+            }
+        }
+        self.library_keys = keys;
     }
 
     /// Deep-copies the component's children under an empty instance.
@@ -1002,6 +1188,9 @@ impl Ctx {
         n.component.overrides.clear();
         n.component.props.clear();
         let container = n.kind.is_container();
+        if let Some(k) = self.override_keys.get(&src).cloned() {
+            self.override_keys.insert(id, k);
+        }
         if self.doc.insert(parent, n).is_err() {
             return;
         }
@@ -1034,14 +1223,20 @@ impl Ctx {
     /// `I<instance>;<original>`; only the part after the last `;` identifies the
     /// original node.
     fn resolve_path(&self, inst: NodeId, path: &[String]) -> Option<NodeId> {
-        fn tail(n: &Node) -> &str {
-            let s = n.source_id.as_deref().unwrap_or("");
-            s.rsplit(';').next().unwrap_or(s)
-        }
+        // `.fig` override paths use override keys; REST-derived ids use the tail of the source id.
+        let matches = |c: NodeId, g: &String| -> bool {
+            if let Some(k) = self.override_keys.get(&c) {
+                return k == g;
+            }
+            self.doc.get(c).is_some_and(|n| {
+                let s = n.source_id.as_deref().unwrap_or("");
+                s.rsplit(';').next().unwrap_or(s) == g
+            })
+        };
         let mut cur = inst;
         for g in path {
             let node = self.doc.get(cur)?;
-            let direct = node.children.iter().copied().find(|c| self.doc.get(*c).map(|n| tail(n) == g).unwrap_or(false));
+            let direct = node.children.iter().copied().find(|c| matches(*c, g));
             cur = match direct {
                 Some(c) => c,
                 None => {
@@ -1050,7 +1245,7 @@ impl Ctx {
                     let mut found = None;
                     while let Some(n) = stack.pop() {
                         let Some(nn) = self.doc.get(n) else { continue };
-                        if tail(nn) == g {
+                        if matches(n, g) {
                             found = Some(n);
                             break;
                         }

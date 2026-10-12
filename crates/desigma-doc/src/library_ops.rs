@@ -605,7 +605,8 @@ fn match_trees(doc: &Document, local: NodeId, snap: &LibrarySnapshot, sroot: Nod
     }
 }
 
-fn ensure_library_page(doc: &mut Document) -> NodeId {
+/// The hidden library page, created on first use.
+pub fn ensure_library_page(doc: &mut Document) -> NodeId {
     if let Some(p) = doc.library_page.filter(|p| doc.nodes.contains_key(p)) {
         return p;
     }

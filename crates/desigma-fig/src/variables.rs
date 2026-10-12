@@ -305,9 +305,32 @@ fn guid(v: &Value) -> Option<String> {
     Some(format!("{}:{}", g.get("sessionID")?.as_u64()?, g.get("localID")?.as_u64()?))
 }
 
-fn fig_value(ty: &str, v: &Value) -> Option<Value> {
+/// Id lookups for `.fig` variables: library assets are referenced by
+/// `{assetRef: {key}}` (the target node's `key`), local ones by `{guid}`.
+struct Refs<'a> {
+    sets: BTreeMap<&'a str, String>,
+    vars: BTreeMap<&'a str, String>,
+}
+
+impl Refs<'_> {
+    fn set(&self, r: &Value) -> Option<String> {
+        match crate::fig::asset_key(r) {
+            Some(k) => self.sets.get(k).cloned(),
+            None => Some(format!("VariableCollectionId:{}", guid(r)?)),
+        }
+    }
+
+    fn var(&self, r: &Value) -> Option<String> {
+        match crate::fig::asset_key(r) {
+            Some(k) => self.vars.get(k).cloned(),
+            None => Some(format!("VariableID:{}", guid(r)?)),
+        }
+    }
+}
+
+fn fig_value(ty: &str, v: &Value, refs: &Refs) -> Option<Value> {
     if let Some(a) = v.get("alias") {
-        return Some(json!({"type": "VARIABLE_ALIAS", "id": format!("VariableID:{}", guid(a)?)}));
+        return Some(json!({"type": "VARIABLE_ALIAS", "id": refs.var(a)?}));
     }
     match ty {
         "COLOR" => v.get("colorValue").cloned(),
@@ -319,9 +342,23 @@ fn fig_value(ty: &str, v: &Value) -> Option<Value> {
 }
 
 /// Builds a REST-shaped variables payload from the `VARIABLE_SET` and
-/// `VARIABLE` node changes of a `.fig` message (given as JSON). Field names
-/// are best-effort; anything that does not match is skipped.
+/// `VARIABLE` node changes of a `.fig` message (given as JSON).
+///
+/// A set has `variableSetModes: [{id, name, sortPosition}]`. A variable has
+/// `variableSetID` (an `assetRef` to the set's `key`, or a local `guid`),
+/// `variableResolvedType` (COLOR / FLOAT / STRING / BOOLEAN),
+/// `variableScopes` and `variableDataValues.entries: [{modeID, variableData}]`
+/// where `variableData.value` is `colorValue`, `floatValue`, `textValue`,
+/// `boolValue` or `alias`.
 pub(crate) fn from_fig_entries(entries: &[&Value]) -> Option<Value> {
+    let mut refs = Refs { sets: BTreeMap::new(), vars: BTreeMap::new() };
+    for e in entries {
+        let (Some(key), Some(gid)) = (fstr(e, "key").filter(|k| !k.is_empty()), e.get("guid").and_then(guid)) else { continue };
+        match fstr(e, "type") {
+            Some("VARIABLE_SET") => refs.sets.insert(key, format!("VariableCollectionId:{gid}")),
+            _ => refs.vars.insert(key, format!("VariableID:{gid}")),
+        };
+    }
     let mut colls = Map::new();
     let mut vars = Map::new();
     for e in entries {
@@ -330,29 +367,35 @@ pub(crate) fn from_fig_entries(entries: &[&Value]) -> Option<Value> {
         }
         let Some(gid) = e.get("guid").and_then(guid) else { continue };
         let id = format!("VariableCollectionId:{gid}");
-        let modes: Vec<Value> = farr(e, "variableSetModes")
+        let mut modes: Vec<(&str, Value)> = farr(e, "variableSetModes")
             .iter()
-            .filter_map(|m| Some(json!({"modeId": guid(m.get("id")?)?, "name": fstr(m, "name").unwrap_or("Mode")})))
+            .filter_map(|m| Some((fstr(m, "sortPosition").unwrap_or(""), json!({"modeId": guid(m.get("id")?)?, "name": fstr(m, "name").unwrap_or("Mode")}))))
             .collect();
+        modes.sort_by(|a, b| a.0.cmp(b.0));
+        let modes: Vec<Value> = modes.into_iter().map(|m| m.1).collect();
         let default = modes.first().and_then(|m| m.get("modeId")).cloned().unwrap_or(Value::Null);
-        colls.insert(
-            id.clone(),
-            json!({"id": id, "name": fstr(e, "name").unwrap_or("Collection"), "modes": modes, "defaultModeId": default, "variableIds": []}),
-        );
-    }
-    for e in entries {
-        if fstr(e, "type") != Some("VARIABLE") {
-            continue;
+        let mut c = json!({"id": id, "name": fstr(e, "name").unwrap_or("Collection"), "modes": modes, "defaultModeId": default, "variableIds": []});
+        if let Some(k) = fstr(e, "key").filter(|k| !k.is_empty()) {
+            c["key"] = k.into();
         }
+        colls.insert(id, c);
+    }
+    let mut order: Vec<(&str, &Value)> =
+        entries.iter().filter(|e| fstr(e, "type") == Some("VARIABLE")).map(|e| (fstr(e, "sortPosition").unwrap_or(""), *e)).collect();
+    order.sort_by(|a, b| a.0.cmp(b.0));
+    for (_, e) in order {
         let Some(gid) = e.get("guid").and_then(guid) else { continue };
-        let Some(set) = e.get("variableSetID").and_then(guid) else { continue };
-        let cid = format!("VariableCollectionId:{set}");
+        let cid = e
+            .get("variableSetID")
+            .and_then(|s| refs.set(s))
+            .or_else(|| e.get("parentIndex").and_then(|p| p.get("guid")).and_then(guid).map(|g| format!("VariableCollectionId:{g}")));
+        let Some(cid) = cid else { continue };
         let Some(ty) = fstr(e, "variableResolvedType").or_else(|| fstr(e, "variableDataType")) else { continue };
         let mut by_mode = Map::new();
         let list = e.get("variableDataValues").map(|d| farr(d, "entries")).unwrap_or(&[]);
         for ent in list {
             let (Some(mode), Some(data)) = (ent.get("modeID").and_then(guid), ent.get("variableData")) else { continue };
-            let Some(val) = data.get("value").and_then(|x| fig_value(ty, x)) else { continue };
+            let Some(val) = data.get("value").and_then(|x| fig_value(ty, x, &refs)) else { continue };
             by_mode.insert(mode, val);
         }
         let id = format!("VariableID:{gid}");
@@ -361,12 +404,13 @@ pub(crate) fn from_fig_entries(entries: &[&Value]) -> Option<Value> {
         } else {
             continue;
         }
-        vars.insert(
-            id.clone(),
-            json!({"id": id, "name": fstr(e, "name").unwrap_or("Variable"), "variableCollectionId": cid, "resolvedType": ty,
+        let mut v = json!({"id": id, "name": fstr(e, "name").unwrap_or("Variable"), "variableCollectionId": cid, "resolvedType": ty,
                    "valuesByMode": by_mode, "scopes": e.get("variableScopes").cloned().unwrap_or(json!([])),
-                   "description": fstr(e, "description").unwrap_or(""), "hiddenFromPublishing": false}),
-        );
+                   "description": fstr(e, "description").unwrap_or(""), "hiddenFromPublishing": false});
+        if let Some(k) = fstr(e, "key").filter(|k| !k.is_empty()) {
+            v["key"] = k.into();
+        }
+        vars.insert(id, v);
     }
     (!colls.is_empty()).then(|| json!({"variables": vars, "variableCollections": colls}))
 }

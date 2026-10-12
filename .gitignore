@@ -8,3 +8,6 @@
 
 # Figma UI captures: local pixel references only, not redistributed
 /reference/screens/
+
+# Private design files used for local import checks: never committed
+/reference/*.fig
