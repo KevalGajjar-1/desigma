@@ -4,7 +4,7 @@ What the importer reads from the kiwi `NodeChange` messages, and whether each
 name has been seen in a real file. Only field names and value shapes are
 recorded here; nothing from the files' content.
 
-Real files checked: a library-heavy product UI kit file (`dray-insight.fig`,
+Real files checked: a library-heavy product UI kit file (`private-ui-kit.fig`,
 about 11k node changes, 7 libraries, 112 variables) and the shadcn/ui community
 file (`shadcn-ui.fig`, about 5.4k node changes, everything local). Both are
 private local copies and are never committed. "Confirmed" means seen in at

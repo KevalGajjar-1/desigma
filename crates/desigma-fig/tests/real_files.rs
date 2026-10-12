@@ -29,10 +29,10 @@ fn subtree(doc: &Document, root: NodeId) -> Vec<&Node> {
 }
 
 #[test]
-#[ignore = "needs the private reference/dray-insight.fig"]
-fn dray_insight_imports_with_library_instances_resolved() {
-    let Some(bytes) = reference("dray-insight.fig") else {
-        eprintln!("dray-insight.fig not found: skipped");
+#[ignore = "needs the private reference/private-ui-kit.fig"]
+fn private_ui_kit_imports_with_library_instances_resolved() {
+    let Some(bytes) = reference("private-ui-kit.fig") else {
+        eprintln!("private-ui-kit.fig not found: skipped");
         return;
     };
     let doc = import_fig(&bytes).expect("import");

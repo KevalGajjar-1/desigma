@@ -28,7 +28,7 @@ fn shape(doc: &mut Document, parent: NodeId, n: Node, name: &str, radius: f32) -
 /// Blank document matching the Figma "nothing selected" reference capture: a near-black
 /// page and a single gradient colour style (used by `--fixture no-selection`).
 pub fn reference_document() -> Document {
-    let mut d = Document::new("Dray Insight");
+    let mut d = Document::new("Product UI Kit");
     let page = d.add_page("UI Kit");
     if let Some(n) = d.nodes.get_mut(&page) {
         n.kind = NodeKind::Page { background: Color::rgb(0x1E, 0x1E, 0x1E) };
@@ -43,7 +43,7 @@ pub fn reference_document() -> Document {
 /// Document of the Figma local-variables reference capture (`--fixture variables`): one
 /// collection "Variable collection" with six colour variables.
 pub fn variables_document() -> Document {
-    let mut d = Document::new("Dray Insight - Design Project");
+    let mut d = Document::new("Product UI Kit - Design Project");
     d.add_page("Page 1");
     let mut store = VariableStore::default();
     let coll = store.add_collection("Variable collection");

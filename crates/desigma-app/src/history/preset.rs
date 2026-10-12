@@ -15,8 +15,8 @@ pub fn apply(app: &mut App, library: Option<PathBuf>) {
     let Some(lib) = app.lib.clone() else { return };
     let Some(project) = lib.list_projects().first().map(|p| p.id.clone()) else { return };
     let mut doc = crate::demo::demo_document();
-    doc.name = "Dray Insight".into();
-    let Ok(entry) = lib.create_file(&project, None, "Dray Insight", &doc) else { return };
+    doc.name = "Product UI Kit".into();
+    let Ok(entry) = lib.create_file(&project, None, "Product UI Kit", &doc) else { return };
     // older states have fewer layers, so versions differ
     let mut older = doc.clone();
     let drop: Vec<_> = older.nodes.values().filter(|n| matches!(n.name.as_str(), "Progress" | "Avatar")).map(|n| n.id).collect();

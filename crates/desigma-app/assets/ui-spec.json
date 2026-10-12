@@ -92,7 +92,7 @@
       "content_top": 81,
       "section": { "title_font": "body_medium strong", "title_height": 40, "padding_x": 16, "action_button": { "size": 24, "radius": 5, "right_pad": 8 } },
       "input": { "height": 24, "radius": 5, "font": "body_medium", "bg": "bg_secondary", "hover_border": "border" },
-      "_selection_note": "x values below are relative to the panel's left edge (the 1px border is at x=0). Measured from the Dray Insight file with an instance selected.",
+      "_selection_note": "x values below are relative to the panel's left edge (the 1px border is at x=0). Measured from a reference design file with an instance selected.",
       "selection_header": {
         "y": 93,
         "name_field": { "x": 9, "w": 136, "h": 24, "font": "body_large", "radius": 5, "bg": "bg" },

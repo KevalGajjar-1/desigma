@@ -411,7 +411,7 @@
         "bg": "bg_secondary",
         "hover_border": "border"
       },
-      "_selection_note": "x values below are relative to the panel's left edge (the 1px border is at x=0). Measured from the Dray Insight file with an instance selected.",
+      "_selection_note": "x values below are relative to the panel's left edge (the 1px border is at x=0). Measured from a reference design file with an instance selected.",
       "selection_header": {
         "y": 93,
         "name_field": {
