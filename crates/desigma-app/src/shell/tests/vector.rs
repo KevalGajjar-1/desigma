@@ -460,6 +460,35 @@ fn vertices_move_with_the_arrow_keys_and_delete_removes_them() {
     assert_eq!(network(&s, id).vertices.len(), 2, "the path is joined over the deleted vertex");
 }
 
+#[test]
+fn double_clicking_a_rectangle_enters_vertex_editing() {
+    let mut s = Sim::new();
+    let r = add_rect(&mut s, "Plain", 300.0, 800.0, 200.0, 150.0);
+    let p = at(&s, 400.0, 880.0);
+    s.click(p);
+    s.click(p);
+    assert_eq!(s.app().canvas.vedit.as_ref().map(|v| v.id), Some(r), "double-click edits the shape");
+    assert_eq!(s.app().canvas.vedit.as_ref().unwrap().net.vertices.len(), 4);
+    assert!(matches!(s.app().doc.get(r).unwrap().kind, NodeKind::Rectangle), "entering alone converts nothing");
+}
+
+#[test]
+fn double_clicking_inside_a_group_selects_the_child_before_editing_it() {
+    let mut s = Sim::new();
+    let a = add_rect(&mut s, "In group", 300.0, 800.0, 200.0, 150.0);
+    let b = add_rect(&mut s, "Other", 560.0, 800.0, 100.0, 150.0);
+    s.shell.app.selection = vec![a, b];
+    s.shell.app.group_selection(false);
+    let p = at(&s, 400.0, 880.0);
+    s.click(p);
+    assert_ne!(s.app().selection, vec![a], "the first click selects the group");
+    s.click(p);
+    assert_eq!(s.app().selection, vec![a], "the double-click steps into the group");
+    assert!(s.app().canvas.vedit.is_none(), "stepping into the group does not start editing");
+    s.key(Key::Enter);
+    assert_eq!(s.app().canvas.vedit.as_ref().map(|v| v.id), Some(a), "Enter edits the selected shape");
+}
+
 // ---------------------------------------------------------------- flatten, outline, boolean
 #[test]
 fn flatten_merges_a_boolean_group_into_one_vector() {

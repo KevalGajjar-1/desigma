@@ -771,7 +771,8 @@ fn on_double_click(app: &mut App, rect: ERect, inp: &Inp) {
         let is_text = matches!(app.doc.get(id).map(|n| &n.kind), Some(NodeKind::Text(_)));
         if is_text {
             begin_text_edit(app, id);
-        } else if vector::is_vector(app, id) {
+        } else if vector::is_vector(app, id) && (app.is_selected(id) || matches!(app.doc.get(id).map(|n| &n.kind), Some(NodeKind::Vector { .. }))) {
+            // vectors open right away; basic shapes first get selected (stepping into their group)
             vector::enter(app, id);
         } else if app.is_selected(id) {
             // already the deepest hit: nothing further to enter

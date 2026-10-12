@@ -255,7 +255,7 @@ pub fn is_vector(app: &App, id: NodeId) -> bool {
 /// The network of a node: the stored one, or one derived from its geometry.
 pub fn network_of(app: &App, n: &Node) -> Option<VectorNetwork> {
     let net = match &n.kind {
-        NodeKind::Vector { network: Some(net), .. } => net.clone(),
+        NodeKind::Vector { network: Some(net), .. } if net.is_valid() => net.clone(),
         NodeKind::Vector { paths, .. } => VectorNetwork::from_paths(paths),
         _ => VectorNetwork::from_paths(&desigma_render::vectorops::node_paths(&app.doc, n)?),
     };

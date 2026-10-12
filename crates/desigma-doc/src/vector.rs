@@ -118,6 +118,16 @@ impl VectorNetwork {
         self.segments.is_empty() && self.vertices.is_empty()
     }
 
+    /// Whether every index is in range and every number finite. Deserialised or imported
+    /// networks are checked with this before anything indexes into them.
+    pub fn is_valid(&self) -> bool {
+        let (nv, ns) = (self.vertices.len(), self.segments.len());
+        let ok = |p: Vec2| p.x.is_finite() && p.y.is_finite();
+        self.vertices.iter().all(|v| ok(v.pos) && v.corner_radius.is_finite())
+            && self.segments.iter().all(|s| s.a < nv && s.b < nv && ok(s.ta) && ok(s.tb))
+            && self.regions.iter().all(|r| r.loops.iter().flatten().all(|i| *i < ns))
+    }
+
     pub fn pos(&self, v: usize) -> Vec2 {
         self.vertices[v].pos
     }
@@ -423,6 +433,9 @@ impl VectorNetwork {
     /// Regions and stroke-only chains, with corner radii applied: the filled
     /// loops (one `Path` per region) and the rest as one open/closed set.
     pub fn to_paths_split(&self) -> (Vec<Path>, Option<Path>) {
+        if !self.is_valid() {
+            return (vec![], None);
+        }
         let mut regions = vec![];
         let mut covered = vec![false; self.segments.len()];
         for r in &self.regions {
@@ -574,7 +587,7 @@ impl VectorNetwork {
             let prev = (k + n - 1) % n;
             let vtx = starts[k];
             let r = self.vertices[vtx].corner_radius;
-            if r <= EPS {
+            if r.is_nan() || r <= EPS {
                 continue;
             }
             let cp = &cubics[prev];
@@ -1004,7 +1017,7 @@ impl VectorNetwork {
     /// All bounded areas of the planar network, holes included.
     pub fn faces(&self) -> Vec<Face> {
         let ns = self.segments.len();
-        if ns == 0 {
+        if ns == 0 || !self.is_valid() {
             return vec![];
         }
         // half-edge h: segment h/2, forward when h even
@@ -1038,31 +1051,11 @@ impl VectorNetwork {
             let i = list.iter().position(|x| *x == twin).unwrap_or(0);
             list[(i + list.len() - 1) % list.len()]
         };
-        // component of every segment
-        let mut comp: Vec<usize> = (0..self.vertices.len()).collect();
-        fn find(c: &mut [usize], x: usize) -> usize {
-            let mut r = x;
-            while c[r] != r {
-                r = c[r];
-            }
-            let mut y = x;
-            while c[y] != r {
-                let n = c[y];
-                c[y] = r;
-                y = n;
-            }
-            r
-        }
-        for s in &self.segments {
-            let (a, b) = (find(&mut comp, s.a), find(&mut comp, s.b));
-            comp[a] = b;
-        }
         let mut visited = vec![false; ns * 2];
         struct Cycle {
             segs: Vec<usize>,
             poly: Vec<Vec2>,
             area: f32,
-            comp: usize,
         }
         let mut cycles: Vec<Cycle> = vec![];
         for h0 in 0..ns * 2 {
@@ -1079,57 +1072,44 @@ impl VectorNetwork {
                     break;
                 }
             }
-            // strip spikes: a half-edge immediately followed by its twin
-            let mut changed = true;
-            while changed && hs.len() >= 2 {
-                changed = false;
-                let n = hs.len();
-                for i in 0..n {
-                    if hs[(i + 1) % n] == hs[i] ^ 1 {
-                        let (a, b) = (i, (i + 1) % n);
-                        let mut keep = vec![];
-                        for (k, x) in hs.iter().enumerate() {
-                            if k != a && k != b {
-                                keep.push(*x);
-                            }
-                        }
-                        hs = keep;
-                        changed = true;
-                        break;
-                    }
+            // a bridge or dangling segment is walked there and back: cut the walk apart at
+            // every such pair so that each piece is one simple boundary
+            let mut pieces: Vec<Vec<usize>> = vec![];
+            split_walk(hs, &mut pieces);
+            for hs in pieces {
+                if hs.is_empty() {
+                    continue;
                 }
+                let mut poly = vec![];
+                for &h in &hs {
+                    let c = self.oriented_cubic((h / 2, h % 2 == 1));
+                    poly.push(c[0]);
+                    let mut pts = vec![];
+                    flatten_cubic(&c, 0.25, &mut pts);
+                    pts.pop();
+                    poly.extend(pts);
+                }
+                let mut area = 0.0;
+                for i in 0..poly.len() {
+                    let (p, q) = (poly[i], poly[(i + 1) % poly.len()]);
+                    area += cross(p, q);
+                }
+                area *= 0.5;
+                cycles.push(Cycle { segs: hs.iter().map(|h| h / 2).collect(), poly, area });
             }
-            if hs.is_empty() {
-                continue;
-            }
-            let mut poly = vec![];
-            for &h in &hs {
-                let c = self.oriented_cubic((h / 2, h % 2 == 1));
-                poly.push(c[0]);
-                let mut pts = vec![];
-                flatten_cubic(&c, 0.25, &mut pts);
-                pts.pop();
-                poly.extend(pts);
-            }
-            let mut area = 0.0;
-            for i in 0..poly.len() {
-                let (p, q) = (poly[i], poly[(i + 1) % poly.len()]);
-                area += cross(p, q);
-            }
-            area *= 0.5;
-            let c = find(&mut comp, self.segments[hs[0] / 2].a);
-            cycles.push(Cycle { segs: hs.iter().map(|h| h / 2).collect(), poly, area, comp: c });
         }
-        let mut faces: Vec<(Face, usize, Vec<Vec2>)> = vec![];
+        let mut faces: Vec<(Face, Vec<Vec2>)> = vec![];
         for c in cycles.iter().filter(|c| c.area > 1e-3) {
-            faces.push((Face { loops: vec![c.segs.clone()], area: c.area }, c.comp, c.poly.clone()));
+            faces.push((Face { loops: vec![c.segs.clone()], area: c.area }, c.poly.clone()));
         }
-        // holes: the outer boundary of another component inside a face
+        // holes: a clockwise boundary (the outside of a component) lies in the smallest face
+        // that does not share a segment with it; the faces sharing segments are its own inside
         for c in cycles.iter().filter(|c| c.area < -1e-3) {
-            let probe = c.poly[0];
+            let probe = if c.poly.len() >= 2 { lerp(c.poly[0], c.poly[1], 0.5) } else { c.poly[0] };
             let mut best: Option<usize> = None;
-            for (i, (f, comp_f, poly)) in faces.iter().enumerate() {
-                if *comp_f == c.comp || !point_in_polygon(probe, poly) {
+            for (i, (f, poly)) in faces.iter().enumerate() {
+                let shares = f.loops.iter().flatten().any(|s| c.segs.contains(s));
+                if shares || !point_in_polygon(probe, poly) {
                     continue;
                 }
                 if best.is_none_or(|b| f.area < faces[b].0.area) {
@@ -1140,7 +1120,7 @@ impl VectorNetwork {
                 faces[i].0.loops.push(c.segs.clone());
             }
         }
-        faces.into_iter().map(|(f, _, _)| f).collect()
+        faces.into_iter().map(|(f, _)| f).collect()
     }
 
     /// Flattened contours of a face (outer boundary first), for hit testing and drawing.
@@ -1342,6 +1322,27 @@ impl VectorNetwork {
         self.compact();
         before.saturating_sub(self.vertices.len())
     }
+}
+
+/// Splits a closed walk of half-edges at every pair that traverses a segment both ways
+/// (half-edge `h` and its twin `h ^ 1`): the walk between them is the boundary of whatever
+/// hangs off the segment, the rest continues around the face.
+fn split_walk(hs: Vec<usize>, out: &mut Vec<Vec<usize>>) {
+    let pos: std::collections::HashMap<usize, usize> = hs.iter().enumerate().map(|(i, h)| (*h, i)).collect();
+    for (i, h) in hs.iter().enumerate() {
+        if let Some(&j) = pos.get(&(h ^ 1)) {
+            if j != i {
+                let (a, b) = (i.min(j), i.max(j));
+                let inner = hs[a + 1..b].to_vec();
+                let mut outer = hs[..a].to_vec();
+                outer.extend_from_slice(&hs[b + 1..]);
+                split_walk(inner, out);
+                split_walk(outer, out);
+                return;
+            }
+        }
+    }
+    out.push(hs);
 }
 
 /// First direction (unit) from `origin` towards the first candidate that is not on it.
@@ -1901,6 +1902,96 @@ mod tests {
         }]);
         let b = n.bounds();
         assert!(b.h > 40.0 && b.w >= 99.9);
+    }
+
+    fn assert_consistent(net: &VectorNetwork, what: &str) {
+        assert!(net.is_valid(), "{what}: indices out of range: {net:?}");
+        for r in &net.regions {
+            for l in &r.loops {
+                assert!(net.orient_loop(l).is_some(), "{what}: a region loop is not a closed traversal: {l:?} in {net:?}");
+            }
+        }
+        // nothing derived may panic
+        let _ = (net.to_paths(), net.bounds(), net.faces(), net.open_chain_ends());
+    }
+
+    #[test]
+    fn random_edit_sequences_keep_the_network_consistent() {
+        let mut seed = 0x1234_5678_9abc_def0u64;
+        let mut rnd = |n: usize| -> usize {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            ((seed >> 33) as usize) % n.max(1)
+        };
+        for round in 0..60 {
+            let mut net = match round % 3 {
+                0 => two_squares(),
+                1 => VectorNetwork::from_paths(&[rect_path(0.0, 0.0, 100.0, 100.0), rect_path(30.0, 30.0, 40.0, 40.0)]),
+                _ => VectorNetwork::from_paths(&[line_path(&[v(0.0, 0.0), v(40.0, 10.0), v(80.0, 0.0), v(100.0, 50.0)]), rect_path(10.0, 60.0, 50.0, 30.0)]),
+            };
+            for step in 0..80 {
+                let (nv, ns) = (net.vertices.len(), net.segments.len());
+                let mut what = format!("round {round} step {step}");
+                let op = rnd(10);
+                what.push_str(&format!(" op {op} on {nv}v/{ns}s before: {net:?}"));
+                match op {
+                    0 if ns > 0 => {
+                        net.split_segment(rnd(ns), 0.1 + 0.8 * rnd(100) as f32 / 100.0);
+                    }
+                    1 if nv > 0 => net.delete_vertex(rnd(nv)),
+                    2 if nv > 1 => {
+                        let (a, b) = (rnd(nv), rnd(nv));
+                        net.join_vertices(a, b);
+                    }
+                    3 if ns > 0 => {
+                        net.cut_at(rnd(ns), 0.5);
+                    }
+                    4 if nv > 0 => {
+                        net.split_vertex(rnd(nv));
+                    }
+                    5 => {
+                        net.simplify(0.5 + rnd(4) as f32);
+                    }
+                    6 if nv > 1 => {
+                        net.connect(rnd(nv), rnd(nv));
+                    }
+                    7 => {
+                        if let Some(f) = net.face_at(v(rnd(100) as f32, rnd(100) as f32)) {
+                            net.toggle_face(&f);
+                        }
+                    }
+                    8 if ns > 0 => net.delete_segment(rnd(ns)),
+                    _ if nv > 0 => {
+                        let i = rnd(nv);
+                        net.vertices[i].corner_radius = rnd(30) as f32;
+                        let ends = net.ends_at(i);
+                        if let Some(&(s, e)) = ends.first() {
+                            net.set_tangent(s, e, v(rnd(40) as f32 - 20.0, rnd(40) as f32 - 20.0));
+                            net.enforce_mirror(s, e);
+                        }
+                    }
+                    _ => {}
+                }
+                net.compact();
+                assert_consistent(&net, &what);
+            }
+        }
+    }
+
+    #[test]
+    fn broken_networks_derive_nothing_instead_of_panicking() {
+        let mut net = two_squares();
+        net.segments[0].b = 99;
+        assert!(!net.is_valid());
+        assert!(net.to_paths().is_empty() && net.faces().is_empty());
+        let mut net = two_squares();
+        net.regions.push(Region { rule: FillRule::NonZero, loops: vec![vec![42]] });
+        assert!(!net.is_valid());
+        let mut net = two_squares();
+        net.vertices[0].pos = v(f32::NAN, 0.0);
+        assert!(!net.is_valid());
+        let mut net = VectorNetwork::from_paths(&[rect_path(0.0, 0.0, 10.0, 10.0)]);
+        net.vertices[1].corner_radius = f32::NAN;
+        assert!(!net.is_valid(), "a NaN radius is not a valid network");
     }
 
     #[test]

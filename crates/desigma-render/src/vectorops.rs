@@ -261,7 +261,7 @@ fn cap_polygons(sub: &d::Path, w: f32, start_cap: d::StrokeCap, end_cap: d::Stro
 /// carry their own stroke caps; `None` when no vertex overrides the cap.
 pub fn vertex_caps(n: &Node) -> Option<Vec<d::Path>> {
     let NodeKind::Vector { network: Some(net), .. } = &n.kind else { return None };
-    if !net.vertices.iter().any(|v| v.cap.is_some()) || n.stroke.weight <= 0.0 {
+    if !net.is_valid() || !net.vertices.iter().any(|v| v.cap.is_some()) || n.stroke.weight <= 0.0 {
         return None;
     }
     let ends = net.open_chain_ends();

@@ -459,7 +459,7 @@ fn derived_shape(doc: &Document, n: &Node, tol: f32) -> Option<Shape> {
             if s.paths.is_empty() {
                 return None;
             }
-            if let Some(net) = network {
+            if let Some(net) = network.as_ref().filter(|n| n.is_valid()) {
                 if net.has_stroke_only_segments() {
                     s.fill_only = Some(vector_paths(&net.fill_paths()).paths);
                 }
