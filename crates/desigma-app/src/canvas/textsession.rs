@@ -33,11 +33,14 @@ pub struct TextSession {
     pub preedit: Option<Range<usize>>,
     /// The pointer is dragging a selection.
     pub dragging: bool,
+    /// Where the caret is drawn when its offset has two places on screen (the boundary of a
+    /// right-to-left and a left-to-right run): set by clicks and arrow keys, cleared by edits.
+    pub hint_x: Option<f32>,
 }
 
 impl TextSession {
     pub fn new(id: NodeId, caret: usize, anchor: usize, tx: Tx, created: bool) -> Self {
-        Self { id, caret, anchor, tx, created, goal_x: None, typing: None, log: UndoLog::default(), preedit: None, dragging: false }
+        Self { id, caret, anchor, tx, created, goal_x: None, typing: None, log: UndoLog::default(), preedit: None, dragging: false, hint_x: None }
     }
 
     /// Selected byte range (empty when only a caret).
@@ -115,10 +118,21 @@ pub fn node_contains(app: &App, id: NodeId, page: DV) -> bool {
 
 /// Byte offset under the page-space point in the edited node.
 fn hit_at(app: &App, page: DV) -> Option<usize> {
+    hit_stop_at(app, page).map(|h| h.0)
+}
+
+/// Like [`hit_at`] with the x of the caret stop that was hit.
+fn hit_stop_at(app: &App, page: DV) -> Option<(usize, f32)> {
     let id = app.canvas.text.as_ref()?.id;
     let l = to_local(app, id, page)?;
     let (t, size) = props_of(app)?;
-    Some(tm::hit_caret(&t, size, l.x, l.y))
+    Some(tm::hit_stop(&t, size, l.x, l.y))
+}
+
+fn set_hint(app: &mut App, x: f32) {
+    if let Some(s) = app.canvas.text.as_mut() {
+        s.hint_x = Some(x);
+    }
 }
 
 // ------------------------------------------------------------------ selection
@@ -126,6 +140,7 @@ fn set_sel(app: &mut App, caret: usize, anchor: usize, keep_goal: bool) {
     let Some(s) = app.canvas.text.as_mut() else { return };
     s.caret = caret;
     s.anchor = anchor;
+    s.hint_x = None;
     if !keep_goal {
         s.goal_x = None;
     }
@@ -136,9 +151,10 @@ fn set_sel(app: &mut App, caret: usize, anchor: usize, keep_goal: bool) {
 
 /// Press at `page`: places the caret (Shift extends) and starts a drag selection.
 pub fn press_at(app: &mut App, page: DV, shift: bool) {
-    let Some(at) = hit_at(app, page) else { return };
+    let Some((at, x)) = hit_stop_at(app, page) else { return };
     let anchor = if shift { app.canvas.text.as_ref().map(|s| s.anchor).unwrap_or(at) } else { at };
     set_sel(app, at, anchor, false);
+    set_hint(app, x);
     if let Some(s) = app.canvas.text.as_mut() {
         s.dragging = true;
     }
@@ -146,9 +162,10 @@ pub fn press_at(app: &mut App, page: DV, shift: bool) {
 
 /// Pointer moved while dragging a selection.
 pub fn drag_to(app: &mut App, page: DV) {
-    let Some(at) = hit_at(app, page) else { return };
+    let Some((at, x)) = hit_stop_at(app, page) else { return };
     let anchor = app.canvas.text.as_ref().map(|s| s.anchor).unwrap_or(at);
     set_sel(app, at, anchor, false);
+    set_hint(app, x);
 }
 
 /// Double-click: selects the word under the pointer.
@@ -176,25 +193,49 @@ fn select_all(app: &mut App) {
 fn move_caret(app: &mut App, key: egui::Key, shift: bool, ctrl: bool) {
     let Some((t, size)) = props_of(app) else { return };
     let Some(sess) = app.canvas.text.as_ref() else { return };
-    let (caret, anchor, goal) = (sess.caret, sess.anchor, sess.goal_x);
+    let (caret, anchor, goal, hint) = (sess.caret, sess.anchor, sess.goal_x, sess.hint_x);
     let range = sess.range();
     let c = &t.content;
     let mut keep_goal = false;
+    let mut new_hint = None;
+    // Left / Right follow the screen: inside a right-to-left run they go forward in the text.
+    let rtl = matches!(key, egui::Key::ArrowLeft | egui::Key::ArrowRight) && tm::run_rtl(&t, size, caret);
     let target = match key {
-        egui::Key::ArrowLeft if !shift && !range.is_empty() => range.start,
-        egui::Key::ArrowRight if !shift && !range.is_empty() => range.end,
-        egui::Key::ArrowLeft => {
-            if ctrl {
-                te::prev_word(c, caret)
+        egui::Key::ArrowLeft if !shift && !range.is_empty() => {
+            if rtl {
+                range.end
             } else {
-                te::prev_grapheme(c, caret)
+                range.start
             }
         }
-        egui::Key::ArrowRight => {
-            if ctrl {
-                te::next_word(c, caret)
+        egui::Key::ArrowRight if !shift && !range.is_empty() => {
+            if rtl {
+                range.start
             } else {
-                te::next_grapheme(c, caret)
+                range.end
+            }
+        }
+        egui::Key::ArrowLeft | egui::Key::ArrowRight => {
+            let dir = if key == egui::Key::ArrowLeft { -1 } else { 1 };
+            // logical direction of travel at the caret
+            let forward = (dir > 0) != rtl;
+            if ctrl {
+                if forward {
+                    te::next_word(c, caret)
+                } else {
+                    te::prev_word(c, caret)
+                }
+            } else if let Some((at, x)) = tm::move_visual(&t, size, caret, hint, dir) {
+                new_hint = Some(x);
+                at
+            } else {
+                // at the end of the line: carry on into the neighbouring line in text order
+                let line_rtl = tm::line_rtl(&t, size, caret);
+                if (dir > 0) != line_rtl {
+                    te::next_grapheme(c, caret)
+                } else {
+                    te::prev_grapheme(c, caret)
+                }
             }
         }
         egui::Key::ArrowUp | egui::Key::ArrowDown => {
@@ -212,6 +253,9 @@ fn move_caret(app: &mut App, key: egui::Key, shift: bool, ctrl: bool) {
         _ => return,
     };
     set_sel(app, target, if shift { anchor } else { target }, keep_goal);
+    if let Some(x) = new_hint {
+        set_hint(app, x);
+    }
 }
 
 // ------------------------------------------------------------------ editing
@@ -238,6 +282,7 @@ fn edit_props(app: &mut App, log: Option<(EditKind, bool)>, f: impl FnOnce(&mut 
     }
     sess.caret = caret;
     sess.anchor = anchor;
+    sess.hint_x = None;
     layout::relayout_up(doc, &mut sess.tx.ed, id);
     canvas.dirty = true;
 }
@@ -341,6 +386,7 @@ fn undo_step(app: &mut App, redo: bool) {
     }
     sess.caret = snap.caret;
     sess.anchor = snap.anchor;
+    sess.hint_x = None;
     sess.typing = None;
     layout::relayout_up(doc, &mut sess.tx.ed, id);
     canvas.dirty = true;
@@ -579,7 +625,7 @@ fn key_event(app: &mut App, key: egui::Key, m: egui::Modifiers) -> bool {
 pub fn caret_screen_rect(app: &App, origin: egui::Pos2) -> Option<ERect> {
     let sess = app.canvas.text.as_ref()?;
     let (t, size) = props_of(app)?;
-    let (x, y, h) = tm::caret_rect(&t, size, sess.caret);
+    let (x, y, h) = tm::caret_rect_hint(&t, size, sess.caret, sess.hint_x);
     let w = app.doc.world_transform(sess.id);
     let a = app.view.to_screen(origin, w.apply(v2(x, y)));
     let b = app.view.to_screen(origin, w.apply(v2(x, y + h)));
@@ -793,6 +839,68 @@ mod tests {
         set_sel(&mut app, 2, 2, false);
         key(&mut app, egui::Key::Backspace, false, false);
         assert_eq!(text_of(&app, id).content, "a");
+    }
+
+    #[test]
+    fn arrows_follow_the_screen_in_right_to_left_text() {
+        // three Hebrew letters: the start of the text is at the right edge of the line
+        let (mut app, _) = app_with_text("\u{5D0}\u{5D1}\u{5D2}");
+        set_sel(&mut app, 0, 0, false);
+        let caret = |app: &App| app.canvas.text.as_ref().unwrap().caret;
+        key(&mut app, egui::Key::ArrowLeft, false, false);
+        assert_eq!(caret(&app), 2, "Left walks forward through the text in a right-to-left run");
+        key(&mut app, egui::Key::ArrowLeft, false, false);
+        key(&mut app, egui::Key::ArrowLeft, false, false);
+        assert_eq!(caret(&app), 6, "at the left end of the line");
+        key(&mut app, egui::Key::ArrowLeft, false, false);
+        assert_eq!(caret(&app), 6, "nothing further left");
+        key(&mut app, egui::Key::ArrowRight, false, false);
+        assert_eq!(caret(&app), 4);
+        // shift+Right extends the selection back through the text
+        key(&mut app, egui::Key::ArrowRight, true, false);
+        let s = app.canvas.text.as_ref().unwrap();
+        assert_eq!((s.caret, s.anchor), (2, 4));
+        // plain Left collapses to the visually left edge of the selection (the later offset)
+        key(&mut app, egui::Key::ArrowLeft, false, false);
+        assert_eq!(caret(&app), 4);
+    }
+
+    #[test]
+    fn word_jumps_and_end_of_line_in_right_to_left_text() {
+        let (mut app, _) = app_with_text("\u{5D0}\u{5D1} \u{5D2}\u{5D3}");
+        set_sel(&mut app, 0, 0, false);
+        key(&mut app, egui::Key::ArrowLeft, false, true);
+        assert_eq!(caret_of(&app), 4, "ctrl+Left jumps to the next word in text order: it is to the left on screen");
+        key(&mut app, egui::Key::ArrowRight, false, true);
+        assert_eq!(caret_of(&app), 0);
+        // Left at the left end of a right-to-left line continues into the next paragraph
+        let (mut app, _) = app_with_text("\u{5D0}\n\u{5D1}");
+        set_sel(&mut app, 2, 2, false);
+        key(&mut app, egui::Key::ArrowLeft, false, false);
+        assert_eq!(caret_of(&app), 3, "the end of the first line is its left end; Left goes on to the next line");
+    }
+
+    fn caret_of(app: &App) -> usize {
+        app.canvas.text.as_ref().unwrap().caret
+    }
+
+    #[test]
+    fn typing_right_to_left_text_keeps_the_caret_after_the_new_letters() {
+        let (mut app, id) = app_with_text("");
+        for ch in ["\u{5D0}", "\u{5D1}", "\u{5D2}"] {
+            insert_text(&mut app, ch, EditKind::Typing);
+        }
+        assert_eq!(text_of(&app, id).content, "\u{5D0}\u{5D1}\u{5D2}");
+        assert_eq!(caret_of(&app), 6);
+        let t = text_of(&app, id);
+        let size = app.doc.get(id).unwrap().size;
+        let (x, _, _) = tm::caret_rect_hint(&t, size, 6, app.canvas.text.as_ref().unwrap().hint_x);
+        let g = tm::geometry(&t, size);
+        let leftmost = g.lines[0].glyphs.iter().map(|g| g.x).fold(f32::MAX, f32::min);
+        assert!((x - leftmost).abs() < 0.01, "the caret is left of the last typed letter");
+        // Backspace removes the letter before the caret in text order
+        key(&mut app, egui::Key::Backspace, false, false);
+        assert_eq!(text_of(&app, id).content, "\u{5D0}\u{5D1}");
     }
 
     #[test]

@@ -218,7 +218,7 @@ pub fn overlays(app: &App, ui: &Ui, rect: ERect) {
                     let quad = [v2(x, y), v2(x + rw, y), v2(x + rw, y + rh), v2(x, y + rh)].map(|c| to_s(w.apply(c)));
                     p.add(egui::Shape::convex_polygon(quad.to_vec(), theme::TEXT_SELECTION, Stroke::NONE));
                 }
-                let (x, y, lh) = crate::textmeasure::caret_rect(t, n.size, sess.caret);
+                let (x, y, lh) = crate::textmeasure::caret_rect_hint(t, n.size, sess.caret, sess.hint_x);
                 let a = to_s(w.apply(v2(x, y)));
                 let b = to_s(w.apply(v2(x, y + lh)));
                 // Tell the platform where the caret is so IME candidate windows follow it.
