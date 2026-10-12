@@ -91,3 +91,24 @@ fn file_menu_offers_new_board() {
     crate::panels::menus::run(&mut d.shell.app, &ctx, crate::panels::menus::Action::NewBoard);
     assert_eq!(d.app().tool, Tool::Move);
 }
+
+/// With `DESIGMA_BOARD_SHOTS=<dir>` set, writes a library with a design file and two boards to
+/// `<dir>/lib`, for `desigma --home --library <dir>/lib --screenshot ...`.
+#[test]
+fn seed_a_library_for_the_home_screenshot() {
+    let Ok(dir) = std::env::var("DESIGMA_BOARD_SHOTS") else { return };
+    let root = std::path::Path::new(&dir).join("lib");
+    let _ = std::fs::remove_dir_all(&root);
+    let lib = desigma_library::Library::open(&root).unwrap();
+    let project = lib.create_project("Team space").unwrap();
+    let mut design = crate::demo::demo_document();
+    design.name = "Landing page".into();
+    let e = lib.create_file(&project.id, None, "Landing page", &design).unwrap();
+    crate::home::thumb::refresh(&lib, &e.id, &design);
+    let mut board = crate::board::demo::document();
+    board.name = "Sprint retro".into();
+    let e = lib.create_file(&project.id, None, "Sprint retro", &board).unwrap();
+    crate::home::thumb::refresh(&lib, &e.id, &board);
+    let empty = crate::board::create::new_document("Brainstorm");
+    lib.create_file(&project.id, None, "Brainstorm", &empty).unwrap();
+}

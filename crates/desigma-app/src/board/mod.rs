@@ -96,5 +96,5 @@ impl App {
 
 /// Kinds a connector can attach to.
 pub fn connectable(kind: &NodeKind) -> bool {
-    matches!(kind, NodeKind::Sticky(_) | NodeKind::ShapeWithText(_) | NodeKind::Stamp { .. } | NodeKind::Text(_) | NodeKind::Section)
+    matches!(kind, NodeKind::Sticky(_) | NodeKind::ShapeWithText(_) | NodeKind::Stamp { .. } | NodeKind::Text(_))
 }

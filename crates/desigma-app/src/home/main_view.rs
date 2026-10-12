@@ -384,7 +384,9 @@ fn thumb_area(p: &egui::Painter, area: Rect, tex: Tex, board: bool, radius: u8) 
         p.rect_filled(area, theme::cr(radius), theme::rgb(theme::BOARD_BG));
         match tex {
             Some((t, _)) => {
-                p.image(t, area, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), Color32::WHITE);
+                // the picture is its own canvas: it fills the well, with the well's rounded corners
+                let uv = Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0));
+                p.add(egui::epaint::RectShape::filled(area, theme::cr(radius), Color32::WHITE).with_texture(t, uv));
             }
             None => {
                 let mut mesh = egui::Mesh::default();

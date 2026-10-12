@@ -697,3 +697,65 @@ fn undo_and_redo_cover_every_board_edit_in_one_history() {
     assert!(matches!(&s.app().doc.get(c).unwrap().kind, NodeKind::Connector(p) if p.line == ConnectorLine::Curved));
     assert!(s.app().doc.get(b).unwrap().transform.ty > 200.0);
 }
+
+#[test]
+fn connectors_follow_nudges_resizes_and_moves_of_a_whole_section() {
+    let mut s = board_demo_sim();
+    let rel = s.by_name("Release");
+    let c = s.by_name("Connector 2");
+    let end0 = connector_route(&s.app().doc, c).unwrap().end();
+    // arrow keys nudge the selection, one undo step each
+    s.shell.app.selection = vec![rel];
+    s.mods = Modifiers::SHIFT;
+    s.key(Key::ArrowDown);
+    s.mods = Modifiers::NONE;
+    let end1 = connector_route(&s.app().doc, c).unwrap().end();
+    assert!((end1.y - end0.y - 10.0).abs() < 0.01, "nudged 10 down: {end0:?} -> {end1:?}");
+    s.cmd_key(Key::Z);
+    assert_eq!(connector_route(&s.app().doc, c).unwrap().end(), end0);
+
+    // resizing from the bottom right handle moves the middle of the left side
+    let (corners, _) = crate::canvas::interact::selection_box(s.app()).unwrap();
+    let br = s.app().view.to_screen(s.app().canvas_rect.min, corners[2]);
+    let h0 = s.app().doc.get(rel).unwrap().size.y;
+    s.drag(br, br + Vec2::new(0.0, 60.0 * s.app().view.zoom));
+    assert!(s.app().doc.get(rel).unwrap().size.y > h0 + 20.0);
+    let end2 = connector_route(&s.app().doc, c).unwrap().end();
+    assert!(end2.y > end0.y + 10.0, "the end follows the taller node's middle: {end0:?} -> {end2:?}");
+    s.cmd_key(Key::Z);
+    assert_eq!(connector_route(&s.app().doc, c).unwrap().end(), end0);
+
+    // moving the whole section carries its notes, and every connector attached to them follows
+    let sec = s.by_name("Went well");
+    let c1 = s.by_name("Connector 1");
+    let start0 = connector_route(&s.app().doc, c1).unwrap().start();
+    s.shell.app.selection = vec![sec];
+    s.shell.app.nudge(0.0, 40.0);
+    s.frame(vec![]);
+    let start1 = connector_route(&s.app().doc, c1).unwrap().start();
+    assert!((start1.y - start0.y - 40.0).abs() < 0.01, "{start0:?} -> {start1:?}");
+    // all three connectors were re-synced to the moved nodes, in the same undo step
+    s.cmd_key(Key::Z);
+    assert_eq!(connector_route(&s.app().doc, c1).unwrap().start(), start0);
+    assert_eq!(connector_route(&s.app().doc, c).unwrap().end(), end0);
+}
+
+#[test]
+fn moving_a_free_connector_carries_its_loose_ends() {
+    let mut s = board_sim();
+    let a = add_shape(&mut s, "A", 200.0, 200.0);
+    s.mv(node_center(&s, a));
+    let from = dot(&s, a, Magnet::Right);
+    s.drag(from, s.screen(700.0, 500.0));
+    let c = connectors(&s)[0];
+    s.key(Key::Escape);
+    // a connector with one loose end moves by its loose end; the attached end stays on its node
+    let r0 = connector_route(&s.app().doc, c).unwrap();
+    s.shell.app.selection = vec![c];
+    s.shell.app.nudge(0.0, 30.0);
+    let r1 = connector_route(&s.app().doc, c).unwrap();
+    assert_eq!(r1.start(), r0.start(), "the end on the shape stays put");
+    assert!((r1.end().y - r0.end().y - 30.0).abs() < 0.01, "{:?} -> {:?}", r0.end(), r1.end());
+    s.cmd_key(Key::Z);
+    assert_eq!(connector_route(&s.app().doc, c).unwrap().end(), r0.end());
+}
