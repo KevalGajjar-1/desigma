@@ -41,6 +41,10 @@ pub struct LayersState {
     pub drop: Option<Drop>,
     pub last_sel: Vec<NodeId>,
     pub anchor: Option<NodeId>,
+    /// Name filter (the header's search icon): shown, its text, and a focus request.
+    pub filter_open: bool,
+    pub filter: String,
+    pub filter_focus: bool,
 }
 
 impl LayersState {
@@ -128,7 +132,7 @@ pub fn resolve_drop(doc: &Document, rows: &[Row], drop: Drop, dragged: &[NodeId]
     Some((parent, index))
 }
 
-fn kind_icon(k: &NodeKind) -> Icon {
+pub(crate) fn kind_icon(k: &NodeKind) -> Icon {
     match k {
         NodeKind::Page { .. } => Icon::Page,
         NodeKind::Frame(_) => Icon::Frame,
@@ -153,6 +157,14 @@ fn is_component_like(n: &desigma_doc::Node) -> bool {
     matches!(n.kind, NodeKind::Component(_) | NodeKind::ComponentSet(_) | NodeKind::Instance { .. }) || n.component.source.is_some()
 }
 
+/// The rows to show: the whole tree, or only what matches the name filter.
+pub(crate) fn visible_rows(app: &App) -> Vec<Row> {
+    match crate::find::filter::matcher(&app.layers.filter).filter(|_| app.layers.filter_open) {
+        Some(m) => crate::find::filter::rows(&app.doc, app.page, &m),
+        None => flatten(&app.doc, app.page, &app.layers.expanded),
+    }
+}
+
 pub fn show(app: &mut App, ui: &mut Ui, region: Rect) {
     // Reveal newly selected layers.
     if app.selection != app.layers.last_sel {
@@ -164,7 +176,7 @@ pub fn show(app: &mut App, ui: &mut Ui, region: Rect) {
                 cur = app.doc.get(p).and_then(|n| n.parent);
             }
         }
-        let rows = flatten(&app.doc, app.page, &app.layers.expanded);
+        let rows = visible_rows(app);
         if let Some(i) = sel.first().and_then(|s| rows.iter().position(|r| r.id == *s)) {
             let top = i as f32 * theme::LAYER_ROW_HEIGHT;
             if top < app.layers.scroll {
@@ -175,7 +187,8 @@ pub fn show(app: &mut App, ui: &mut Ui, region: Rect) {
         }
         app.layers.last_sel = sel;
     }
-    let rows = flatten(&app.doc, app.page, &app.layers.expanded);
+    let rows = visible_rows(app);
+    let filter = crate::find::filter::matcher(&app.layers.filter).filter(|_| app.layers.filter_open);
     let content_h = rows.len() as f32 * theme::LAYER_ROW_HEIGHT + 8.0;
     let mut scroll = app.layers.scroll;
     wheel_scroll(ui, region, &mut scroll, content_h);
@@ -293,6 +306,10 @@ pub fn show(app: &mut App, ui: &mut Ui, region: Rect) {
                 }
             } else {
                 let shown = widgets::elide(&p, &node.name, &theme::font_body(), (text_right - text_left).max(10.0));
+                if let Some(m) = &filter {
+                    let ranges = crate::find::filter::highlights(m, &shown);
+                    crate::find::filter::paint_highlights(&p, &shown, &ranges, text_left, rr, &theme::font_body(), text_right);
+                }
                 p.text(Pos2::new(text_left, rr.center().y), Align2::LEFT_CENTER, shown, theme::font_body(), tcol);
             }
 
@@ -355,7 +372,7 @@ pub fn show(app: &mut App, ui: &mut Ui, region: Rect) {
                     app.layers.anchor = Some(row.id);
                 }
             }
-            if resp.drag_started() && app.layers.renaming.is_none() {
+            if resp.drag_started() && app.layers.renaming.is_none() && filter.is_none() {
                 if !app.is_selected(row.id) {
                     app.select_only(row.id);
                 }

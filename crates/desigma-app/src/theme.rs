@@ -206,6 +206,19 @@ pub const LAYER_ICON_GAP: f32 = 0.0;
 pub const LAYER_TOGGLE_SIZE: f32 = 24.0;
 pub const LAYER_DROP_THICKNESS: f32 = 2.0;
 
+// Find and replace panel and the layers name filter (left sidebar).
+pub const FIND_FIELD_H: f32 = 28.0;
+pub const FIND_ROW_GAP: f32 = 8.0;
+pub const FIND_TOGGLE_SIZE: f32 = 22.0;
+pub const FIND_BUTTON_H: f32 = 24.0;
+pub const FIND_STATUS_H: f32 = 32.0;
+pub const FIND_GROUP_ROW_H: f32 = 28.0;
+/// Highlight behind the matched characters of a result or a filtered layer name.
+pub const FIND_HIGHLIGHT: Color32 = rgba(0x0D99FF, 0x59);
+pub const FIND_HIGHLIGHT_SELECTED: Color32 = rgba(0x7CC4F8, 0x66);
+/// Characters of context kept before a match in a result excerpt.
+pub const FIND_EXCERPT_LEAD: usize = 12;
+
 pub const RIGHT_PANEL_WIDTH: f32 = 240.0;
 /// The present button sits at the right edge, level with the zoom dropdown (8px from the edge).
 pub const RIGHT_PRESENT_FROM_RIGHT: f32 = 56.0;

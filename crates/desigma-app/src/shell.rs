@@ -119,6 +119,15 @@ impl Shell {
         if opts.present {
             app.start_present();
         }
+        if let Some(q) = &opts.find {
+            app.find.query = q.clone();
+            app.open_find();
+            app.find.focus = false;
+            if let Some(r) = &opts.replace_with {
+                app.find.replacement = r.clone();
+                app.find.show_replace = true;
+            }
+        }
         match opts.panel.as_deref() {
             Some("libraries") => app.open_libraries(),
             Some(panel @ ("variables" | "variables-floating")) => {
@@ -242,7 +251,10 @@ impl Shell {
                 (Key::K, false, true) => Some(Action::CreateComponent),
                 (Key::B, false, true) => Some(Action::Detach),
                 (Key::K, true, false) => Some(Action::CombineVariants),
+                (Key::A, true, false) => Some(Action::SelectInverse),
+                (Key::A, false, true) => Some(Action::SelectMatching),
                 (Key::A, false, _) => Some(Action::SelectAll),
+                (Key::F, false, false) => Some(Action::Find),
                 (Key::Quote, false, _) => Some(Action::TogglePixelGrid),
                 (Key::Quote, true, _) => Some(Action::ToggleSnapPixel),
                 (Key::Num4, true, _) => Some(Action::ToggleLayoutGrids),
@@ -297,6 +309,10 @@ impl Shell {
                     app.ui.menu = None;
                 } else if app.proto.editing.is_some() {
                     app.proto.editing = None;
+                } else if app.find.open {
+                    app.close_find();
+                } else if app.layers.filter_open {
+                    app.close_layer_filter();
                 } else if app.tool != Tool::Move {
                     app.tool = Tool::Move;
                 } else {
@@ -308,24 +324,22 @@ impl Shell {
                     interact::finish_pen(app);
                     app.tool = Tool::Move;
                 } else if m.shift {
-                    if let Some(p) = app.selection.first().and_then(|s| app.doc.get(*s)).and_then(|n| n.parent) {
-                        if p != app.page {
-                            app.select_only(p);
-                        }
+                    menus::run(app, ctx, Action::SelectParent);
+                } else if let Some(n) = app.selection.first().filter(|_| app.selection.len() == 1).and_then(|s| app.doc.get(*s)) {
+                    // A single text or vector layer is entered for editing; anything else selects its children.
+                    let id = n.id;
+                    if matches!(n.kind, desigma_doc::NodeKind::Text(_)) {
+                        interact::begin_text_edit(app, id);
+                    } else if matches!(n.kind, desigma_doc::NodeKind::Vector { .. }) {
+                        canvas::vector::enter(app, id);
+                    } else {
+                        menus::run(app, ctx, Action::SelectChildren);
                     }
-                } else if let [one] = app.selection.as_slice() {
-                    if let Some(n) = app.doc.get(*one) {
-                        if matches!(n.kind, desigma_doc::NodeKind::Text(_)) {
-                            let id = *one;
-                            interact::begin_text_edit(app, id);
-                        } else if matches!(n.kind, desigma_doc::NodeKind::Vector { .. }) {
-                            canvas::vector::enter(app, *one);
-                        } else if !n.children.is_empty() {
-                            app.selection = n.children.clone();
-                        }
-                    }
+                } else {
+                    menus::run(app, ctx, Action::SelectChildren);
                 }
             }
+            Key::Backslash => menus::run(app, ctx, Action::SelectParent),
             Key::ArrowLeft | Key::ArrowRight | Key::ArrowUp | Key::ArrowDown => {
                 if !app.selection.is_empty() {
                     let step = if m.shift { theme::NUDGE_BIG } else { theme::NUDGE };

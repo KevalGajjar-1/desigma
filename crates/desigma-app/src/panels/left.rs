@@ -55,10 +55,34 @@ pub fn show(app: &mut App, ui: &mut Ui, rect: Rect) {
     y += list_h + 8.0;
     widgets::hline(&p, x0, inner.right(), y - 1.0, theme::BORDER);
 
+    // ---- find and replace takes the place of the layers
+    if app.find.open {
+        crate::find::panel::show(app, ui, Rect::from_min_max(Pos2::new(x0, y), inner.max));
+        return;
+    }
+
     // ---- layers
     let lt = Rect::from_min_size(Pos2::new(x0, y), Vec2::new(inner.width(), theme::LAYER_HEADER_HEIGHT));
     section_title(ui, lt, "Layers");
+    let fb = Rect::from_min_size(
+        Pos2::new(lt.right() - theme::PANEL_ACTION_RIGHT_PAD - theme::PANEL_ACTION_BUTTON, lt.top() + 8.0),
+        Vec2::splat(theme::PANEL_ACTION_BUTTON),
+    );
+    if widgets::icon_button(ui, fb, "layers-search", Icon::Search, app.layers.filter_open, "Filter layers by name").clicked() {
+        if app.layers.filter_open {
+            app.close_layer_filter();
+        } else {
+            app.open_layer_filter();
+        }
+    }
+    widgets::record(ui, "layers-search", fb);
     y += theme::LAYER_HEADER_HEIGHT;
+    if app.layers.filter_open {
+        let row = Rect::from_min_size(Pos2::new(x0, y), Vec2::new(inner.width(), 32.0));
+        crate::find::filter::show_field(app, ui, row);
+        widgets::record(ui, "layers-filter", row);
+        y += 32.0;
+    }
     let region = Rect::from_min_max(Pos2::new(x0, y), inner.max);
     layers::show(app, ui, region);
 }
