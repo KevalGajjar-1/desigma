@@ -1,8 +1,13 @@
-//! Our own simple vector icons, drawn with the egui painter on a 16x16 grid.
-//! (Original artwork; nothing here is copied from Figma.)
+//! UI icons: the open-source Lucide set (ISC, vendored in `assets/icons/lucide`),
+//! rasterised once per (icon, pixel size) with resvg into an alpha mask that is
+//! uploaded as an egui texture and tinted at paint time. Rendering happens at the
+//! device pixel ratio, so glyphs are crisp at 1x and 2x. Only the brand logo is
+//! drawn by hand (it is ours).
 
 use crate::theme;
-use egui::{epaint::PathShape, Color32, Painter, Pos2, Rect, Shape, Stroke, StrokeKind};
+use egui::{Color32, Context, Painter, Pos2, Rect, TextureHandle, TextureOptions, Vec2};
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Icon {
@@ -86,395 +91,461 @@ pub enum Icon {
     ListView,
     /// Libraries (a closed book).
     Book,
+    // color picker
+    Eyedropper,
+    Close,
+    Styles,
+    PaintSolid,
+    PaintLinear,
+    PaintRadial,
+    PaintAngular,
+    PaintDiamond,
+    PaintImage,
+    Blend,
+    NoPaint,
+    // effects and stroke
+    InnerShadow,
+    DropShadow,
+    LayerBlur,
+    BackgroundBlur,
+    Noise,
+    Texture,
+    Glass,
+    Shader,
+    StrokeSettings,
+    StrokeSides,
+    StrokeWeight,
 }
 
-struct G<'a> {
-    p: &'a Painter,
-    o: Pos2,
-    k: f32,
-    col: Color32,
-    w: f32,
+impl Icon {
+    /// Every variant, for tests and tooling.
+    #[cfg(test)]
+    pub const ALL: &'static [Icon] = &[
+        Icon::Logo,
+        Icon::File,
+        Icon::Assets,
+        Icon::Tools,
+        Icon::Variables,
+        Icon::Help,
+        Icon::Folder,
+        Icon::Trash,
+        Icon::Clock,
+        Icon::GridView,
+        Icon::ListView,
+        Icon::Book,
+        Icon::ChevronDown,
+        Icon::ChevronRight,
+        Icon::Plus,
+        Icon::Minus,
+        Icon::Search,
+        Icon::Eye,
+        Icon::EyeOff,
+        Icon::Lock,
+        Icon::Unlock,
+        Icon::Sidebar,
+        Icon::Page,
+        Icon::Check,
+        Icon::Move,
+        Icon::Hand,
+        Icon::Scale,
+        Icon::Frame,
+        Icon::Section,
+        Icon::Slice,
+        Icon::Rectangle,
+        Icon::Line,
+        Icon::Arrow,
+        Icon::Ellipse,
+        Icon::Polygon,
+        Icon::Star,
+        Icon::Image,
+        Icon::Pen,
+        Icon::Pencil,
+        Icon::Text,
+        Icon::Comment,
+        Icon::Group,
+        Icon::Vector,
+        Icon::Component,
+        Icon::Instance,
+        Icon::Boolean,
+        Icon::AlignLeft,
+        Icon::AlignHCenter,
+        Icon::AlignRight,
+        Icon::AlignTop,
+        Icon::AlignVCenter,
+        Icon::AlignBottom,
+        Icon::Rotation,
+        Icon::Radius,
+        Icon::Opacity,
+        Icon::Mask,
+        Icon::DirHorizontal,
+        Icon::DirVertical,
+        Icon::Wrap,
+        Icon::Spacing,
+        Icon::PaddingH,
+        Icon::PaddingV,
+        Icon::Dev,
+        Icon::Design,
+        Icon::Export,
+        Icon::Sparkle,
+        Icon::TextLeft,
+        Icon::TextCenter,
+        Icon::TextRight,
+        Icon::Distribute,
+        Icon::Rotate90,
+        Icon::FlipH,
+        Icon::FlipV,
+        Icon::Flag,
+        Icon::Play,
+        Icon::Eyedropper,
+        Icon::Close,
+        Icon::Styles,
+        Icon::PaintSolid,
+        Icon::PaintLinear,
+        Icon::PaintRadial,
+        Icon::PaintAngular,
+        Icon::PaintDiamond,
+        Icon::PaintImage,
+        Icon::Blend,
+        Icon::NoPaint,
+        Icon::InnerShadow,
+        Icon::DropShadow,
+        Icon::LayerBlur,
+        Icon::BackgroundBlur,
+        Icon::Noise,
+        Icon::Texture,
+        Icon::Glass,
+        Icon::Shader,
+        Icon::StrokeSettings,
+        Icon::StrokeSides,
+        Icon::StrokeWeight,
+    ];
+
+    /// Name of the vendored Lucide icon that stands in for this one (None for the logo).
+    pub fn lucide_name(self) -> Option<&'static str> {
+        Some(match self {
+            Icon::Logo => return None,
+            Icon::File => "file",
+            Icon::Folder => "folder",
+            Icon::Trash => "trash-2",
+            Icon::Clock => "clock",
+            Icon::GridView => "layout-grid",
+            Icon::ListView => "list",
+            Icon::Book => "book",
+            Icon::Assets => "library",
+            Icon::Tools => "wrench",
+            Icon::Variables => "hexagon",
+            Icon::Help => "circle-help",
+            Icon::ChevronDown => "chevron-down",
+            Icon::ChevronRight => "chevron-right",
+            Icon::Plus => "plus",
+            Icon::Minus => "minus",
+            Icon::Search => "search",
+            Icon::Eye => "eye",
+            Icon::EyeOff => "eye-off",
+            Icon::Lock => "lock",
+            Icon::Unlock => "lock-open",
+            Icon::Sidebar => "panel-left",
+            Icon::Page => "file-text",
+            Icon::Check => "check",
+            Icon::Move => "mouse-pointer-2",
+            Icon::Hand => "hand",
+            Icon::Scale => "scaling",
+            Icon::Frame => "hash",
+            Icon::Section => "panel-top",
+            Icon::Slice => "slice",
+            Icon::Rectangle => "square",
+            Icon::Line => "slash",
+            Icon::Arrow => "arrow-up-right",
+            Icon::Ellipse => "circle",
+            Icon::Polygon => "triangle",
+            Icon::Star => "star",
+            Icon::Image => "image",
+            Icon::Pen => "pen-tool",
+            Icon::Pencil => "pencil",
+            Icon::Text => "type",
+            Icon::Comment => "message-circle",
+            Icon::Group => "group",
+            Icon::Vector => "spline",
+            Icon::Component => "component",
+            Icon::Instance => "diamond",
+            Icon::Boolean => "combine",
+            Icon::AlignLeft => "align-start-vertical",
+            Icon::AlignHCenter => "align-center-vertical",
+            Icon::AlignRight => "align-end-vertical",
+            Icon::AlignTop => "align-start-horizontal",
+            Icon::AlignVCenter => "align-center-horizontal",
+            Icon::AlignBottom => "align-end-horizontal",
+            Icon::Rotation => "rotate-cw",
+            Icon::Radius => "square-dashed",
+            Icon::Opacity => "droplet",
+            Icon::Mask => "venetian-mask",
+            Icon::DirHorizontal => "arrow-right",
+            Icon::DirVertical => "arrow-down",
+            Icon::Wrap => "wrap-text",
+            Icon::Spacing => "unfold-horizontal",
+            Icon::PaddingH => "move-horizontal",
+            Icon::PaddingV => "move-vertical",
+            Icon::Dev => "code-xml",
+            Icon::Design => "mouse-pointer-2",
+            Icon::Export => "download",
+            Icon::Sparkle => "sparkles",
+            Icon::TextLeft => "align-left",
+            Icon::TextCenter => "align-center",
+            Icon::TextRight => "align-right",
+            Icon::Distribute => "align-vertical-distribute-center",
+            Icon::Rotate90 => "rotate-cw-square",
+            Icon::FlipH => "flip-horizontal",
+            Icon::FlipV => "flip-vertical",
+            Icon::Flag => "flag",
+            Icon::Play => "play",
+            Icon::Eyedropper => "pipette",
+            Icon::Close => "x",
+            Icon::Styles => "styles-dots",
+            Icon::PaintSolid => "square",
+            Icon::PaintLinear => "blend",
+            Icon::PaintRadial => "circle-dot",
+            Icon::PaintAngular => "rotate-cw",
+            Icon::PaintDiamond => "diamond",
+            Icon::PaintImage => "image",
+            Icon::Blend => "droplet",
+            Icon::NoPaint => "ban",
+            Icon::InnerShadow => "square-dashed-bottom",
+            Icon::DropShadow => "layers-2",
+            Icon::LayerBlur => "grip",
+            Icon::BackgroundBlur => "grid-3x3",
+            Icon::Noise => "dices",
+            Icon::Texture => "waves",
+            Icon::Glass => "contrast",
+            Icon::Shader => "sparkles",
+            Icon::StrokeSettings => "sliders-horizontal",
+            Icon::StrokeSides => "square-dashed",
+            Icon::StrokeWeight => "align-justify",
+        })
+    }
 }
 
-impl G<'_> {
-    fn pt(&self, x: f32, y: f32) -> Pos2 {
-        Pos2::new(self.o.x + x * self.k, self.o.y + y * self.k)
+macro_rules! lucide {
+    ($($name:literal),* $(,)?) => {
+        /// The vendored SVG sources, by Lucide name.
+        pub const LUCIDE: &[(&str, &str)] = &[
+            $(($name, include_str!(concat!("../assets/icons/lucide/", $name, ".svg")))),*
+        ];
+    };
+}
+
+lucide!(
+    "file",
+    "library",
+    "wrench",
+    "hexagon",
+    "circle-help",
+    "folder",
+    "trash-2",
+    "clock",
+    "layout-grid",
+    "list",
+    "book",
+    "chevron-down",
+    "chevron-right",
+    "plus",
+    "minus",
+    "search",
+    "eye",
+    "eye-off",
+    "lock",
+    "lock-open",
+    "panel-left",
+    "file-text",
+    "check",
+    "mouse-pointer-2",
+    "hand",
+    "scaling",
+    "hash",
+    "panel-top",
+    "slice",
+    "square",
+    "slash",
+    "arrow-up-right",
+    "circle",
+    "triangle",
+    "star",
+    "image",
+    "pen-tool",
+    "pencil",
+    "type",
+    "message-circle",
+    "group",
+    "spline",
+    "component",
+    "diamond",
+    "combine",
+    "align-start-vertical",
+    "align-center-vertical",
+    "align-end-vertical",
+    "align-start-horizontal",
+    "align-center-horizontal",
+    "align-end-horizontal",
+    "rotate-cw",
+    "square-dashed",
+    "droplet",
+    "venetian-mask",
+    "arrow-right",
+    "arrow-down",
+    "wrap-text",
+    "unfold-horizontal",
+    "move-horizontal",
+    "move-vertical",
+    "code-xml",
+    "download",
+    "sparkles",
+    "align-left",
+    "align-center",
+    "align-right",
+    "align-vertical-distribute-center",
+    "rotate-cw-square",
+    "flip-horizontal",
+    "flip-vertical",
+    "flag",
+    "play",
+    "pipette",
+    "x",
+    "styles-dots",
+    "blend",
+    "circle-dot",
+    "ban",
+    "align-justify",
+    "contrast",
+    "dices",
+    "grid-3x3",
+    "grip",
+    "layers-2",
+    "sliders-horizontal",
+    "square-dashed-bottom",
+    "waves",
+);
+
+/// SVG source of the Lucide icon behind `icon`.
+pub fn svg_source(icon: Icon) -> Option<&'static str> {
+    let name = icon.lucide_name()?;
+    LUCIDE.iter().find(|(n, _)| *n == name).map(|(_, s)| *s)
+}
+
+/// Stroke width in Lucide's 24-unit space. 2.25 gives a 1.5px line on a 16px glyph
+/// (Lucide's own 2 gives 1.33px, which reads thin next to the UI3 captures at 1x). Never
+/// thinner than one device pixel.
+fn stroke_units(px: u32) -> f32 {
+    (2.25f32).max(24.0 / px.max(1) as f32)
+}
+
+/// Rasterises `icon` into a `px` x `px` coverage mask (one alpha byte per pixel).
+pub fn rasterize(icon: Icon, px: u32) -> Option<Vec<u8>> {
+    use resvg::{tiny_skia, usvg};
+    let src = svg_source(icon)?;
+    let svg = src.replace("currentColor", "#ffffff").replace("stroke-width=\"2\"", &format!("stroke-width=\"{}\"", stroke_units(px)));
+    let tree = usvg::Tree::from_str(&svg, &usvg::Options::default()).ok()?;
+    let mut pm = tiny_skia::Pixmap::new(px, px)?;
+    let s = px as f32 / tree.size().width();
+    resvg::render(&tree, tiny_skia::Transform::from_scale(s, s), &mut pm.as_mut());
+    Some(pm.pixels().iter().map(|p| p.alpha()).collect())
+}
+
+type CacheMap = HashMap<(Icon, u32), TextureHandle>;
+
+#[derive(Clone, Default)]
+struct Cache(Arc<Mutex<CacheMap>>);
+
+fn texture(ctx: &Context, icon: Icon, px: u32) -> Option<TextureHandle> {
+    let cache = ctx.data_mut(|d| d.get_temp_mut_or_insert_with::<Cache>(egui::Id::new("desigma-icon-cache"), Cache::default).clone());
+    let mut map = cache.0.lock().ok()?;
+    if let Some(t) = map.get(&(icon, px)) {
+        return Some(t.clone());
     }
-    fn st(&self) -> Stroke {
-        Stroke::new(self.w, self.col)
-    }
-    fn line(&self, a: (f32, f32), b: (f32, f32)) {
-        self.p.line_segment([self.pt(a.0, a.1), self.pt(b.0, b.1)], self.st());
-    }
-    fn poly(&self, pts: &[(f32, f32)], closed: bool) {
-        let v: Vec<Pos2> = pts.iter().map(|(x, y)| self.pt(*x, *y)).collect();
-        self.p.add(Shape::Path(PathShape { points: v, closed, fill: Color32::TRANSPARENT, stroke: self.st().into() }));
-    }
-    fn fill_poly(&self, pts: &[(f32, f32)]) {
-        let v: Vec<Pos2> = pts.iter().map(|(x, y)| self.pt(*x, *y)).collect();
-        self.p.add(Shape::convex_polygon(v, self.col, Stroke::NONE));
-    }
-    fn rect(&self, x: f32, y: f32, w: f32, h: f32, r: f32) {
-        let rc = Rect::from_min_size(self.pt(x, y), egui::vec2(w * self.k, h * self.k));
-        self.p.rect_stroke(rc, r * self.k, self.st(), StrokeKind::Inside);
-    }
-    fn fill_rect(&self, x: f32, y: f32, w: f32, h: f32, r: f32) {
-        let rc = Rect::from_min_size(self.pt(x, y), egui::vec2(w * self.k, h * self.k));
-        self.p.rect_filled(rc, r * self.k, self.col);
-    }
-    fn circle(&self, x: f32, y: f32, r: f32) {
-        self.p.circle_stroke(self.pt(x, y), r * self.k, self.st());
-    }
-    fn dot(&self, x: f32, y: f32, r: f32) {
-        self.p.circle_filled(self.pt(x, y), r * self.k, self.col);
-    }
-    fn arc(&self, cx: f32, cy: f32, r: f32, a0: f32, a1: f32) {
-        let n = 16;
-        let pts: Vec<(f32, f32)> = (0..=n)
-            .map(|i| {
-                let a = a0 + (a1 - a0) * i as f32 / n as f32;
-                (cx + r * a.cos(), cy + r * a.sin())
-            })
-            .collect();
-        self.poly(&pts, false);
-    }
+    let alpha = rasterize(icon, px)?;
+    let pixels = alpha.iter().map(|&a| Color32::from_rgba_premultiplied(a, a, a, a)).collect();
+    let img = egui::ColorImage { size: [px as usize; 2], source_size: Vec2::splat(px as f32), pixels };
+    let h = ctx.load_texture(format!("icon-{icon:?}-{px}"), img, TextureOptions::LINEAR);
+    map.insert((icon, px), h.clone());
+    Some(h)
+}
+
+/// Where the glyph of `icon` lands when painted centred at `center` with side `size`:
+/// pixel-snapped so a stroke never straddles a device pixel boundary.
+pub fn glyph_rect(center: Pos2, size: f32, ppp: f32) -> Rect {
+    let px = (size * ppp).round().max(1.0);
+    let side = px / ppp;
+    let snap = |v: f32| (v * ppp).round() / ppp;
+    Rect::from_min_size(Pos2::new(snap(center.x - side / 2.0), snap(center.y - side / 2.0)), Vec2::splat(side))
 }
 
 /// Paints `icon` centered at `center`, fitted in a square of side `size`.
 pub fn paint(p: &Painter, icon: Icon, center: Pos2, size: f32, col: Color32) {
+    if icon == Icon::Logo {
+        paint_logo(p, center, size);
+        return;
+    }
+    let ppp = p.ctx().pixels_per_point();
+    let rect = glyph_rect(center, size, ppp);
+    #[cfg(test)]
+    crate::lint::note_icon(p, icon, rect);
+    let px = (size * ppp).round().max(1.0) as u32;
+    if let Some(tex) = texture(p.ctx(), icon, px) {
+        p.image(tex.id(), rect, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), col);
+    }
+}
+
+/// The brand mark (hand-drawn, ours): a rounded square with a white "d".
+fn paint_logo(p: &Painter, center: Pos2, size: f32) {
     let k = size / 16.0;
-    let g = G { p, o: Pos2::new(center.x - size / 2.0, center.y - size / 2.0), k, col, w: (1.15 * k).max(1.0) };
-    use std::f32::consts::{FRAC_PI_2, PI, TAU};
-    match icon {
-        Icon::Logo => {
-            g.p.rect_filled(Rect::from_min_size(g.pt(1.0, 1.0), egui::vec2(14.0 * k, 14.0 * k)), 4.0 * k, theme::LOGO_GRADIENT_A);
-            g.p.circle_filled(g.pt(6.5, 9.5), 3.2 * k, Color32::WHITE);
-            g.p.rect_filled(Rect::from_min_size(g.pt(8.9, 3.5), egui::vec2(1.8 * k, 9.2 * k)), 0.9 * k, Color32::WHITE);
-            g.p.circle_filled(g.pt(6.5, 9.5), 1.4 * k, theme::LOGO_GRADIENT_A);
-        }
-        Icon::File => {
-            g.poly(&[(3.5, 1.5), (9.5, 1.5), (12.5, 4.5), (12.5, 14.5), (3.5, 14.5)], true);
-            g.poly(&[(9.5, 1.5), (9.5, 4.5), (12.5, 4.5)], false);
-        }
-        Icon::Assets => {
-            g.rect(2.0, 2.0, 5.0, 5.0, 1.0);
-            g.rect(9.0, 2.0, 5.0, 5.0, 1.0);
-            g.rect(2.0, 9.0, 5.0, 5.0, 1.0);
-            g.rect(9.0, 9.0, 5.0, 5.0, 1.0);
-        }
-        Icon::Tools => {
-            g.line((2.0, 5.0), (14.0, 5.0));
-            g.line((2.0, 11.0), (14.0, 11.0));
-            g.circle(6.0, 5.0, 1.8);
-            g.circle(10.0, 11.0, 1.8);
-        }
-        Icon::Variables => {
-            g.circle(5.5, 8.0, 3.5);
-            g.circle(10.5, 8.0, 3.5);
-        }
-        Icon::Help => {
-            g.circle(8.0, 8.0, 6.0);
-            g.arc(8.0, 6.6, 1.8, PI, TAU + 0.6);
-            g.line((8.0, 8.6), (8.0, 9.4));
-            g.dot(8.0, 11.4, 0.6);
-        }
-        Icon::ChevronDown => g.poly(&[(4.5, 6.5), (8.0, 10.0), (11.5, 6.5)], false),
-        Icon::ChevronRight => g.poly(&[(6.0, 4.0), (10.0, 8.0), (6.0, 12.0)], false),
-        Icon::Plus => {
-            g.line((8.0, 3.0), (8.0, 13.0));
-            g.line((3.0, 8.0), (13.0, 8.0));
-        }
-        Icon::Minus => g.line((3.0, 8.0), (13.0, 8.0)),
-        Icon::Search => {
-            g.circle(7.0, 7.0, 4.2);
-            g.line((10.2, 10.2), (13.5, 13.5));
-        }
-        Icon::Eye => {
-            g.poly(&[(1.5, 8.0), (4.5, 4.5), (8.0, 3.5), (11.5, 4.5), (14.5, 8.0), (11.5, 11.5), (8.0, 12.5), (4.5, 11.5)], true);
-            g.circle(8.0, 8.0, 2.2);
-        }
-        Icon::EyeOff => {
-            g.poly(&[(1.5, 8.0), (4.5, 4.5), (8.0, 3.5), (11.5, 4.5), (14.5, 8.0), (11.5, 11.5), (8.0, 12.5), (4.5, 11.5)], true);
-            g.line((3.0, 13.0), (13.0, 3.0));
-        }
-        Icon::Lock => {
-            g.rect(3.5, 7.0, 9.0, 7.0, 1.5);
-            g.arc(8.0, 7.0, 3.0, PI, TAU);
-        }
-        Icon::Unlock => {
-            g.rect(3.5, 7.0, 9.0, 7.0, 1.5);
-            g.arc(8.0, 7.0, 3.0, PI, TAU - FRAC_PI_2 * 0.6);
-        }
-        Icon::Sidebar => {
-            g.rect(2.0, 3.0, 12.0, 10.0, 1.5);
-            g.line((6.0, 3.0), (6.0, 13.0));
-        }
-        Icon::Page => {
-            g.poly(&[(4.0, 2.0), (9.5, 2.0), (12.0, 4.5), (12.0, 14.0), (4.0, 14.0)], true);
-        }
-        Icon::Flag => {
-            g.line((4.0, 2.0), (4.0, 14.5));
-            g.fill_poly(&[(4.0, 2.5), (12.5, 5.0), (4.0, 8.0)]);
-        }
-        Icon::Play => g.fill_poly(&[(4.5, 2.5), (13.0, 8.0), (4.5, 13.5)]),
-        Icon::Folder => {
-            g.poly(&[(1.5, 3.5), (6.0, 3.5), (7.5, 5.0), (14.5, 5.0), (14.5, 13.0), (1.5, 13.0)], true);
-        }
-        Icon::Trash => {
-            g.line((2.5, 4.0), (13.5, 4.0));
-            g.poly(&[(6.0, 4.0), (6.0, 2.5), (10.0, 2.5), (10.0, 4.0)], false);
-            g.poly(&[(3.8, 4.0), (4.6, 13.5), (11.4, 13.5), (12.2, 4.0)], false);
-            g.line((6.6, 6.5), (6.8, 11.0));
-            g.line((9.4, 6.5), (9.2, 11.0));
-        }
-        Icon::Clock => {
-            g.circle(8.0, 8.0, 6.0);
-            g.poly(&[(8.0, 4.5), (8.0, 8.0), (10.5, 9.5)], false);
-        }
-        Icon::GridView => {
-            g.rect(2.5, 2.5, 4.5, 4.5, 1.0);
-            g.rect(9.0, 2.5, 4.5, 4.5, 1.0);
-            g.rect(2.5, 9.0, 4.5, 4.5, 1.0);
-            g.rect(9.0, 9.0, 4.5, 4.5, 1.0);
-        }
-        Icon::ListView => {
-            g.line((2.5, 4.0), (13.5, 4.0));
-            g.line((2.5, 8.0), (13.5, 8.0));
-            g.line((2.5, 12.0), (13.5, 12.0));
-        }
-        Icon::Check => g.poly(&[(3.0, 8.5), (6.5, 12.0), (13.0, 4.5)], false),
-        Icon::Move => g.fill_poly(&[(3.5, 2.0), (3.5, 12.5), (6.3, 9.8), (8.3, 14.0), (10.2, 13.1), (8.3, 9.0), (12.0, 9.0)]),
-        Icon::Hand => {
-            g.poly(
-                &[
-                    (5.0, 8.0),
-                    (5.0, 3.5),
-                    (6.6, 3.5),
-                    (6.6, 7.0),
-                    (6.6, 2.5),
-                    (8.2, 2.5),
-                    (8.2, 7.0),
-                    (8.2, 3.2),
-                    (9.8, 3.2),
-                    (9.8, 7.5),
-                    (9.8, 5.0),
-                    (11.4, 5.0),
-                    (11.4, 10.0),
-                    (9.5, 14.0),
-                    (6.5, 14.0),
-                    (3.5, 10.0),
-                    (3.5, 8.8),
-                    (5.0, 9.5),
-                ],
-                false,
-            );
-        }
-        Icon::Scale => {
-            g.rect(2.5, 6.5, 7.0, 7.0, 0.5);
-            g.line((9.0, 2.5), (13.5, 2.5));
-            g.line((13.5, 2.5), (13.5, 7.0));
-            g.line((13.5, 2.5), (8.0, 8.0));
-        }
-        Icon::Frame => {
-            g.line((5.0, 1.5), (5.0, 14.5));
-            g.line((11.0, 1.5), (11.0, 14.5));
-            g.line((1.5, 5.0), (14.5, 5.0));
-            g.line((1.5, 11.0), (14.5, 11.0));
-        }
-        Icon::Section => {
-            g.rect(2.0, 4.5, 12.0, 9.0, 1.0);
-            g.line((2.0, 2.5), (7.0, 2.5));
-        }
-        Icon::Slice => {
-            g.line((4.5, 1.5), (4.5, 11.5));
-            g.line((4.5, 11.5), (14.5, 11.5));
-            g.line((11.5, 4.5), (11.5, 14.5));
-            g.line((1.5, 4.5), (11.5, 4.5));
-        }
-        Icon::Rectangle => g.rect(2.5, 3.5, 11.0, 9.0, 1.0),
-        Icon::Line => g.line((3.0, 13.0), (13.0, 3.0)),
-        Icon::Arrow => {
-            g.line((3.0, 13.0), (13.0, 3.0));
-            g.poly(&[(7.0, 3.0), (13.0, 3.0), (13.0, 9.0)], false);
-        }
-        Icon::Ellipse => g.circle(8.0, 8.0, 5.5),
-        Icon::Polygon => g.poly(&[(8.0, 2.0), (14.0, 13.0), (2.0, 13.0)], true),
-        Icon::Star => {
-            let mut pts = Vec::new();
-            for i in 0..10 {
-                let a = -FRAC_PI_2 + i as f32 * PI / 5.0;
-                let r = if i % 2 == 0 { 6.5 } else { 2.8 };
-                pts.push((8.0 + r * a.cos(), 8.4 + r * a.sin()));
+    let o = Pos2::new(center.x - size / 2.0, center.y - size / 2.0);
+    let pt = |x: f32, y: f32| Pos2::new(o.x + x * k, o.y + y * k);
+    p.rect_filled(Rect::from_min_size(pt(1.0, 1.0), Vec2::new(14.0 * k, 14.0 * k)), 4.0 * k, theme::LOGO_GRADIENT_A);
+    p.circle_filled(pt(6.5, 9.5), 3.2 * k, Color32::WHITE);
+    p.rect_filled(Rect::from_min_size(pt(8.9, 3.5), Vec2::new(1.8 * k, 9.2 * k)), 0.9 * k, Color32::WHITE);
+    p.circle_filled(pt(6.5, 9.5), 1.4 * k, theme::LOGO_GRADIENT_A);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_icon_has_a_parsable_asset() {
+        for &icon in Icon::ALL {
+            if icon == Icon::Logo {
+                assert!(icon.lucide_name().is_none());
+                continue;
             }
-            g.poly(&pts, true);
+            let src = svg_source(icon).unwrap_or_else(|| panic!("{icon:?} has no vendored svg"));
+            let mask = rasterize(icon, 16).unwrap_or_else(|| panic!("{icon:?} does not parse"));
+            assert_eq!(mask.len(), 256);
+            assert!(mask.iter().any(|&a| a > 0), "{icon:?} rendered empty");
+            assert!(src.contains("viewBox=\"0 0 24 24\""));
         }
-        Icon::Image => {
-            g.rect(2.0, 3.0, 12.0, 10.0, 1.0);
-            g.poly(&[(2.5, 11.5), (6.0, 7.5), (9.0, 10.5), (11.0, 8.5), (13.5, 11.5)], false);
-            g.dot(11.0, 6.0, 1.0);
+    }
+
+    #[test]
+    fn all_lists_every_variant_once() {
+        let mut seen = std::collections::HashSet::new();
+        for i in Icon::ALL {
+            assert!(seen.insert(*i), "{i:?} listed twice");
         }
-        Icon::Pen => {
-            g.poly(&[(8.0, 1.5), (12.0, 7.5), (8.0, 13.0), (4.0, 7.5)], true);
-            g.line((8.0, 13.0), (8.0, 14.5));
-            g.circle(8.0, 8.0, 1.2);
+        assert_eq!(seen.len(), 97);
+    }
+
+    #[test]
+    fn no_vendored_svg_is_unused() {
+        for (name, _) in LUCIDE {
+            assert!(Icon::ALL.iter().any(|i| i.lucide_name() == Some(*name)), "{name} is vendored but unused");
         }
-        Icon::Pencil => {
-            g.poly(&[(3.0, 13.0), (3.8, 10.0), (11.0, 2.8), (13.2, 5.0), (6.0, 12.2)], true);
-            g.line((9.5, 4.3), (11.7, 6.5));
-        }
-        Icon::Text => {
-            g.line((3.5, 3.5), (12.5, 3.5));
-            g.line((8.0, 3.5), (8.0, 13.0));
-            g.line((6.5, 13.0), (9.5, 13.0));
-        }
-        Icon::Comment => g.poly(&[(3.0, 3.0), (13.0, 3.0), (13.0, 11.0), (7.5, 11.0), (4.0, 14.0), (4.0, 11.0), (3.0, 11.0)], true),
-        Icon::Group => {
-            g.rect(2.5, 2.5, 11.0, 11.0, 1.0);
-            g.rect(5.0, 5.0, 6.0, 6.0, 0.5);
-        }
-        Icon::Vector => {
-            g.poly(&[(3.0, 12.0), (6.0, 4.0), (11.0, 9.0), (13.0, 3.5)], false);
-            g.fill_rect(2.0, 11.0, 2.5, 2.5, 0.4);
-            g.fill_rect(10.0, 8.0, 2.5, 2.5, 0.4);
-        }
-        Icon::Component => {
-            g.fill_poly(&[(8.0, 1.5), (10.5, 4.0), (8.0, 6.5), (5.5, 4.0)]);
-            g.fill_poly(&[(8.0, 9.5), (10.5, 12.0), (8.0, 14.5), (5.5, 12.0)]);
-            g.fill_poly(&[(1.5, 8.0), (4.0, 5.5), (6.5, 8.0), (4.0, 10.5)]);
-            g.fill_poly(&[(9.5, 8.0), (12.0, 5.5), (14.5, 8.0), (12.0, 10.5)]);
-        }
-        Icon::Book => {
-            g.rect(3.0, 2.0, 10.0, 12.0, 1.0);
-            g.line((6.0, 2.0), (6.0, 14.0));
-            g.line((8.0, 5.5), (11.0, 5.5));
-            g.line((8.0, 8.0), (10.5, 8.0));
-        }
-        Icon::Instance => g.poly(&[(8.0, 1.5), (14.5, 8.0), (8.0, 14.5), (1.5, 8.0)], true),
-        Icon::Boolean => {
-            g.rect(2.0, 2.0, 8.0, 8.0, 1.0);
-            g.rect(6.0, 6.0, 8.0, 8.0, 1.0);
-        }
-        Icon::AlignLeft => {
-            g.line((2.5, 2.0), (2.5, 14.0));
-            g.fill_rect(4.5, 4.0, 8.0, 3.0, 0.5);
-            g.fill_rect(4.5, 9.0, 5.0, 3.0, 0.5);
-        }
-        Icon::AlignHCenter => {
-            g.line((8.0, 2.0), (8.0, 14.0));
-            g.fill_rect(3.0, 4.0, 10.0, 3.0, 0.5);
-            g.fill_rect(5.0, 9.0, 6.0, 3.0, 0.5);
-        }
-        Icon::AlignRight => {
-            g.line((13.5, 2.0), (13.5, 14.0));
-            g.fill_rect(3.5, 4.0, 8.0, 3.0, 0.5);
-            g.fill_rect(6.5, 9.0, 5.0, 3.0, 0.5);
-        }
-        Icon::AlignTop => {
-            g.line((2.0, 2.5), (14.0, 2.5));
-            g.fill_rect(4.0, 4.5, 3.0, 8.0, 0.5);
-            g.fill_rect(9.0, 4.5, 3.0, 5.0, 0.5);
-        }
-        Icon::AlignVCenter => {
-            g.line((2.0, 8.0), (14.0, 8.0));
-            g.fill_rect(4.0, 3.0, 3.0, 10.0, 0.5);
-            g.fill_rect(9.0, 5.0, 3.0, 6.0, 0.5);
-        }
-        Icon::AlignBottom => {
-            g.line((2.0, 13.5), (14.0, 13.5));
-            g.fill_rect(4.0, 3.5, 3.0, 8.0, 0.5);
-            g.fill_rect(9.0, 6.5, 3.0, 5.0, 0.5);
-        }
-        Icon::Rotation => {
-            g.arc(8.0, 8.0, 5.0, -PI * 0.15, PI * 1.3);
-            g.poly(&[(12.5, 4.2), (13.2, 7.4), (10.2, 6.6)], false);
-        }
-        Icon::Radius => {
-            g.arc(13.0, 13.0, 10.0, PI, PI * 1.5);
-            g.line((3.0, 13.0), (3.0, 14.0));
-        }
-        Icon::Opacity => {
-            g.circle(8.0, 8.0, 5.5);
-            g.fill_poly(&[(8.0, 2.5), (11.0, 3.8), (13.5, 8.0), (11.0, 12.2), (8.0, 13.5)]);
-        }
-        Icon::Mask => {
-            g.circle(6.0, 8.0, 4.0);
-            g.rect(7.0, 4.0, 7.0, 8.0, 1.0);
-        }
-        Icon::DirHorizontal => {
-            g.line((2.0, 8.0), (13.5, 8.0));
-            g.poly(&[(10.5, 5.0), (13.5, 8.0), (10.5, 11.0)], false);
-        }
-        Icon::DirVertical => {
-            g.line((8.0, 2.0), (8.0, 13.5));
-            g.poly(&[(5.0, 10.5), (8.0, 13.5), (11.0, 10.5)], false);
-        }
-        Icon::Wrap => {
-            g.poly(&[(3.0, 4.0), (13.0, 4.0), (13.0, 9.0), (4.0, 9.0)], false);
-            g.poly(&[(6.0, 12.0), (3.5, 9.0), (6.0, 6.5)], false);
-        }
-        Icon::Spacing => {
-            g.line((3.0, 2.5), (3.0, 13.5));
-            g.line((13.0, 2.5), (13.0, 13.5));
-            g.line((5.0, 8.0), (11.0, 8.0));
-        }
-        Icon::PaddingH => {
-            g.rect(2.0, 3.0, 12.0, 10.0, 1.0);
-            g.line((5.0, 6.0), (5.0, 10.0));
-            g.line((11.0, 6.0), (11.0, 10.0));
-        }
-        Icon::PaddingV => {
-            g.rect(2.0, 3.0, 12.0, 10.0, 1.0);
-            g.line((6.0, 6.0), (10.0, 6.0));
-            g.line((6.0, 10.0), (10.0, 10.0));
-        }
-        Icon::Dev => {
-            g.poly(&[(5.5, 4.0), (1.5, 8.0), (5.5, 12.0)], false);
-            g.poly(&[(10.5, 4.0), (14.5, 8.0), (10.5, 12.0)], false);
-        }
-        Icon::Design => {
-            g.fill_poly(&[(3.5, 2.0), (3.5, 12.5), (6.3, 9.8), (8.3, 14.0), (10.2, 13.1), (8.3, 9.0), (12.0, 9.0)]);
-        }
-        Icon::Export => {
-            g.line((8.0, 2.0), (8.0, 10.0));
-            g.poly(&[(5.0, 5.0), (8.0, 2.0), (11.0, 5.0)], false);
-            g.poly(&[(3.0, 9.0), (3.0, 13.5), (13.0, 13.5), (13.0, 9.0)], false);
-        }
-        Icon::Sparkle => {
-            g.fill_poly(&[(8.0, 1.5), (9.4, 6.6), (14.5, 8.0), (9.4, 9.4), (8.0, 14.5), (6.6, 9.4), (1.5, 8.0), (6.6, 6.6)]);
-        }
-        Icon::Distribute => {
-            g.line((4.0, 3.5), (12.0, 3.5));
-            g.rect(5.0, 7.0, 6.0, 2.0, 0.5);
-            g.line((4.0, 12.5), (12.0, 12.5));
-        }
-        Icon::Rotate90 => {
-            g.poly(&[(8.0, 4.5), (12.0, 8.5), (8.0, 12.5), (4.0, 8.5)], true);
-            g.poly(&[(5.0, 2.0), (8.0, 3.0), (6.0, 5.5)], false);
-        }
-        Icon::FlipH => {
-            g.line((8.0, 2.0), (8.0, 14.0));
-            g.poly(&[(6.0, 5.0), (2.5, 8.0), (6.0, 11.0)], true);
-            g.poly(&[(10.0, 5.0), (13.5, 8.0), (10.0, 11.0)], true);
-        }
-        Icon::FlipV => {
-            g.line((2.0, 8.0), (14.0, 8.0));
-            g.poly(&[(5.0, 6.0), (8.0, 2.5), (11.0, 6.0)], true);
-            g.poly(&[(5.0, 10.0), (8.0, 13.5), (11.0, 10.0)], true);
-        }
-        Icon::TextLeft => {
-            g.line((2.5, 4.0), (13.5, 4.0));
-            g.line((2.5, 8.0), (9.0, 8.0));
-            g.line((2.5, 12.0), (12.0, 12.0));
-        }
-        Icon::TextCenter => {
-            g.line((2.5, 4.0), (13.5, 4.0));
-            g.line((5.0, 8.0), (11.0, 8.0));
-            g.line((3.5, 12.0), (12.5, 12.0));
-        }
-        Icon::TextRight => {
-            g.line((2.5, 4.0), (13.5, 4.0));
-            g.line((7.0, 8.0), (13.5, 8.0));
-            g.line((4.0, 12.0), (13.5, 12.0));
+    }
+
+    #[test]
+    fn glyph_rect_is_pixel_snapped() {
+        for ppp in [1.0f32, 1.5, 2.0] {
+            let r = glyph_rect(Pos2::new(100.3, 50.7), 16.0, ppp);
+            assert!(((r.min.x * ppp) - (r.min.x * ppp).round()).abs() < 1e-3);
+            assert!(((r.min.y * ppp) - (r.min.y * ppp).round()).abs() < 1e-3);
+            assert!(((r.width() * ppp) - (r.width() * ppp).round()).abs() < 1e-3);
         }
     }
 }

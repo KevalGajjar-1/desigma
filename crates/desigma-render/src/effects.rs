@@ -31,7 +31,7 @@ pub(crate) fn set_grid_origin(ts: &sk::Transform) {
 }
 
 /// Absolute grid position of the target pixel `(x, y)`.
-fn grid_pos(x: i32, y: i32) -> (i32, i32) {
+pub(crate) fn grid_pos(x: i32, y: i32) -> (i32, i32) {
     let (gx, gy) = GRID_ORIGIN.with(|g| g.get());
     (gx.wrapping_add(x), gy.wrapping_add(y))
 }
@@ -41,7 +41,7 @@ pub type BBox = (f32, f32, f32, f32);
 
 /// Integer region around `bbox` grown by `margin`, limited to the target
 /// expanded by `margin`.
-fn region(bbox: BBox, margin: f32, tw: u32, th: u32) -> Option<(i32, i32, u32, u32)> {
+pub(crate) fn region(bbox: BBox, margin: f32, tw: u32, th: u32) -> Option<(i32, i32, u32, u32)> {
     let x0 = ((bbox.0 - margin).floor() as i32).max(-(margin.ceil() as i32));
     let y0 = ((bbox.1 - margin).floor() as i32).max(-(margin.ceil() as i32));
     let x1 = ((bbox.2 + margin).ceil() as i32).min(tw as i32 + margin.ceil() as i32);

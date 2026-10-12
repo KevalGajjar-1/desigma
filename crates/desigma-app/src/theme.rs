@@ -50,6 +50,24 @@ pub const ICON_SECONDARY: Color32 = rgba(0xFFFFFF, 0xB2);
 pub const ICON_TERTIARY: Color32 = rgba(0xFFFFFF, 0x66);
 pub const ICON_SELECTED: Color32 = rgb(0x7CC4F8);
 pub const DANGER: Color32 = rgb(0xF24822);
+#[allow(dead_code)] // spec colour, kept for parity with ui-spec.json
+pub const BG_ELEVATED: Color32 = rgb(0x1E1E1E);
+#[allow(dead_code)] // spec colour, kept for parity with ui-spec.json
+pub const BG_MENU_HOVER: Color32 = rgb(0x2C2C2C);
+#[allow(dead_code)] // spec colour, kept for parity with ui-spec.json
+pub const BG_DISABLED: Color32 = rgb(0x757575);
+#[allow(dead_code)] // spec colour, kept for parity with ui-spec.json
+pub const BG_TRANSPARENT_HOVER: Color32 = rgba(0xFFFFFF, 0x0D);
+#[allow(dead_code)] // spec colour, kept for parity with ui-spec.json
+pub const BORDER_STRONG: Color32 = rgba(0xFFFFFF, 0xE5);
+#[allow(dead_code)] // spec colour, kept for parity with ui-spec.json
+pub const COMPONENT: Color32 = rgb(0x9747FF);
+#[allow(dead_code)] // spec colour, kept for parity with ui-spec.json
+pub const TEXT_ON_LIGHT_CANVAS: Color32 = rgba(0x000000, 0xE5);
+#[allow(dead_code)] // spec colour, kept for parity with ui-spec.json
+pub const TEXT_ON_LIGHT_CANVAS_SECONDARY: Color32 = rgba(0x000000, 0x4D);
+#[allow(dead_code)] // spec colour, kept for parity with ui-spec.json
+pub const TEXT_ON_DARK_CANVAS: Color32 = rgba(0xFFFFFF, 0xE5);
 pub const SHADOW_COLOR: Color32 = rgba(0x000000, 0x59);
 pub const SHADOW_COLOR_STRONG: Color32 = rgba(0x000000, 0x80);
 /// Elevation 400: drop shadow colour, 0.5px inset ring (#ffffff59 at half coverage) and top edge.
@@ -219,6 +237,15 @@ pub const FIELD_COL_X: [f32; 2] = [17.0, 113.0];
 pub const FIELD_PREFIX_W: f32 = 24.0;
 /// Prefix labels (X, Y, W, ...) start this far inside the field.
 pub const FIELD_PREFIX_X: f32 = 8.0;
+/// Prefix icon slot (16px glyph at x+8); the value then starts at x+24.
+pub const FIELD_PREFIX_ICON: f32 = 16.0;
+/// Glyph box at the slot's left edge (x+8..x+20): Lucide fills its box edge to edge where
+/// Figma's art has margins, so the glyph is smaller to leave a gap before the value.
+pub const FIELD_PREFIX_GLYPH: f32 = 12.0;
+/// Fields without a prefix start their value 8px in.
+pub const FIELD_PLAIN_X: f32 = 8.0;
+/// Gap between a value and a worded suffix such as " ms".
+pub const FIELD_SUFFIX_GAP: f32 = 4.0;
 pub const DISTRIBUTE_BTN_X: f32 = 209.0;
 pub const SUBLABEL_HEIGHT: f32 = 16.0;
 pub const SEGMENT_W: f32 = 29.0;
@@ -246,8 +273,8 @@ pub const PAGE_HEX_X: f32 = 24.0;
 /// Hex text field width in swatch + hex rows (e.g. the Prototype background).
 pub const HEX_FIELD_W: f32 = 72.0;
 pub const PAGE_DIVIDER_X: f32 = 129.0;
-pub const PAGE_OPACITY_PAD: f32 = 16.0;
-pub const PAGE_PERCENT_W: f32 = 24.0;
+pub const PAGE_OPACITY_PAD: f32 = 8.0;
+pub const PAGE_PERCENT_W: f32 = 16.0;
 pub const PAGE_PERCENT_RIGHT: f32 = 7.0;
 pub const STYLE_FOLDER_ROW_H: f32 = 24.0;
 pub const STYLE_INDENT: f32 = 12.0;

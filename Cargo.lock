@@ -894,6 +894,7 @@ dependencies = [
  "egui",
  "image",
  "open",
+ "resvg",
  "rfd",
  "serde",
  "serde_json",

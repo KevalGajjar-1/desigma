@@ -56,6 +56,14 @@ pub fn own_overflow(n: &Node) -> (f32, f32, f32, f32) {
                 r = r.max(reach);
                 b = b.max(reach);
             }
+            // Texture displaces edges by up to `radius`.
+            Effect::Texture(tx) if tx.visible && !tx.clip_to_shape => {
+                let reach = tx.radius.max(0.0);
+                l = l.max(reach);
+                t = t.max(reach);
+                r = r.max(reach);
+                b = b.max(reach);
+            }
             _ => {}
         }
     }

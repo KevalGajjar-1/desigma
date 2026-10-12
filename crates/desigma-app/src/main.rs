@@ -11,6 +11,8 @@ mod icons;
 mod io;
 mod layout;
 mod libraries;
+#[cfg(test)]
+mod lint;
 mod ops;
 mod panels;
 mod present;

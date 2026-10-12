@@ -178,6 +178,9 @@ pub fn css_for(doc: &Document, node: NodeId) -> String {
         match e {
             Effect::LayerBlur { radius, visible: true } if *radius > 0.0 => push("filter", format!("blur({}px)", num(radius / 2.0))),
             Effect::BackgroundBlur { radius, visible: true } if *radius > 0.0 => push("backdrop-filter", format!("blur({}px)", num(radius / 2.0))),
+            // Glass: the frosted backdrop maps to backdrop-filter; refraction, dispersion and the
+            // light highlight have no CSS equivalent. Noise and texture are skipped as well.
+            Effect::Glass(g) if g.visible && g.frost > 0.0 => push("backdrop-filter", format!("blur({}px)", num(g.frost / 2.0))),
             _ => {}
         }
     }
