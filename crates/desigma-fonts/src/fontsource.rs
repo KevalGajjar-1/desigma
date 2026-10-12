@@ -108,20 +108,29 @@ impl FontMeta {
         Ok(Self { id, family, license, variable: v.get("variable").and_then(Value::as_bool).unwrap_or(false), subsets, ttf })
     }
 
+    /// For script specific families (`noto-sans-arabic`, `noto-sans-hebrew`, ...) the subset
+    /// named like the script: it holds the script's glyphs, while `latin` only has Latin ones.
+    fn script_subset(&self) -> Option<&str> {
+        self.subsets.iter().map(String::as_str).find(|s| *s != "latin" && *s != "latin-ext" && self.id.ends_with(&format!("-{s}")))
+    }
+
     pub fn is_open(&self) -> bool {
         is_open_license(&self.license)
     }
 
     /// Pick the TTF for `weight`/`italic`: italic falls back to normal if the
     /// family has no italics, the nearest weight is chosen by CSS rules, and the
-    /// "latin" subset is preferred over the first one listed.
+    /// "latin" subset is preferred over the first one listed (except for script specific
+    /// families, which use the subset of their script).
     pub fn pick(&self, weight: u16, italic: bool) -> Result<Pick, FontError> {
         let has_style = |style: &str| self.ttf.values().any(|m| m.contains_key(style));
         let style = if italic && has_style("italic") { "italic" } else { "normal" };
         let weights: Vec<u16> = self.ttf.iter().filter(|(_, m)| m.contains_key(style)).map(|(w, _)| *w).collect();
         let w = nearest_weight(&weights, weight).ok_or_else(|| FontError::NoTtf(self.family.clone()))?;
         let subs = &self.ttf[&w][style];
-        let subset = if subs.contains_key("latin") {
+        let subset = if let Some(s) = self.script_subset().filter(|s| subs.contains_key(*s)) {
+            s.to_string()
+        } else if subs.contains_key("latin") {
             "latin".to_string()
         } else {
             self.subsets.iter().find(|s| subs.contains_key(*s)).or_else(|| subs.keys().next()).cloned().unwrap_or_default()

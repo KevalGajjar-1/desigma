@@ -1,4 +1,4 @@
-use crate::{bundled_for, requests_for, substitute, FontCache, FontError, FontRequest};
+use crate::{bundled_for, requests_for, script_requests_for, substitute, FontCache, FontError, FontRequest};
 use desigma_doc::Document;
 
 /// A font that was fetched or read from the cache.
@@ -35,7 +35,8 @@ pub fn ensure_fonts(doc: &Document, cache: &FontCache) -> FontReport {
 /// (e.g. installed system fonts) are skipped.
 pub fn ensure_fonts_with(doc: &Document, cache: &FontCache, is_available: impl Fn(&str) -> bool) -> FontReport {
     let mut report = FontReport::default();
-    for req in requests_for(doc) {
+    // Noto fallbacks for the complex scripts the text uses come with the fonts it names.
+    for req in requests_for(doc).into_iter().chain(script_requests_for(doc)) {
         let family = substitute(&req.family).map(str::to_string).unwrap_or_else(|| req.family.clone());
         let effective = FontRequest::new(family.clone(), req.weight, req.italic);
         if bundled_for(&effective).is_some() {

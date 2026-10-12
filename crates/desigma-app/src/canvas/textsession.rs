@@ -88,8 +88,13 @@ pub fn finish_text(app: &mut App, commit: bool) {
         app.sanitize();
     } else {
         let id = sess.id;
+        // text in Arabic, Hebrew or Devanagari needs its Noto fallback font (fetched once, then cached)
+        let complex = matches!(app.doc.get(id).map(|n| &n.kind), Some(NodeKind::Text(t)) if !desigma_fonts::scripts_in(&t.content).is_empty());
         app.run_tx(sess.tx);
         app.selection = vec![id];
+        if complex {
+            app.fonts.load_for(&app.doc);
+        }
     }
     app.changed();
 }
@@ -428,6 +433,11 @@ pub fn style_selection_as(app: &mut App, f: impl Fn(&mut TextStyle), kind: EditK
 /// Edits the base style of the edited text (paragraph level fields such as alignment).
 pub fn base_style(app: &mut App, f: impl Fn(&mut TextStyle)) {
     edit_props(app, Some((EditKind::Other, true)), |t, _, _| f(&mut t.style));
+}
+
+/// Edits the text properties of the open session's text (paragraph settings, lists, direction).
+pub fn edit_text_props(app: &mut App, f: impl Fn(&mut TextProps)) {
+    edit_props(app, Some((EditKind::Other, true)), |t, _, _| f(t));
 }
 
 /// Style summary of the open session's selection (for the inspector).

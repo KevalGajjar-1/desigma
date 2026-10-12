@@ -15,3 +15,7 @@ ttf-parser = "0.25"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 rayon = "1"
 tiny-skia.workspace = true
+
+[dev-dependencies]
+# Live tests fetch the Noto script fonts (ignored unless run with --ignored).
+desigma-fonts = { path = "../desigma-fonts" }

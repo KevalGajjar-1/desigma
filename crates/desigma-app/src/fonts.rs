@@ -23,7 +23,9 @@ pub struct FontsLoaded {
 impl FontLoader {
     /// Starts resolving the document's fonts; a previous load is abandoned.
     pub fn load_for(&mut self, doc: &Document) {
-        let requests = desigma_fonts::requests_for(doc);
+        // Fonts the text names, plus the Noto fallbacks of the complex scripts it uses (Arabic, Hebrew, Devanagari).
+        let mut requests = desigma_fonts::requests_for(doc);
+        requests.extend(desigma_fonts::script_requests_for(doc));
         if requests.is_empty() {
             self.pending = None;
             return;

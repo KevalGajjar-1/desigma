@@ -265,6 +265,21 @@ pub fn line_height_px(lh: LineHeight, size: f32) -> Option<f32> {
     }
 }
 
+// ------------------------------------------------------------------ OpenType features
+/// The value of OpenType feature `tag` in a style's feature list, if it is set.
+pub fn feature_value(features: &[(String, u32)], tag: &str) -> Option<u32> {
+    features.iter().find(|(t, _)| t == tag).map(|(_, v)| *v)
+}
+
+/// Sets (`Some`) or removes (`None`, back to the font's default) feature `tag`; the list stays sorted.
+pub fn set_feature(features: &mut Vec<(String, u32)>, tag: &str, value: Option<u32>) {
+    features.retain(|(t, _)| t != tag);
+    if let Some(v) = value {
+        features.push((tag.to_string(), v));
+    }
+    features.sort();
+}
+
 // ------------------------------------------------------------------ lists
 pub use desigma_doc::ListKind;
 use desigma_doc::{ListItem, MAX_LIST_LEVEL};

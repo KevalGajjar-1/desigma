@@ -17,6 +17,8 @@ use egui::{Color32, Id, Pos2, Rect, Ui, Vec2};
 pub enum PopKind {
     Effect(usize),
     Stroke,
+    /// Type settings of text layers: OpenType features and paragraph settings.
+    TextDetails,
 }
 
 #[derive(Clone, Debug)]
@@ -263,6 +265,7 @@ pub(super) fn popover_ui(app: &mut App, ui: &mut Ui, region: Rect) {
             }
         }
         PopKind::Stroke => super::stroke::popover_ui(app, ui, region, &st),
+        PopKind::TextDetails => super::typography::details_popover(app, ui, region, &st),
     }
 }
 

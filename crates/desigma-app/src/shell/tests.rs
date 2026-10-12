@@ -935,6 +935,7 @@ mod home;
 mod menus;
 mod proto;
 mod svg;
+mod typography;
 mod variables;
 
 mod assets_thumbs;
