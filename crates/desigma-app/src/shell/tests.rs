@@ -936,6 +936,7 @@ mod menus;
 mod proto;
 mod svg;
 mod variables;
+mod vector;
 
 mod assets_thumbs;
 mod libraries;
