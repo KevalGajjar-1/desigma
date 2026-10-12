@@ -179,7 +179,14 @@ mod tests {
 
     fn snap(s: &str) -> Snap {
         Snap {
-            props: TextProps { content: s.into(), style: TextStyle::default(), runs: vec![], auto_resize: TextAutoResize::WidthAndHeight, max_lines: None },
+            props: TextProps {
+                content: s.into(),
+                style: TextStyle::default(),
+                runs: vec![],
+                auto_resize: TextAutoResize::WidthAndHeight,
+                max_lines: None,
+                ..Default::default()
+            },
             caret: s.len(),
             anchor: s.len(),
         }

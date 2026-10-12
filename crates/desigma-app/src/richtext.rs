@@ -8,9 +8,9 @@
 //! keep runs normalised: sorted, non-overlapping, non-empty, never equal to the
 //! base style, with equal neighbours merged, and ranges on char boundaries.
 //!
-//! Lists: the document model has no list or indent attribute, so bulleted and
-//! numbered lists are emulated with literal prefixes ("• ", "1. ") at the start
-//! of each paragraph; there is no hanging indent.
+//! Lists: `TextProps::lists` marks whole paragraphs as bullet or numbered items at a nesting
+//! level; the renderer draws the markers. Content edits keep the list ranges aligned (see
+//! `desigma_doc::lists_for_splice`), so Enter inside an item continues the list.
 
 use desigma_doc::{LineHeight, Paint, TextCase, TextDecoration, TextProps, TextRun, TextStyle};
 use std::ops::Range;
@@ -179,6 +179,7 @@ pub fn splice(t: &mut TextProps, range: Range<usize>, new: &str, style: Option<T
     split_at(&mut segs, range.start);
     split_at(&mut segs, range.end);
     let delta = new.len() as isize - range.len() as isize;
+    let lists = desigma_doc::lists_for_splice(t, range.clone(), new);
     let mut out: Vec<Seg> = Vec::with_capacity(segs.len() + 1);
     let mut inserted = false;
     for s in segs {
@@ -198,6 +199,9 @@ pub fn splice(t: &mut TextProps, range: Range<usize>, new: &str, style: Option<T
     }
     t.content.replace_range(range.clone(), new);
     set_segments(t, out);
+    if let Some(l) = lists {
+        t.set_paragraph_lists(&l);
+    }
     range.start + new.len()
 }
 
@@ -216,6 +220,8 @@ pub struct Summary {
     pub fills: Mixed<Vec<Paint>>,
     pub decoration: Mixed<TextDecoration>,
     pub case: Mixed<TextCase>,
+    /// OpenType feature settings (sorted by tag).
+    pub features: Mixed<Vec<(String, u32)>>,
 }
 
 fn same<T: PartialEq + Clone>(items: &[&TextStyle], f: impl Fn(&TextStyle) -> T) -> Mixed<T> {
@@ -242,6 +248,11 @@ pub fn summary(t: &TextProps, range: Range<usize>) -> Summary {
         fills: same(&refs, |s| s.fills.clone()),
         decoration: same(&refs, |s| s.decoration),
         case: same(&refs, |s| s.case),
+        features: same(&refs, |s| {
+            let mut f = s.features.clone();
+            f.sort();
+            f
+        }),
     }
 }
 
@@ -254,26 +265,24 @@ pub fn line_height_px(lh: LineHeight, size: f32) -> Option<f32> {
     }
 }
 
+// ------------------------------------------------------------------ OpenType features
+/// The value of OpenType feature `tag` in a style's feature list, if it is set.
+pub fn feature_value(features: &[(String, u32)], tag: &str) -> Option<u32> {
+    features.iter().find(|(t, _)| t == tag).map(|(_, v)| *v)
+}
+
+/// Sets (`Some`) or removes (`None`, back to the font's default) feature `tag`; the list stays sorted.
+pub fn set_feature(features: &mut Vec<(String, u32)>, tag: &str, value: Option<u32>) {
+    features.retain(|(t, _)| t != tag);
+    if let Some(v) = value {
+        features.push((tag.to_string(), v));
+    }
+    features.sort();
+}
+
 // ------------------------------------------------------------------ lists
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ListKind {
-    Bullet,
-    Numbered,
-}
-
-pub const BULLET: &str = "\u{2022} ";
-
-/// Length in bytes of a list prefix at the start of `para`, with its kind.
-pub fn list_prefix(para: &str) -> Option<(ListKind, usize)> {
-    if para.starts_with(BULLET) {
-        return Some((ListKind::Bullet, BULLET.len()));
-    }
-    let digits = para.bytes().take_while(|b| b.is_ascii_digit()).count();
-    if digits > 0 && digits <= 4 && para[digits..].starts_with(". ") {
-        return Some((ListKind::Numbered, digits + 2));
-    }
-    None
-}
+pub use desigma_doc::ListKind;
+use desigma_doc::{ListItem, MAX_LIST_LEVEL};
 
 /// Byte ranges (excluding the newline) of the paragraphs touched by `range`.
 pub fn paragraphs_in(content: &str, range: Range<usize>) -> Vec<Range<usize>> {
@@ -290,85 +299,98 @@ pub fn paragraphs_in(content: &str, range: Range<usize>) -> Vec<Range<usize>> {
     out
 }
 
-/// Toggles a list of `kind` on the paragraphs touched by `range`: removes it
-/// if all of them already have that kind, otherwise (re)applies it. Returns
-/// the new range covering the same paragraphs.
-pub fn toggle_list(t: &mut TextProps, range: Range<usize>, kind: ListKind) -> Range<usize> {
-    let paras = paragraphs_in(&t.content, range.clone());
-    if paras.is_empty() {
-        return range;
-    }
-    let all_have = paras.iter().all(|p| list_prefix(&t.content[p.clone()]).map(|(k, _)| k) == Some(kind));
-    // Work back to front so earlier offsets stay valid, then renumber.
-    let first = paras.first().unwrap().start;
-    let mut last_end = paras.last().unwrap().end;
-    for p in paras.iter().rev() {
-        let existing = list_prefix(&t.content[p.clone()]);
-        if let Some((_, n)) = existing {
-            splice(t, p.start..p.start + n, "", None);
-            last_end -= n;
+/// Indices of the paragraphs touched by `range`.
+fn para_indices(content: &str, range: Range<usize>) -> Range<usize> {
+    let all = desigma_doc::paragraph_ranges(content);
+    let touched = paragraphs_in(content, range);
+    match (touched.first(), touched.last()) {
+        (Some(a), Some(b)) => {
+            let first = all.iter().position(|p| p.start == a.start).unwrap_or(0);
+            let last = all.iter().position(|p| p.start == b.start).unwrap_or(first);
+            first..last + 1
         }
-        if !all_have {
-            let style = if t.content.is_empty() || p.start >= t.content.len() { None } else { Some(style_at(t, p.start)) };
-            let prefix = match kind {
-                ListKind::Bullet => BULLET.to_string(),
-                ListKind::Numbered => "1. ".to_string(),
-            };
-            splice(t, p.start..p.start, &prefix, style);
-            last_end += prefix.len();
-        }
+        _ => 0..0,
     }
-    if !all_have && kind == ListKind::Numbered {
-        last_end = renumber(t, first, last_end);
-    }
-    first..last_end
 }
 
-/// Renumbers consecutive numbered paragraphs inside `first..last_end` from 1; returns the new end.
-fn renumber(t: &mut TextProps, first: usize, mut last_end: usize) -> usize {
-    let mut n = 1;
-    loop {
-        // offsets shift as numbers change width, so recompute the paragraphs each time
-        let cur = paragraphs_in(&t.content, first..last_end.max(first + 1));
-        let Some(p) = cur.get(n - 1).cloned() else { break };
-        if let Some((ListKind::Numbered, len)) = list_prefix(&t.content[p.clone()]) {
-            let label = format!("{n}. ");
-            if t.content[p.start..p.start + len] != label {
-                let style = Some(style_at(t, p.start));
-                splice(t, p.start..p.start + len, &label, style);
-                last_end = (last_end as isize + label.len() as isize - len as isize) as usize;
-            }
-            n += 1;
-        } else {
-            break;
-        }
-    }
-    last_end
+/// The list kind shared by every paragraph touched by `range` (`None` if any is not a list item
+/// or they differ).
+pub fn list_kind_in(t: &TextProps, range: Range<usize>) -> Option<ListKind> {
+    let items = t.paragraph_lists();
+    let idx = para_indices(&t.content, range);
+    let first = items.get(idx.start).copied().flatten()?.kind;
+    idx.clone().all(|i| items.get(i).copied().flatten().is_some_and(|it| it.kind == first)).then_some(first)
 }
 
-/// Text to insert after Enter at `caret` to continue a list: the next bullet or
-/// number. `None` when the paragraph is not a list item. When the item is
-/// empty (only its prefix) returns `Some` with `exit = true`: the prefix
-/// should be removed instead of continuing.
-pub fn list_continuation(content: &str, caret: usize) -> Option<(String, bool, Range<usize>)> {
-    let ps = paragraphs_in(content, caret..caret);
-    let p = ps.first()?.clone();
-    let para = &content[p.clone()];
-    let (kind, n) = list_prefix(para)?;
-    if caret < p.start + n {
-        return None;
+/// Toggles a list of `kind` on the paragraphs touched by `range`: removes the list if all of them
+/// already have that kind, otherwise makes them items of that kind (keeping their nesting level).
+pub fn toggle_list(t: &mut TextProps, range: Range<usize>, kind: ListKind) {
+    let idx = para_indices(&t.content, range.clone());
+    if idx.is_empty() {
+        return;
     }
-    if para.len() == n {
-        return Some((String::new(), true, p.start..p.start + n));
+    let all_have = list_kind_in(t, range) == Some(kind);
+    let mut items = t.paragraph_lists();
+    for i in idx {
+        items[i] = if all_have { None } else { Some(ListItem { kind, level: items[i].map_or(0, |it| it.level) }) };
     }
-    let next = match kind {
-        ListKind::Bullet => BULLET.to_string(),
-        ListKind::Numbered => {
-            let num: u32 = para[..n - 2].parse().unwrap_or(0);
-            format!("{}. ", num + 1)
+    t.set_paragraph_lists(&items);
+}
+
+/// Indents (`delta` > 0) or outdents list items touched by `range`. Paragraphs that are not list
+/// items are left alone. Returns whether anything changed.
+pub fn change_level(t: &mut TextProps, range: Range<usize>, delta: i8) -> bool {
+    let idx = para_indices(&t.content, range);
+    let mut items = t.paragraph_lists();
+    let mut changed = false;
+    for i in idx {
+        if let Some(it) = items[i].as_mut() {
+            let level = (it.level as i16 + delta as i16).clamp(0, MAX_LIST_LEVEL as i16) as u8;
+            changed |= level != it.level;
+            it.level = level;
         }
-    };
-    Some((next, false, p))
+    }
+    if changed {
+        t.set_paragraph_lists(&items);
+    }
+    changed
+}
+
+/// What Enter does at a collapsed caret in an empty list item: outdent a nested item or end the
+/// list. Returns whether the paragraph holding `caret` was such an item (and was changed).
+pub fn exit_empty_item(t: &mut TextProps, caret: usize) -> bool {
+    let idx = para_indices(&t.content, caret..caret);
+    let Some(i) = idx.clone().next() else { return false };
+    let paras = desigma_doc::paragraph_ranges(&t.content);
+    let mut items = t.paragraph_lists();
+    match items.get(i).copied().flatten() {
+        Some(it) if paras[i].is_empty() => {
+            items[i] = if it.level > 0 { Some(ListItem { level: it.level - 1, ..it }) } else { None };
+            t.set_paragraph_lists(&items);
+            true
+        }
+        _ => false,
+    }
+}
+
+/// Backspace at the very start of a list item's text: outdent a nested item or turn the item into a
+/// plain paragraph. Returns whether `caret` was at such a position.
+pub fn backspace_at_item_start(t: &mut TextProps, caret: usize) -> bool {
+    let idx = para_indices(&t.content, caret..caret);
+    let Some(i) = idx.clone().next() else { return false };
+    let paras = desigma_doc::paragraph_ranges(&t.content);
+    if paras[i].start != caret {
+        return false;
+    }
+    let mut items = t.paragraph_lists();
+    match items.get(i).copied().flatten() {
+        Some(it) => {
+            items[i] = if it.level > 0 { Some(ListItem { level: it.level - 1, ..it }) } else { None };
+            t.set_paragraph_lists(&items);
+            true
+        }
+        None => false,
+    }
 }
 
 #[cfg(test)]
@@ -377,7 +399,14 @@ mod tests {
     use desigma_doc::{Color, TextAutoResize};
 
     fn props(s: &str) -> TextProps {
-        TextProps { content: s.into(), style: TextStyle::default(), runs: vec![], auto_resize: TextAutoResize::WidthAndHeight, max_lines: None }
+        TextProps {
+            content: s.into(),
+            style: TextStyle::default(),
+            runs: vec![],
+            auto_resize: TextAutoResize::WidthAndHeight,
+            max_lines: None,
+            ..Default::default()
+        }
     }
 
     fn bold(s: &mut TextStyle) {
@@ -573,53 +602,99 @@ mod tests {
         assert_eq!(t.style.font_weight, 700);
     }
 
+    fn kinds(t: &TextProps) -> Vec<Option<(ListKind, u8)>> {
+        t.paragraph_lists().iter().map(|i| i.map(|i| (i.kind, i.level))).collect()
+    }
+
     #[test]
-    fn bullets_toggle_and_keep_styles() {
+    fn lists_toggle_without_touching_the_text() {
         let mut t = props("one\ntwo\nthree");
         let n = t.content.len();
-        let r = toggle_list(&mut t, 0..n, ListKind::Bullet);
-        assert_eq!(t.content, "• one\n• two\n• three");
-        assert_eq!(r, 0..t.content.len());
+        toggle_list(&mut t, 0..n, ListKind::Bullet);
+        assert_eq!(t.content, "one\ntwo\nthree", "no literal prefixes any more");
+        assert_eq!(kinds(&t), vec![Some((ListKind::Bullet, 0)); 3]);
+        assert_eq!(list_kind_in(&t, 0..n), Some(ListKind::Bullet));
         // toggling again removes
-        let r2 = toggle_list(&mut t, r, ListKind::Bullet);
-        assert_eq!(t.content, "one\ntwo\nthree");
-        assert_eq!(r2, 0..13);
+        toggle_list(&mut t, 0..n, ListKind::Bullet);
+        assert!(t.lists.is_empty());
         check(&t);
     }
 
     #[test]
-    fn numbered_lists_renumber_and_switch_kind() {
+    fn numbered_lists_switch_kind_and_touch_only_selected_paragraphs() {
         let mut t = props("a\nb\nc");
-        let r = toggle_list(&mut t, 0..5, ListKind::Numbered);
-        assert_eq!(t.content, "1. a\n2. b\n3. c");
-        let r = toggle_list(&mut t, r, ListKind::Bullet);
-        assert_eq!(t.content, "• a\n• b\n• c");
-        let _ = toggle_list(&mut t, r, ListKind::Numbered);
-        assert_eq!(t.content, "1. a\n2. b\n3. c");
-        // only the touched paragraph
+        toggle_list(&mut t, 0..5, ListKind::Numbered);
+        assert_eq!(kinds(&t), vec![Some((ListKind::Numbered, 0)); 3]);
+        toggle_list(&mut t, 0..5, ListKind::Bullet);
+        assert_eq!(kinds(&t), vec![Some((ListKind::Bullet, 0)); 3], "a different kind replaces the list");
         let mut t = props("x\ny");
         toggle_list(&mut t, 3..3, ListKind::Bullet);
-        assert_eq!(t.content, "x\n• y");
+        assert_eq!(kinds(&t), vec![None, Some((ListKind::Bullet, 0))]);
+        // a mixed selection becomes the kind first
+        let mut t = props("x\ny");
+        toggle_list(&mut t, 3..3, ListKind::Bullet);
+        toggle_list(&mut t, 0..3, ListKind::Bullet);
+        assert_eq!(kinds(&t), vec![Some((ListKind::Bullet, 0)); 2]);
     }
 
     #[test]
-    fn list_in_multibyte_and_styled_text() {
+    fn levels_change_with_tab_and_stay_in_range() {
+        let mut t = props("a\nb\nplain");
+        toggle_list(&mut t, 0..3, ListKind::Numbered);
+        assert!(change_level(&mut t, 2..3, 1));
+        assert_eq!(kinds(&t), vec![Some((ListKind::Numbered, 0)), Some((ListKind::Numbered, 1)), None]);
+        assert!(!change_level(&mut t, 4..9, 1), "plain paragraphs have no level");
+        assert!(change_level(&mut t, 2..3, -1));
+        assert!(!change_level(&mut t, 2..3, -1), "level 0 is the floor");
+        for _ in 0..20 {
+            change_level(&mut t, 0..1, 1);
+        }
+        assert_eq!(kinds(&t)[0], Some((ListKind::Numbered, 8)));
+    }
+
+    #[test]
+    fn enter_and_backspace_rules() {
+        let mut t = props("one");
+        toggle_list(&mut t, 0..0, ListKind::Bullet);
+        // splitting keeps the list
+        splice(&mut t, 3..3, "\n", None);
+        splice(&mut t, 4..4, "\n", None);
+        assert_eq!(t.content, "one\n\n");
+        assert_eq!(kinds(&t), vec![Some((ListKind::Bullet, 0)); 3]);
+        // an empty item: Enter ends the list for it
+        assert!(exit_empty_item(&mut t, 4));
+        assert_eq!(kinds(&t), vec![Some((ListKind::Bullet, 0)), None, Some((ListKind::Bullet, 0))]);
+        assert!(!exit_empty_item(&mut t, 0), "not an empty item");
+        // nested empty items outdent first
+        let mut n = props("a");
+        toggle_list(&mut n, 0..0, ListKind::Bullet);
+        splice(&mut n, 1..1, "\n", None);
+        change_level(&mut n, 2..2, 1);
+        assert!(exit_empty_item(&mut n, 2));
+        assert_eq!(kinds(&n)[1], Some((ListKind::Bullet, 0)));
+        // backspace at the start of an item unlists it
+        let mut b = props("ab");
+        toggle_list(&mut b, 0..0, ListKind::Numbered);
+        assert!(!backspace_at_item_start(&mut b, 1));
+        assert!(backspace_at_item_start(&mut b, 0));
+        assert!(b.lists.is_empty());
+    }
+
+    #[test]
+    fn list_membership_follows_edits_and_styles() {
         let mut t = props("é\n😀");
         apply_style(&mut t, 0..2, bold);
         let n = t.content.len();
         toggle_list(&mut t, 0..n, ListKind::Bullet);
-        assert_eq!(t.content, "• é\n• 😀");
         check(&t);
-        assert_eq!(style_at(&t, 0).font_weight, 700, "prefix takes the paragraph's style");
-    }
-
-    #[test]
-    fn enter_continues_or_ends_a_list() {
-        assert_eq!(list_continuation("• a", 5).map(|(s, e, _)| (s, e)), Some(("• ".to_string(), false)));
-        assert_eq!(list_continuation("1. a\n2. b", 9).map(|(s, e, _)| (s, e)), Some(("3. ".to_string(), false)));
-        assert_eq!(list_continuation("• ", 4).map(|(s, e, _)| (s, e)), Some((String::new(), true)));
-        assert_eq!(list_continuation("plain", 3), None);
-        assert_eq!(list_continuation("• a", 1), None, "caret inside the prefix");
+        // typing in the first item shifts the range of the second
+        splice(&mut t, 0..0, "x", None);
+        assert_eq!(kinds(&t), vec![Some((ListKind::Bullet, 0)); 2]);
+        // deleting the newline merges the items into one
+        let nl = t.content.find('\n').unwrap();
+        splice(&mut t, nl..nl + 1, "", None);
+        assert_eq!(kinds(&t), vec![Some((ListKind::Bullet, 0))]);
+        check(&t);
     }
 
     #[test]

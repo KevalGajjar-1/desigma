@@ -540,7 +540,14 @@ mod tests {
 
     #[test]
     fn text_estimate_scales_with_content() {
-        let t = |s: &str| TextProps { content: s.into(), style: Default::default(), runs: vec![], auto_resize: Default::default(), max_lines: None };
+        let t = |s: &str| TextProps {
+            content: s.into(),
+            style: Default::default(),
+            runs: vec![],
+            auto_resize: Default::default(),
+            max_lines: None,
+            ..Default::default()
+        };
         assert!(estimate_text_size(&t("hello world")).x > estimate_text_size(&t("hi")).x);
         assert!(estimate_text_size(&t("a\nb")).y > estimate_text_size(&t("a")).y);
     }

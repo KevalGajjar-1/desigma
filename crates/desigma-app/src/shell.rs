@@ -431,6 +431,24 @@ impl eframe::App for Shell {
         [0.17, 0.17, 0.17, 1.0]
     }
 
+    /// Tab belongs to the text session (it nests list items): take it out of the input before egui
+    /// uses it to move keyboard focus between widgets.
+    fn raw_input_hook(&mut self, ctx: &egui::Context, raw: &mut egui::RawInput) {
+        let Some(sess) = self.app.canvas.text.as_mut() else { return };
+        if ctx.memory(|m| m.focused()).is_some() {
+            return;
+        }
+        raw.events.retain(|e| match e {
+            egui::Event::Key { key: egui::Key::Tab, pressed, modifiers, .. } if !modifiers.command => {
+                if *pressed {
+                    sess.tabs.push(modifiers.shift);
+                }
+                false
+            }
+            _ => true,
+        });
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.app.poll_fonts();
         if self.app.fonts.is_loading() {

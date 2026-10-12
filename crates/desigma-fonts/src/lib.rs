@@ -18,6 +18,7 @@ mod ensure;
 mod error;
 pub mod fontsource;
 mod request;
+mod scripts;
 mod subst;
 
 pub use assets::{bundled, bundled_for, FontAsset};
@@ -25,4 +26,5 @@ pub use cache::{Fetch, FontCache, Sidecar};
 pub use ensure::{ensure_fonts, ensure_fonts_with, FontReport, LoadedFont};
 pub use error::FontError;
 pub use request::{requests_for, FontRequest};
+pub use scripts::{script_of, script_requests_for, scripts_in, Script};
 pub use subst::{substitute, SUBSTITUTIONS};

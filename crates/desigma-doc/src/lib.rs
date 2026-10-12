@@ -15,6 +15,7 @@ mod node;
 mod paint;
 mod prototype;
 mod settings;
+mod textmodel;
 mod variables;
 mod variables_apply;
 mod variables_edit;
@@ -29,6 +30,7 @@ pub use node::*;
 pub use paint::*;
 pub use prototype::*;
 pub use settings::*;
+pub use textmodel::*;
 pub use variables::*;
 pub use variables_apply::*;
 pub use variables_edit::*;
@@ -230,8 +232,21 @@ impl Document {
         serde_json::to_string_pretty(self)
     }
 
+    /// Parses a native document. Text written by older versions that emulated lists with
+    /// literal bullet and "1. " prefixes is converted to real lists.
     pub fn from_json(s: &str) -> serde_json::Result<Self> {
-        serde_json::from_str(s)
+        let mut doc: Self = serde_json::from_str(s)?;
+        doc.migrate_text();
+        Ok(doc)
+    }
+
+    /// Converts literal list prefixes of every text node to real lists (see [`migrate_literal_lists`]).
+    pub fn migrate_text(&mut self) {
+        for node in self.nodes.values_mut() {
+            if let NodeKind::Text(t) = &mut node.kind {
+                migrate_literal_lists(t);
+            }
+        }
     }
 }
 

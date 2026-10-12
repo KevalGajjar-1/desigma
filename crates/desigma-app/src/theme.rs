@@ -440,6 +440,12 @@ pub fn font_ruler() -> FontId {
 }
 /// Selected text highlight: #0c8ce9 at 35% alpha.
 pub const TEXT_SELECTION: Color32 = Color32::from_rgba_premultiplied(4, 49, 81, 89);
+/// Find matches on the canvas text: #0c8ce9 at 35% alpha, like a selection.
+pub const FIND_CANVAS_MATCH: Color32 = TEXT_SELECTION;
+/// Outline of the current find match.
+pub const FIND_CANVAS_MATCH_CURRENT: Color32 = BG_BRAND;
+/// At most this many matches in view are highlighted per frame.
+pub const FIND_CANVAS_MATCH_MAX: usize = 600;
 pub const NUDGE: f32 = 1.0;
 pub const NUDGE_BIG: f32 = 10.0;
 

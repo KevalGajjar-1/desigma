@@ -37,6 +37,7 @@ fn states() -> Vec<(&'static str, Options)> {
         ("gradient picker", Options { select: Some("Hero".into()), panel: Some("picker-gradient".into()), ..Options::default() }),
         ("effects menu", Options { select: Some("Hero".into()), panel: Some("effects-menu".into()), ..Options::default() }),
         ("stroke settings", Options { select: Some("Hero".into()), panel: Some("stroke-settings".into()), ..Options::default() }),
+        ("type settings", Options { select: Some("Continue".into()), panel: Some("type-details".into()), ..Options::default() }),
         ("noise settings", Options { select: Some("Hero".into()), panel: Some("effect-noise".into()), ..Options::default() }),
         ("texture settings", Options { select: Some("Hero".into()), panel: Some("effect-texture".into()), ..Options::default() }),
         ("glass settings", Options { select: Some("Hero".into()), panel: Some("effect-glass".into()), ..Options::default() }),

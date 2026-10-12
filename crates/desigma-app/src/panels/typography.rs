@@ -47,6 +47,7 @@ pub fn combine(a: &Summary, b: &Summary) -> Summary {
         fills: m(&a.fills, &b.fills),
         decoration: m(&a.decoration, &b.decoration),
         case: m(&a.case, &b.case),
+        features: m(&a.features, &b.features),
     }
 }
 
@@ -143,6 +144,18 @@ pub(super) fn section(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[NodeId
     let more_id = ui.id().with("typo-more");
     let more = ui.data(|d| d.get_temp::<bool>(more_id)).unwrap_or(false);
 
+    // "Type settings" (Details popover) button, left of the "More" toggle in the title row.
+    let tb = pane.rect(
+        theme::SECTION_TRAILING_X - theme::PANEL_ACTION_BUTTON - 2.0,
+        -theme::SECTION_TITLE_HEIGHT + 8.0,
+        theme::PANEL_ACTION_BUTTON,
+        theme::PANEL_ACTION_BUTTON,
+    );
+    let details_open = app.props.pop.as_ref().is_some_and(|p| p.kind == super::effects::PopKind::TextDetails);
+    if widgets::icon_button(ui, tb, "type-details", crate::icons::Icon::StrokeSettings, details_open, "Type settings").clicked() {
+        app.props.pop = (!details_open).then(|| super::effects::PopState { kind: super::effects::PopKind::TextDetails, anchor: tb, ids: sel.to_vec() });
+    }
+
     // "More type settings" toggle sits in the title row (the title was drawn by the caller).
     let mb = pane.rect(theme::SECTION_TRAILING_X, -theme::SECTION_TITLE_HEIGHT + 8.0, theme::PANEL_ACTION_BUTTON, theme::PANEL_ACTION_BUTTON);
     let mr = ui.interact(mb, ui.id().with("typo-more-btn"), Sense::click());
@@ -212,8 +225,11 @@ pub(super) fn section(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[NodeId
         let a = [TextAlignH::Left, TextAlignH::Center, TextAlignH::Right][i];
         set_base(app, sel, |s| s.align_h = a);
     }
-    // list buttons share the row (emulated with literal prefixes, see richtext)
-    if let Some(i) = seg_text(ui, pane, theme::FIELD_COL_X[1], "list", &["\u{2022}", "1."], None, theme::SEGMENT_W) {
+    // list buttons share the row
+    // the buttons show the list kind of the edited paragraphs (or of the whole layer)
+    let list_range = if in_session { app.canvas.text.as_ref().map(|s| s.range()) } else { Some(0..t.content.len()) };
+    let list_now = list_range.and_then(|r| richtext::list_kind_in(t, r)).map(|k| if k == ListKind::Bullet { 0 } else { 1 });
+    if let Some(i) = seg_text(ui, pane, theme::FIELD_COL_X[1], "list", &["\u{2022}", "1."], list_now, theme::SEGMENT_W) {
         ts::text_command(app, ts::TextCmd::List(if i == 0 { ListKind::Bullet } else { ListKind::Numbered }));
     }
     row_end(pane);
@@ -447,4 +463,280 @@ fn families_cached(ctx: &egui::Context) -> std::sync::Arc<Vec<String>> {
     let v = std::sync::Arc::new(desigma_render::available_families());
     ctx.data_mut(|d| d.insert_temp(key, (gen, v.clone())));
     v
+}
+
+// ------------------------------------------------------------------ type settings: Details
+const DETAILS_W: f32 = 312.0;
+const DETAIL_LABEL_X: f32 = 16.0;
+const DETAIL_CONTROL_X: f32 = 152.0;
+const DETAIL_CONTROL_W: f32 = 144.0;
+const SET_CHIP_W: f32 = 32.0;
+const SET_CHIP_GAP: f32 = 2.0;
+const SETS_PER_ROW: usize = 8;
+
+/// Segmented control with text labels inside `rect` (items share its width).
+fn seg_rect(ui: &mut Ui, rect: Rect, key: &str, labels: &[&str], selected: Option<usize>) -> Option<usize> {
+    let mut out = None;
+    let n = labels.len();
+    let w = rect.width() / n as f32;
+    for (i, label) in labels.iter().enumerate() {
+        let r = Rect::from_min_size(Pos2::new(rect.left() + i as f32 * w, rect.top()), Vec2::new(w, rect.height()));
+        let radius = match (i == 0, i + 1 == n) {
+            (true, true) => theme::cr(theme::RADIUS_MEDIUM),
+            (true, false) => theme::cr_each(theme::RADIUS_MEDIUM, 0, 0, theme::RADIUS_MEDIUM),
+            (false, true) => theme::cr_each(0, theme::RADIUS_MEDIUM, theme::RADIUS_MEDIUM, 0),
+            _ => theme::cr(0),
+        };
+        let resp = ui.interact(r, ui.id().with(("segr", key, i)), Sense::click());
+        let sel = selected == Some(i);
+        let bg = if sel {
+            theme::BG_TERTIARY
+        } else if resp.hovered() {
+            theme::BG_TERTIARY.gamma_multiply(0.6)
+        } else {
+            theme::BG_SECONDARY
+        };
+        ui.painter().rect_filled(r, radius, bg);
+        ui.painter().text(r.center(), Align2::CENTER_CENTER, *label, theme::font_body_strong(), if sel { theme::ICON } else { theme::ICON_SECONDARY });
+        if i > 0 {
+            widgets::vline(ui.painter(), r.left(), r.top(), r.bottom(), theme::BG);
+        }
+        if resp.clicked() {
+            out = Some(i);
+        }
+    }
+    out
+}
+
+/// A labelled row of the Details popover (32px pitch). `dim` greys the label (feature missing in the font).
+fn detail_row(ui: &mut Ui, body: Rect, y: f32, label: &str, dim: bool, control: impl FnOnce(&mut Ui, Rect)) {
+    let line = Rect::from_min_size(Pos2::new(body.left(), body.top() + 8.0 + y), Vec2::new(body.width(), 24.0));
+    let font = theme::font_body();
+    let color = if dim { theme::TEXT_TERTIARY } else { theme::TEXT_SECONDARY };
+    widgets::text_on_baseline(ui.painter(), body.left() + DETAIL_LABEL_X, widgets::centered_baseline(line, &font), label, font, color);
+    control(ui, Rect::from_min_size(Pos2::new(body.left() + DETAIL_CONTROL_X, line.top()), Vec2::new(DETAIL_CONTROL_W, 24.0)));
+}
+
+/// OpenType feature tags of the face a style resolves to, cached per font generation.
+fn features_cached(ctx: &egui::Context, family: &str, weight: u16, italic: bool) -> std::sync::Arc<Vec<String>> {
+    let key = egui::Id::new(("typo-features", family, weight, italic));
+    let gen = desigma_render::font_generation();
+    if let Some((g, v)) = ctx.data(|d| d.get_temp::<(usize, std::sync::Arc<Vec<String>>)>(key)) {
+        if g == gen {
+            return v;
+        }
+    }
+    let v = std::sync::Arc::new(desigma_render::font_features(family, weight, italic));
+    ctx.data_mut(|d| d.insert_temp(key, (gen, v.clone())));
+    v
+}
+
+/// Applies `f` to the text properties (paragraph settings, lists, direction) of the edited text or of every selected layer.
+pub fn set_text_props(app: &mut App, sel: &[NodeId], f: impl Fn(&mut TextProps)) {
+    if editing(app, sel) {
+        ts::edit_text_props(app, &f);
+        return;
+    }
+    app.edit_nodes(sel, |n| {
+        if let NodeKind::Text(t) = &mut n.kind {
+            f(t);
+            n.size = layout::fit_text(t, n.size);
+        }
+    });
+}
+
+/// Sets (`Some`) or removes (`None`) OpenType features on the edited range / selected layers.
+fn set_features(app: &mut App, sel: &[NodeId], changes: Vec<(&str, Option<u32>)>) {
+    let changes: Vec<(String, Option<u32>)> = changes.into_iter().map(|(t, v)| (t.to_string(), v)).collect();
+    set_style(app, sel, move |s| {
+        for (tag, v) in &changes {
+            richtext::set_feature(&mut s.features, tag, *v);
+        }
+    });
+}
+
+/// Rows of the Details popover for a font with `sets` stylistic sets.
+fn details_rows(sets: usize) -> f32 {
+    let chips = if sets == 0 { 0 } else { 1 + sets.div_ceil(SETS_PER_ROW) };
+    (7 + chips + 7) as f32 + 0.25
+}
+
+/// The Details popover of the type settings: number styles, fractions, ligatures, stylistic sets and paragraph settings.
+pub(super) fn details_popover(app: &mut App, ui: &mut Ui, region: Rect, st: &super::effects::PopState) {
+    let ctx = ui.ctx().clone();
+    let ids = st.ids.clone();
+    let Some(t) = ids.first().and_then(|id| match app.doc.get(*id).map(|n| &n.kind) {
+        Some(NodeKind::Text(t)) => Some(t.clone()),
+        _ => None,
+    }) else {
+        app.props.pop = None;
+        return;
+    };
+    let sum = if editing(app, &ids) { ts::session_summary(app) } else { nodes_summary(app, &ids) };
+    let Some(sum) = sum else {
+        app.props.pop = None;
+        return;
+    };
+    let feats = sum.features.clone().unwrap_or_default();
+    let family = sum.family.clone().unwrap_or_else(|| t.style.font_family.clone());
+    let available = features_cached(&ctx, &family, sum.weight.unwrap_or(t.style.font_weight), sum.italic.unwrap_or(t.style.italic));
+    let has = |tag: &str| available.is_empty() || available.iter().any(|f| f == tag);
+    let sets: Vec<u32> = (1..=20u32).filter(|i| available.iter().any(|f| *f == format!("ss{i:02}"))).collect();
+    let height = widgets::popover::HEADER_H + 8.0 + details_rows(sets.len()) * widgets::popover::ROW_H + 8.0;
+    let val = |tag: &str| richtext::feature_value(&feats, tag);
+    let pop = widgets::popover::show(&ctx, egui::Id::new("inspector-popover"), st.anchor, region, DETAILS_W, height, "Type settings", |ui, body| {
+        let y = std::cell::Cell::new(0.0f32);
+        let next = || {
+            let v = y.get();
+            y.set(v + widgets::popover::ROW_H);
+            v
+        };
+
+        // ---- numbers
+        let spacing = ["Default", "Tabular", "Proportional"];
+        let cur = if val("tnum") == Some(1) {
+            1
+        } else if val("pnum") == Some(1) {
+            2
+        } else {
+            0
+        };
+        detail_row(ui, body, next(), "Number spacing", !has("tnum"), |ui, r| {
+            let items = spacing.map(String::from);
+            if let Some(i) = dropdown(ui, r, "det-spacing", spacing[cur], &items) {
+                let (tn, pn) = match i {
+                    1 => (Some(1), None),
+                    2 => (None, Some(1)),
+                    _ => (None, None),
+                };
+                set_features(app, &ids, vec![("tnum", tn), ("pnum", pn)]);
+            }
+        });
+        let figures = ["Default", "Lining", "Oldstyle"];
+        let cur = if val("lnum") == Some(1) {
+            1
+        } else if val("onum") == Some(1) {
+            2
+        } else {
+            0
+        };
+        detail_row(ui, body, next(), "Number style", !has("lnum") && !has("onum"), |ui, r| {
+            let items = figures.map(String::from);
+            if let Some(i) = dropdown(ui, r, "det-figures", figures[cur], &items) {
+                let (l, o) = match i {
+                    1 => (Some(1), None),
+                    2 => (None, Some(1)),
+                    _ => (None, None),
+                };
+                set_features(app, &ids, vec![("lnum", l), ("onum", o)]);
+            }
+        });
+        for (label, tag, key) in [("Fractions", "frac", "det-frac"), ("Slashed zero", "zero", "det-zero"), ("Case sensitive forms", "case", "det-case")] {
+            detail_row(ui, body, next(), label, !has(tag), |ui, r| {
+                widgets::record(ui, key, r);
+                if let Some(on) = widgets::popover::check(ui, r, key, val(tag) == Some(1)) {
+                    set_features(app, &ids, vec![(tag, on.then_some(1))]);
+                }
+            });
+        }
+        // ligatures and contextual alternates are on unless switched off
+        for (label, tag, key) in [("Ligatures", "liga", "det-liga"), ("Contextual alternates", "calt", "det-calt")] {
+            detail_row(ui, body, next(), label, !has(tag), |ui, r| {
+                widgets::record(ui, key, r);
+                if let Some(on) = widgets::popover::check(ui, r, key, val(tag) != Some(0)) {
+                    set_features(app, &ids, vec![(tag, (!on).then_some(0))]);
+                }
+            });
+        }
+
+        // ---- stylistic sets (only those the font has)
+        if !sets.is_empty() {
+            let top = next();
+            detail_row(ui, body, top, "Stylistic sets", false, |_, _| {});
+            for (row, chunk) in sets.chunks(SETS_PER_ROW).enumerate() {
+                let line_y = next();
+                for (i, set) in chunk.iter().enumerate() {
+                    let tag = format!("ss{set:02}");
+                    let on = val(&tag) == Some(1);
+                    let x = body.left() + DETAIL_LABEL_X + i as f32 * (SET_CHIP_W + SET_CHIP_GAP);
+                    let r = Rect::from_min_size(Pos2::new(x, body.top() + 8.0 + line_y), Vec2::new(SET_CHIP_W, 24.0));
+                    widgets::record(ui, &format!("det-ss-{set}"), r);
+                    let resp = ui.interact(r, ui.id().with(("det-ss", row, i)), Sense::click());
+                    let bg = if on {
+                        theme::BG_BRAND
+                    } else if resp.hovered() {
+                        theme::BG_TERTIARY
+                    } else {
+                        theme::BG_SECONDARY
+                    };
+                    ui.painter().rect_filled(r, theme::cr(theme::RADIUS_MEDIUM), bg);
+                    ui.painter().text(
+                        r.center(),
+                        Align2::CENTER_CENTER,
+                        format!("{set}"),
+                        theme::font_body(),
+                        if on { Color32::WHITE } else { theme::TEXT_SECONDARY },
+                    );
+                    resp.clone().on_hover_text(format!("Stylistic set {set}"));
+                    if resp.clicked() {
+                        set_features(app, &ids, vec![(tag.as_str(), (!on).then_some(1))]);
+                    }
+                }
+            }
+        }
+
+        // ---- paragraph
+        let sep = body.top() + 8.0 + y.get() - 4.0;
+        widgets::hline(ui.painter(), body.left(), body.right(), sep, theme::BORDER);
+        y.set(y.get() + 8.0);
+        let p = t.paragraph.clone();
+        detail_row(ui, body, next(), "Paragraph indent", false, |ui, r| {
+            if let Some(v) = field::num_field(ui, r, "det-indent", Prefix::None, Some(p.indent), "") {
+                set_text_props(app, &ids, |t| t.paragraph.indent = v.max(0.0));
+            }
+        });
+        detail_row(ui, body, next(), "Paragraph spacing", false, |ui, r| {
+            if let Some(v) = field::num_field(ui, r, "det-pspacing", Prefix::None, Some(t.style.paragraph_spacing), "") {
+                set_base(app, &ids, |s| s.paragraph_spacing = v.max(0.0));
+            }
+        });
+        detail_row(ui, body, next(), "List spacing", false, |ui, r| {
+            if let Some(v) = field::num_field(ui, r, "det-lspacing", Prefix::None, Some(p.list_spacing), "") {
+                set_text_props(app, &ids, |t| t.paragraph.list_spacing = v.max(0.0));
+            }
+        });
+        detail_row(ui, body, next(), "Hanging punctuation", false, |ui, r| {
+            widgets::record(ui, "det-hangp", r);
+            if let Some(on) = widgets::popover::check(ui, r, "det-hangp", p.hanging_punctuation) {
+                set_text_props(app, &ids, |t| t.paragraph.hanging_punctuation = on);
+            }
+        });
+        detail_row(ui, body, next(), "Hanging lists", false, |ui, r| {
+            if let Some(on) = widgets::popover::check(ui, r, "det-hangl", p.hanging_list) {
+                set_text_props(app, &ids, |t| t.paragraph.hanging_list = on);
+            }
+        });
+        detail_row(ui, body, next(), "Vertical trim", false, |ui, r| {
+            let items = ["Standard", "Cap height"].map(String::from);
+            let cur = if p.leading_trim == LeadingTrim::CapHeight { 1 } else { 0 };
+            if let Some(i) = dropdown(ui, r, "det-trim", &items[cur], &items) {
+                set_text_props(app, &ids, |t| t.paragraph.leading_trim = if i == 1 { LeadingTrim::CapHeight } else { LeadingTrim::None });
+            }
+        });
+        detail_row(ui, body, next(), "Text direction", false, |ui, r| {
+            let cur = match t.direction {
+                TextDirection::Auto => 0,
+                TextDirection::Ltr => 1,
+                TextDirection::Rtl => 2,
+            };
+            widgets::record(ui, "det-dir", r);
+            if let Some(i) = seg_rect(ui, r, "det-dir", &["Auto", "LTR", "RTL"], Some(cur)) {
+                let d = [TextDirection::Auto, TextDirection::Ltr, TextDirection::Rtl][i];
+                set_text_props(app, &ids, |t| t.direction = d);
+            }
+        });
+    });
+    if pop {
+        app.props.pop = None;
+    }
 }

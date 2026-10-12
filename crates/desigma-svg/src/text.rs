@@ -111,6 +111,7 @@ fn style_of(s: &TextSpan, align: TextAlignH) -> TextStyle {
             TextDecoration::None
         },
         fills,
+        features: Vec::new(),
     }
 }
 
@@ -187,6 +188,7 @@ fn emit_node(c: &mut Conv, lines: &[Line], pitch: Option<f32>, parent: usize, a:
         runs: runs.iter().map(|(r, _)| r.clone()).collect(),
         auto_resize: TextAutoResize::WidthAndHeight,
         max_lines: None,
+        ..Default::default()
     };
     let geom = desigma_render::text_geometry(&props, Vec2::ZERO);
     let (w, h) = (geom.width, geom.height);

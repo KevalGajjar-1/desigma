@@ -243,3 +243,60 @@ fn instance_children_link_to_their_component_nodes_and_record_overrides() {
     assert_eq!(child(&d, nested_copy, "Label").component.source, Some(child(&d, nested_main, "Label").id));
     assert!(child(&d, nested_copy, "Label").component.overrides.contains(&OverrideField::Characters));
 }
+
+#[test]
+fn fig_text_lists_paragraph_settings_and_features() {
+    let d = doc();
+    let t = text(find(&d, "Listy"));
+    assert_eq!(t.content, "one\ntwo\nthree");
+    let items = t.paragraph_lists();
+    assert_eq!(items[0], Some(ListItem { kind: ListKind::Bullet, level: 0 }), "indentation 1 is the outermost level");
+    assert_eq!(items[1], Some(ListItem { kind: ListKind::Numbered, level: 1 }));
+    assert_eq!(items[2], None);
+    assert_eq!(t.direction, TextDirection::Rtl);
+    assert_eq!(t.paragraph.leading_trim, LeadingTrim::CapHeight);
+    assert_eq!(t.paragraph.indent, 6.0);
+    assert_eq!(t.style.features, vec![("liga".to_string(), 0), ("ss01".to_string(), 1), ("tnum".to_string(), 1)]);
+    // plain text layers are unaffected
+    let p = text(find(&d, "Plain"));
+    assert!(p.lists.is_empty() && p.style.features.is_empty() && p.direction == TextDirection::Auto);
+}
+
+#[test]
+fn text_lists_survive_rest_export_and_reimport() {
+    let d = doc();
+    let json = export_rest_json(&d);
+    let listy = json.to_string();
+    assert!(listy.contains("\"lineTypes\":[\"UNORDERED\",\"ORDERED\",\"NONE\"]"), "{listy}");
+    assert!(listy.contains("\"lineIndentations\":[1,2,0]"));
+    assert!(listy.contains("\"opentypeFlags\":{\"LIGA\":0,\"SS01\":1,\"TNUM\":1}"));
+    let again = import_rest_json(&listy).unwrap();
+    let (a, b) = (text(find(&d, "Listy")), text(find(&again, "Listy")));
+    assert_eq!(a.lists, b.lists);
+    assert_eq!(a.paragraph, b.paragraph);
+    assert_eq!(a.direction, b.direction);
+    assert_eq!(a.style.features, b.style.features);
+    assert_eq!(json, export_rest_json(&again), "still a fixed point");
+}
+
+#[test]
+fn rest_text_node_reads_figma_line_types() {
+    let json = serde_json::json!({
+        "name": "f", "document": {"id": "0:0", "type": "DOCUMENT", "children": [{
+            "id": "0:1", "name": "p", "type": "CANVAS", "backgroundColor": {"r":1,"g":1,"b":1,"a":1},
+            "children": [{
+                "id": "1:1", "name": "T", "type": "TEXT", "characters": "a\nb\nc",
+                "lineTypes": ["ORDERED", "ORDERED", "NONE"], "lineIndentations": [1, 1, 0],
+                "style": {"fontFamily": "Inter", "fontSize": 12, "listSpacing": 4, "hangingList": true,
+                          "opentypeFlags": {"TNUM": 1}},
+                "absoluteBoundingBox": {"x": 0, "y": 0, "width": 50, "height": 50}
+            }]
+        }]}
+    });
+    let d = import_rest_json(&json.to_string()).unwrap();
+    let t = text(find(&d, "T"));
+    assert_eq!(t.lists.len(), 1);
+    assert_eq!(t.list_markers().iter().map(|m| m.map(|m| m.number)).collect::<Vec<_>>(), vec![Some(1), Some(2), None]);
+    assert_eq!((t.paragraph.list_spacing, t.paragraph.hanging_list), (4.0, true));
+    assert_eq!(t.style.features, vec![("tnum".to_string(), 1)]);
+}

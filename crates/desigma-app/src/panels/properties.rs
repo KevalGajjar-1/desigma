@@ -1497,6 +1497,10 @@ pub fn preset_popup(app: &mut App, spec: &str, screen: Vec2) {
             let anchor = Rect::from_min_size(Pos2::new(screen.x - 56.0, 760.0), Vec2::splat(24.0));
             app.props.pop = Some(super::effects::PopState { kind: super::effects::PopKind::Stroke, anchor, ids: vec![id] });
         }
+        "type-details" => {
+            let anchor = Rect::from_min_size(Pos2::new(screen.x - 48.0, 330.0), Vec2::splat(24.0));
+            app.props.pop = Some(super::effects::PopState { kind: super::effects::PopKind::TextDetails, anchor, ids: vec![id] });
+        }
         "effect-noise" | "effect-texture" | "effect-glass" => {
             app.props.scroll = 1.0e6;
             let kind = match spec {

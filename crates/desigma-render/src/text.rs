@@ -3,8 +3,8 @@
 //! style they belong to so fills (solid / gradient / image) apply uniformly.
 
 use cosmic_text::{
-    fontdb, Align, Attrs, Buffer, CacheKeyFlags, Command, Family, FontSystem, Hinting, Metrics, Shaping, Style, SwashCache, TextDecoration as CtDecoration,
-    UnderlineStyle, Weight, Wrap,
+    fontdb, Align, Attrs, Buffer, CacheKeyFlags, Command, Family, FeatureTag, FontFeatures, FontSystem, Hinting, Metrics, Shaping, Style, SwashCache,
+    TextDecoration as CtDecoration, UnderlineStyle, Weight, Wrap,
 };
 use desigma_doc as d;
 use desigma_doc::{TextAutoResize, TextProps, Vec2};
@@ -207,93 +207,79 @@ fn auto_line_ratio(fonts: &mut Fonts, st: &d::TextStyle, family: Option<&str>) -
     }
 }
 
+/// Cap height / em of the face a style resolves to (0.7 when the font has none).
+fn cap_ratio(fonts: &mut Fonts, st: &d::TextStyle, family: Option<&str>) -> f32 {
+    let fam = match family {
+        Some(n) => fontdb::Family::Name(n),
+        None => fontdb::Family::SansSerif,
+    };
+    let q = fontdb::Query {
+        families: &[fam],
+        weight: fontdb::Weight(st.font_weight),
+        stretch: fontdb::Stretch::Normal,
+        style: if st.italic { fontdb::Style::Italic } else { fontdb::Style::Normal },
+    };
+    let Some(id) = fonts.fs.db().query(&q) else { return 0.7 };
+    let Some(font) = fonts.fs.get_font(id, fontdb::Weight(st.font_weight)) else { return 0.7 };
+    let m = font.as_swash().metrics(&[]);
+    let r = if m.units_per_em > 0 { m.cap_height / m.units_per_em as f32 } else { 0.0 };
+    if r.is_finite() && r > 0.2 && r < 1.2 {
+        r
+    } else {
+        0.7
+    }
+}
+
+/// OpenType layout feature tags (GSUB and GPOS) the face matching the style provides,
+/// sorted and deduplicated (e.g. `liga`, `tnum`, `ss01`). Empty when the font cannot be read.
+pub fn font_features(family: &str, weight: u16, italic: bool) -> Vec<String> {
+    with_fonts(|f| {
+        let name = resolve_family(f, family);
+        let fam = match &name {
+            Some(n) => fontdb::Family::Name(n),
+            None => fontdb::Family::SansSerif,
+        };
+        let q = fontdb::Query {
+            families: &[fam],
+            weight: fontdb::Weight(weight),
+            stretch: fontdb::Stretch::Normal,
+            style: if italic { fontdb::Style::Italic } else { fontdb::Style::Normal },
+        };
+        let Some(id) = f.fs.db().query(&q) else { return Vec::new() };
+        let Some(font) = f.fs.get_font(id, fontdb::Weight(weight)) else { return Vec::new() };
+        let index = f.fs.db().face(id).map(|fc| fc.index).unwrap_or(0);
+        let Ok(face) = ttf_parser::Face::parse(font.data(), index) else { return Vec::new() };
+        let mut tags = std::collections::BTreeSet::new();
+        let tables = face.tables();
+        for table in [tables.gsub, tables.gpos].into_iter().flatten() {
+            for i in 0..table.features.len() {
+                if let Some(feat) = table.features.get(i) {
+                    tags.insert(feat.tag.to_string());
+                }
+            }
+        }
+        tags.into_iter().collect()
+    })
+}
+
+#[derive(Clone, Debug)]
 struct Segment {
     text: String,
     style: usize,
     small: bool,
 }
 
-fn build_segments(props: &TextProps) -> Vec<Segment> {
-    build_segments_mapped(props, None)
-}
-
-/// Like [`build_segments`]; `map` receives, for every byte of the shaped text,
-/// the byte offset in `props.content` of the character that produced it.
-fn build_segments_mapped(props: &TextProps, mut map: Option<&mut Vec<usize>>) -> Vec<Segment> {
-    let content = &props.content;
-    let case_of = |idx: usize| if idx == 0 { props.style.case } else { props.runs[idx - 1].style.case };
-    let style_at = |b: usize| -> usize {
-        let mut s = 0;
-        for (i, r) in props.runs.iter().enumerate() {
-            if b >= r.start && b < r.end {
-                s = i + 1;
-            }
-        }
-        s
-    };
-    let mut segs: Vec<Segment> = Vec::new();
-    let mut word_start = true;
-    for (b, ch) in content.char_indices() {
-        let idx = style_at(b);
-        let case = case_of(idx);
-        let mut small = false;
-        let piece: String = match case {
-            d::TextCase::Original => ch.to_string(),
-            d::TextCase::Upper => ch.to_uppercase().collect(),
-            d::TextCase::Lower => ch.to_lowercase().collect(),
-            d::TextCase::Title => {
-                if word_start && ch.is_alphabetic() {
-                    ch.to_uppercase().collect()
-                } else {
-                    ch.to_string()
-                }
-            }
-            d::TextCase::SmallCaps => {
-                if ch.is_lowercase() {
-                    small = true;
-                    ch.to_uppercase().collect()
-                } else {
-                    ch.to_string()
-                }
-            }
-        };
-        word_start = !(ch.is_alphanumeric() || ch == '\'' || ch == '\u{2019}');
-        if let Some(m) = map.as_deref_mut() {
-            m.extend(std::iter::repeat_n(b, piece.len()));
-        }
-        match segs.last_mut() {
-            Some(last) if last.style == idx && last.small == small => last.text.push_str(&piece),
-            _ => segs.push(Segment { text: piece, style: idx, small }),
-        }
-    }
-    segs
-}
-
-fn line_bottom(run: &cosmic_text::LayoutRun, para: f32) -> f32 {
-    run.line_top + run.line_height + run.line_i as f32 * para
-}
+mod flow;
+use flow::{flow, glyph_outline, marker_outline, split_paragraphs, Flow, Para};
 
 /// Number of lines kept by `TextAutoResize::Truncate`: `max_lines`, or as many
 /// as fit the box height (at least one).
-fn truncation_limit(buffer: &Buffer, props: &TextProps, size: Vec2, para: f32) -> usize {
+fn truncation_limit(fl: &Flow, props: &TextProps, size: Vec2) -> usize {
     match props.max_lines {
         Some(m) => m.max(1) as usize,
-        None if size.y > 0.0 => buffer.layout_runs().filter(|r| line_bottom(r, para) <= size.y + 0.5).count().max(1),
+        None if size.y > 0.0 => fl.lines.iter().filter(|l| l.top - fl.shift + l.height <= size.y + 0.5).count().max(1),
         None => usize::MAX,
     }
-}
-
-/// Byte offset in `full` (the concatenated segment text) of the end of the
-/// `limit`-th laid out line.
-fn cut_after_run(buffer: &Buffer, full: &str, limit: usize) -> Option<usize> {
-    let run = buffer.layout_runs().nth(limit.checked_sub(1)?)?;
-    let line_start: usize = full.split('\n').take(run.line_i).map(|l| l.len() + 1).sum();
-    let end = run.glyphs.iter().map(|g| g.end).max().unwrap_or(0);
-    let mut cut = (line_start + end).min(full.len());
-    while !full.is_char_boundary(cut) {
-        cut -= 1;
-    }
-    Some(cut)
 }
 
 /// The first `cut` bytes of the segments, trailing whitespace removed, followed
@@ -352,6 +338,8 @@ struct Shaper {
     styles: Vec<d::TextStyle>,
     family_names: Vec<Option<String>>,
     ratios: Vec<f32>,
+    /// Cap height / em per style.
+    caps: Vec<f32>,
 }
 
 impl Shaper {
@@ -367,7 +355,12 @@ impl Shaper {
                 _ => 1.0,
             })
             .collect();
-        Shaper { styles, family_names, ratios }
+        let caps: Vec<f32> = if props.paragraph.leading_trim == d::LeadingTrim::CapHeight || props.has_lists() {
+            styles.iter().enumerate().map(|(i, s)| cap_ratio(fonts, s, family_names[i].as_deref())).collect()
+        } else {
+            vec![0.7; styles.len()]
+        };
+        Shaper { styles, family_names, ratios, caps }
     }
 
     fn line_height_for(&self, idx: usize, font_size: f32) -> f32 {
@@ -395,6 +388,15 @@ impl Shaper {
         if st.letter_spacing != 0.0 {
             a = a.letter_spacing(st.letter_spacing / fsize);
         }
+        if !st.features.is_empty() {
+            let mut ff = FontFeatures::new();
+            for (tag, value) in &st.features {
+                if let Ok(bytes) = <[u8; 4]>::try_from(tag.as_bytes()) {
+                    ff.set(FeatureTag::new(&bytes), *value);
+                }
+            }
+            a = a.font_features(ff);
+        }
         let mut deco = CtDecoration::new();
         match st.decoration {
             d::TextDecoration::None => {}
@@ -407,10 +409,10 @@ impl Shaper {
         a
     }
 
-    fn build(&self, fs: &mut FontSystem, props: &TextProps, size: Vec2, segs: &[Segment]) -> Buffer {
+    /// Shapes `segs` (one paragraph, or part of one) as a buffer `width` wide.
+    fn buffer(&self, fs: &mut FontSystem, props: &TextProps, width: Option<f32>, wrap: Wrap, segs: &[Segment]) -> Buffer {
         let base_size = props.style.font_size.max(0.1);
         let base_lh = self.line_height_for(0, base_size);
-        let wrap_width = if size.x > 0.0 { Some(size.x) } else { None };
         let align = match props.style.align_h {
             d::TextAlignH::Left => Align::Left,
             d::TextAlignH::Center => Align::Center,
@@ -420,11 +422,8 @@ impl Shaper {
         let default_attrs = self.attrs_for(&Segment { text: String::new(), style: 0, small: false });
         let mut buffer = Buffer::new(fs, Metrics::new(base_size, base_lh));
         buffer.set_hinting(Hinting::Disabled);
-        buffer.set_size(wrap_width, None);
-        buffer.set_wrap(match props.auto_resize {
-            TextAutoResize::WidthAndHeight => Wrap::None,
-            _ => Wrap::WordOrGlyph,
-        });
+        buffer.set_size(width, None);
+        buffer.set_wrap(wrap);
         let spans: Vec<(&str, Attrs)> = segs.iter().map(|s| (s.text.as_str(), self.attrs_for(s))).collect();
         buffer.set_rich_text(spans, &default_attrs, Shaping::Advanced, Some(align));
         buffer.shape_until_scroll(fs, false);
@@ -432,97 +431,185 @@ impl Shaper {
     }
 }
 
-fn compute_layout(fonts: &mut Fonts, props: &TextProps, size: Vec2) -> TextLayout {
+/// Shapes and flows `props` in a box of `size`, truncating with an ellipsis when asked to.
+fn laid_out(fonts: &mut Fonts, props: &TextProps, size: Vec2) -> (Shaper, Vec<Para>, Flow) {
     let shaper = Shaper::new(fonts, props);
-    let styles = shaper.styles.clone();
-    let mut builders: Vec<sk::PathBuilder> = styles.iter().map(|_| sk::PathBuilder::new()).collect();
-    let full_segs = build_segments(props);
-    let build = |fs: &mut FontSystem, segs: &[Segment]| -> Buffer { shaper.build(fs, props, size, segs) };
-    let para = props.style.paragraph_spacing;
-    let mut buffer = build(&mut fonts.fs, &full_segs);
+    let mut paras = split_paragraphs(props, false);
+    let mut fl = flow(fonts, &shaper, props, size, &paras);
 
     // Truncate: keep at most `limit` lines and end the last one with "…".
     if props.auto_resize == TextAutoResize::Truncate {
-        let limit = truncation_limit(&buffer, props, size, para);
-        if buffer.layout_runs().count() > limit {
-            let full: String = full_segs.iter().map(|s| s.text.as_str()).collect();
-            let mut cut = cut_after_run(&buffer, &full, limit).unwrap_or(0);
+        let limit = truncation_limit(&fl, props, size);
+        if fl.lines.len() > limit {
+            let line = &fl.lines[limit - 1];
+            let (pi, mut cut) = (line.para, line.cut);
+            paras.truncate(pi + 1);
+            let original = paras[pi].segs.clone();
+            let text = paras[pi].text.clone();
             // the ellipsis itself must still fit on the last line: back off until it does
-            for _ in 0..full.len() + 1 {
-                let segs = truncated_segments(&full_segs, cut);
-                buffer = build(&mut fonts.fs, &segs);
-                if buffer.layout_runs().count() <= limit || cut == 0 {
+            for _ in 0..text.len() + 1 {
+                cut = cut.min(text.len());
+                while !text.is_char_boundary(cut) {
+                    cut -= 1;
+                }
+                paras[pi].segs = truncated_segments(&original, cut);
+                paras[pi].text = paras[pi].segs.iter().map(|s| s.text.as_str()).collect();
+                fl = flow(fonts, &shaper, props, size, &paras);
+                if fl.lines.len() <= limit || cut == 0 {
                     break;
                 }
-                cut = full[..cut].char_indices().next_back().map(|(i, _)| i).unwrap_or(0);
+                cut = text[..cut].char_indices().next_back().map(|(i, _)| i).unwrap_or(0);
             }
         }
     }
 
-    // measure
-    let mut total_h = 0.0f32;
-    for run in buffer.layout_runs() {
-        total_h = total_h.max(run.line_top + run.line_height + run.line_i as f32 * para);
-    }
-    let oy = if size.y > 0.0 {
-        match props.style.align_v {
-            d::TextAlignV::Top => 0.0,
-            d::TextAlignV::Center => (size.y - total_h) / 2.0,
-            d::TextAlignV::Bottom => size.y - total_h,
-        }
-    } else {
-        0.0
-    };
+    (shaper, paras, fl)
+}
 
-    for run in buffer.layout_runs() {
-        let baseline = run.line_y + run.line_i as f32 * para + oy;
-        for g in run.glyphs {
-            let style = g.metadata.min(builders.len() - 1);
-            let phys = g.physical((0.0, 0.0), 1.0);
-            let gx = g.x + g.font_size * g.x_offset;
-            let gy = baseline + g.y - g.font_size * g.y_offset;
-            let Some(cmds) = fonts.swash.get_outline_commands(&mut fonts.fs, phys.cache_key) else { continue };
-            let pb = &mut builders[style];
-            for c in cmds {
-                match c {
-                    Command::MoveTo(p) => pb.move_to(gx + p.x, gy - p.y),
-                    Command::LineTo(p) => pb.line_to(gx + p.x, gy - p.y),
-                    Command::QuadTo(c1, p) => pb.quad_to(gx + c1.x, gy - c1.y, gx + p.x, gy - p.y),
-                    Command::CurveTo(c1, c2, p) => pb.cubic_to(gx + c1.x, gy - c1.y, gx + c2.x, gy - c2.y, gx + p.x, gy - p.y),
-                    Command::Close => pb.close(),
-                }
-            }
+fn compute_layout(fonts: &mut Fonts, props: &TextProps, size: Vec2) -> TextLayout {
+    let (shaper, _, fl) = laid_out(fonts, props, size);
+    let styles = shaper.styles.clone();
+    let mut builders: Vec<sk::PathBuilder> = styles.iter().map(|_| sk::PathBuilder::new()).collect();
+    for line in &fl.lines {
+        for g in &line.glyphs {
+            glyph_outline(fonts, &mut builders[g.style], g, g.x, line.baseline);
         }
-        for span in run.decorations {
-            let glyphs = &run.glyphs[span.glyph_range.clone()];
-            let Some(first) = glyphs.first() else { continue };
-            let style = first.metadata.min(builders.len() - 1);
-            let (mut x0, mut x1) = (f32::MAX, f32::MIN);
-            for g in glyphs {
-                x0 = x0.min(g.x);
-                x1 = x1.max(g.x + g.w);
-            }
-            if x1 <= x0 {
-                continue;
-            }
-            let fs = span.font_size;
-            let td = &span.data.text_decoration;
+        for dc in &line.decos {
             let mut rect = |offset: f32, thickness: f32| {
-                let t = (thickness * fs).max(1.0);
-                let y = baseline - offset * fs;
-                if let Some(r) = sk::Rect::from_xywh(x0, y, x1 - x0, t) {
-                    builders[style].push_rect(r);
+                let t = (thickness * dc.fs).max(1.0);
+                let y = line.baseline - offset * dc.fs;
+                if let Some(r) = sk::Rect::from_xywh(dc.x0, y, dc.x1 - dc.x0, t) {
+                    builders[dc.style].push_rect(r);
                 }
             };
-            if !matches!(td.underline, UnderlineStyle::None) {
-                rect(span.data.underline_metrics.offset, span.data.underline_metrics.thickness);
+            if let Some((o, t)) = dc.underline {
+                rect(o, t);
             }
-            if td.strikethrough {
-                rect(span.data.strikethrough_metrics.offset, span.data.strikethrough_metrics.thickness);
+            if let Some((o, t)) = dc.strike {
+                rect(o, t);
             }
         }
     }
+    for m in &fl.markers {
+        let baseline = fl.lines.get(m.line).map(|l| l.baseline).unwrap_or(0.0);
+        marker_outline(fonts, &mut builders[m.style], m, baseline);
+    }
     TextLayout { styles, paths: builders.into_iter().map(|b| b.finish()).collect() }
+}
+
+// ------------------------------------------------------------------ outlines (SVG export)
+/// A run of glyphs of one style on one line, as outlines (and the text they show).
+#[derive(Clone, Debug)]
+pub struct GlyphRun {
+    /// Index into [`TextRuns::styles`].
+    pub style: usize,
+    /// Left edge of the run, node-local px.
+    pub x: f32,
+    /// The characters shown (list markers included), in shaping order.
+    pub text: String,
+    /// Glyph outlines (and underline / strikethrough bars) in node-local space.
+    pub outline: Vec<d::PathCmd>,
+}
+
+#[derive(Clone, Debug)]
+pub struct RunLine {
+    pub baseline: f32,
+    pub spans: Vec<GlyphRun>,
+}
+
+/// The laid out text of a node as per-line spans of vector outlines, for exporters.
+#[derive(Clone, Debug)]
+pub struct TextRuns {
+    /// 0 = base style, i + 1 = `runs[i].style`.
+    pub styles: Vec<d::TextStyle>,
+    pub lines: Vec<RunLine>,
+}
+
+fn path_cmds(path: &sk::Path, out: &mut Vec<d::PathCmd>) {
+    let v = |p: sk::Point| Vec2::new(p.x, p.y);
+    for seg in path.segments() {
+        out.push(match seg {
+            sk::PathSegment::MoveTo(p) => d::PathCmd::MoveTo(v(p)),
+            sk::PathSegment::LineTo(p) => d::PathCmd::LineTo(v(p)),
+            sk::PathSegment::QuadTo(c, p) => d::PathCmd::QuadTo(v(c), v(p)),
+            sk::PathSegment::CubicTo(c1, c2, p) => d::PathCmd::CubicTo(v(c1), v(c2), v(p)),
+            sk::PathSegment::Close => d::PathCmd::Close,
+        });
+    }
+}
+
+/// Lays out `props` in a box of `size` exactly as [`layout`] does, but keeps the glyph runs per
+/// line with their outlines as path commands. Right-to-left runs list their text in shaping
+/// order (right to left); the outlines are exact either way.
+pub fn text_runs(props: &TextProps, size: Vec2) -> TextRuns {
+    with_fonts(|f| compute_runs(f, props, size))
+}
+
+fn compute_runs(fonts: &mut Fonts, props: &TextProps, size: Vec2) -> TextRuns {
+    let (shaper, paras, fl) = laid_out(fonts, props, size);
+    let mut lines = Vec::new();
+    for (li, line) in fl.lines.iter().enumerate() {
+        let para: &Para = &paras[line.para];
+        let mut spans: Vec<GlyphRun> = Vec::new();
+        for m in fl.markers.iter().filter(|m| m.line == li) {
+            let mut pb = sk::PathBuilder::new();
+            marker_outline(fonts, &mut pb, m, line.baseline);
+            let mut outline = Vec::new();
+            if let Some(p) = pb.finish() {
+                path_cmds(&p, &mut outline);
+            }
+            let text = match (m.shape, para.marker) {
+                (Some(d::BulletShape::Disc), _) => "\u{2022}".to_string(),
+                (Some(d::BulletShape::Ring), _) => "\u{25E6}".to_string(),
+                (Some(d::BulletShape::Square), _) => "\u{25AA}".to_string(),
+                (None, Some(mk)) => mk.label().unwrap_or_default(),
+                (None, None) => String::new(),
+            };
+            spans.push(GlyphRun { style: m.style, x: m.x, text, outline });
+        }
+        let first_glyph = spans.len();
+        for g in &line.glyphs {
+            if g.end <= para.mark_len {
+                continue;
+            }
+            if spans.len() == first_glyph || spans.last().map(|s| s.style) != Some(g.style) {
+                spans.push(GlyphRun { style: g.style, x: g.x, text: String::new(), outline: Vec::new() });
+            }
+            let span = spans.last_mut().unwrap();
+            span.x = span.x.min(g.x);
+            span.text.push_str(para.text.get(g.start..g.end).unwrap_or(""));
+            let mut pb = sk::PathBuilder::new();
+            glyph_outline(fonts, &mut pb, g, g.x, line.baseline);
+            if let Some(p) = pb.finish() {
+                path_cmds(&p, &mut span.outline);
+            }
+        }
+        for dc in &line.decos {
+            let mut bar = |offset: f32, thickness: f32| {
+                let t = (thickness * dc.fs).max(1.0);
+                let y = line.baseline - offset * dc.fs;
+                if let Some(span) = spans.iter_mut().find(|s| s.style == dc.style) {
+                    span.outline.extend([
+                        d::PathCmd::MoveTo(Vec2::new(dc.x0, y)),
+                        d::PathCmd::LineTo(Vec2::new(dc.x1, y)),
+                        d::PathCmd::LineTo(Vec2::new(dc.x1, y + t)),
+                        d::PathCmd::LineTo(Vec2::new(dc.x0, y + t)),
+                        d::PathCmd::Close,
+                    ]);
+                }
+            };
+            if let Some((o, t)) = dc.underline {
+                bar(o, t);
+            }
+            if let Some((o, t)) = dc.strike {
+                bar(o, t);
+            }
+        }
+        if !spans.is_empty() {
+            lines.push(RunLine { baseline: line.baseline, spans });
+        }
+    }
+    TextRuns { styles: shaper.styles.clone(), lines }
 }
 
 // ------------------------------------------------------------------ editor geometry
@@ -534,6 +621,8 @@ pub struct GlyphSpan {
     /// Left edge, in node-local px (alignment applied).
     pub x: f32,
     pub w: f32,
+    /// The cluster is right-to-left (odd bidi level).
+    pub rtl: bool,
 }
 
 /// One visual line of laid out text, in node-local px.
@@ -548,8 +637,12 @@ pub struct LineGeom {
     /// Byte range of `content` shown on this line.
     pub start: usize,
     pub end: usize,
-    /// Left edge of an empty line (alignment).
+    /// Left edge of an empty line (alignment, indent).
     pub empty_x: f32,
+    /// The paragraph of this line is right-to-left.
+    pub rtl: bool,
+    /// Glyph clusters sorted left to right (visual order); for right-to-left text the
+    /// byte offsets run backwards along the line.
     pub glyphs: Vec<GlyphSpan>,
 }
 
@@ -586,60 +679,34 @@ pub fn text_geometry(props: &TextProps, size: Vec2) -> Rc<TextGeometry> {
 
 fn compute_geometry(fonts: &mut Fonts, props: &TextProps, size: Vec2) -> TextGeometry {
     let shaper = Shaper::new(fonts, props);
-    let mut map = Vec::new();
-    let segs = build_segments_mapped(props, Some(&mut map));
-    map.push(props.content.len());
-    let buffer = shaper.build(&mut fonts.fs, props, size, &segs);
-    let full: String = segs.iter().map(|s| s.text.as_str()).collect();
-    let para_starts: Vec<usize> = std::iter::once(0).chain(full.match_indices('\n').map(|(i, _)| i + 1)).collect();
-    let para = props.style.paragraph_spacing;
-    let mut total_h = 0.0f32;
-    for run in buffer.layout_runs() {
-        total_h = total_h.max(run.line_top + run.line_height + run.line_i as f32 * para);
-    }
-    let oy = if size.y > 0.0 {
-        match props.style.align_v {
-            d::TextAlignV::Top => 0.0,
-            d::TextAlignV::Center => (size.y - total_h) / 2.0,
-            d::TextAlignV::Bottom => size.y - total_h,
-        }
-    } else {
-        0.0
-    };
-    let empty_x = match props.style.align_h {
-        d::TextAlignH::Center if size.x > 0.0 => size.x / 2.0,
-        d::TextAlignH::Right if size.x > 0.0 => size.x,
-        _ => 0.0,
-    };
-    let at = |shaped: usize| map.get(shaped).copied().unwrap_or(props.content.len());
-    let mut lines = Vec::new();
-    let mut width = 0.0f32;
-    for run in buffer.layout_runs() {
-        let base = para_starts.get(run.line_i).copied().unwrap_or(0);
-        let glyphs: Vec<GlyphSpan> = run.glyphs.iter().map(|g| GlyphSpan { start: at(base + g.start), end: at(base + g.end), x: g.x, w: g.w }).collect();
+    let paras = split_paragraphs(props, true);
+    let fl = flow(fonts, &shaper, props, size, &paras);
+    let mut lines = Vec::with_capacity(fl.lines.len());
+    for pl in &fl.lines {
+        let para: &Para = &paras[pl.para];
+        let at = |shaped: usize| para.map.get(shaped).copied().unwrap_or(para.end);
+        let mut glyphs: Vec<GlyphSpan> =
+            pl.glyphs.iter().filter(|g| g.end > para.mark_len).map(|g| GlyphSpan { start: at(g.start), end: at(g.end), x: g.x, w: g.w, rtl: g.rtl }).collect();
+        // right-to-left lines come out of the shaper right to left
+        glyphs.sort_by(|a, b| a.x.partial_cmp(&b.x).unwrap_or(std::cmp::Ordering::Equal));
         let (start, end) = match (glyphs.iter().map(|g| g.start).min(), glyphs.iter().map(|g| g.end).max()) {
             (Some(a), Some(b)) => (a, b),
-            _ => (at(base), at(base)),
+            _ => (para.start, para.start),
         };
-        width = width.max(run.line_w);
         lines.push(LineGeom {
-            para: run.line_i,
-            top: run.line_top + run.line_i as f32 * para + oy,
-            height: run.line_height,
-            baseline: run.line_y + run.line_i as f32 * para + oy,
-            width: run.line_w,
+            para: pl.para,
+            top: pl.top,
+            height: pl.height,
+            baseline: pl.baseline,
+            width: pl.width,
             start,
             end,
-            empty_x,
+            empty_x: pl.empty_x,
+            rtl: para.rtl,
             glyphs,
         });
     }
-    if lines.is_empty() {
-        let lh = shaper.line_height_for(0, props.style.font_size.max(0.1));
-        lines.push(LineGeom { para: 0, top: oy, height: lh, baseline: oy + lh * 0.8, width: 0.0, start: 0, end: 0, empty_x, glyphs: vec![] });
-        total_h = lh;
-    }
-    TextGeometry { lines, width, height: total_h }
+    TextGeometry { lines, width: fl.width, height: fl.height }
 }
 
 #[cfg(test)]
@@ -700,6 +767,7 @@ mod tests {
             runs: Vec::new(),
             auto_resize,
             max_lines,
+            ..Default::default()
         }
     }
 

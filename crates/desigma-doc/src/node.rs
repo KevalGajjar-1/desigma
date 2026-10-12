@@ -188,7 +188,14 @@ impl Node {
     pub fn text(id: NodeId, r: Rect, content: impl Into<String>, style: TextStyle) -> Self {
         Self::placed(
             id,
-            NodeKind::Text(TextProps { content: content.into(), style, runs: Vec::new(), auto_resize: TextAutoResize::WidthAndHeight, max_lines: None }),
+            NodeKind::Text(TextProps {
+                content: content.into(),
+                style,
+                runs: Vec::new(),
+                auto_resize: TextAutoResize::WidthAndHeight,
+                max_lines: None,
+                ..Default::default()
+            }),
             r,
         )
     }
@@ -313,7 +320,7 @@ impl Default for ArcData {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct TextProps {
     pub content: String,
     pub style: TextStyle,
@@ -324,6 +331,15 @@ pub struct TextProps {
     /// `None` truncates at the box height.
     #[serde(default)]
     pub max_lines: Option<u32>,
+    /// Paragraph settings (indent, list spacing, hanging punctuation / lists, leading trim).
+    #[serde(default)]
+    pub paragraph: ParagraphProps,
+    /// Bulleted and numbered lists as byte ranges covering whole paragraphs.
+    #[serde(default)]
+    pub lists: Vec<ListRange>,
+    /// Paragraph writing direction.
+    #[serde(default)]
+    pub direction: TextDirection,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]

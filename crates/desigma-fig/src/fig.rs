@@ -490,6 +490,13 @@ fn convert_override(o: &Value, blobs: &[&[u8]]) -> Map<String, Value> {
         if let Some(c) = fstr(td, "characters") {
             m.insert("characters".into(), c.into());
         }
+        if let Some(lines) = td.get("lines").and_then(Value::as_array) {
+            let mut st = m.get("style").and_then(Value::as_object).cloned().unwrap_or_default();
+            crate::textfmt::lines_from_kiwi(lines, &mut m, &mut st);
+            if !st.is_empty() {
+                m.insert("style".into(), Value::Object(st));
+            }
+        }
         text_overrides(&mut m, td, fnum(o, "fontSize"));
     }
     m
@@ -647,6 +654,12 @@ fn convert_type_style(o: &Value, base_size: Option<f32>) -> Map<String, Value> {
     copy(&mut m, o, "textCase", "textCase");
     copy(&mut m, o, "textDecoration", "textDecoration");
     copy(&mut m, o, "paragraphSpacing", "paragraphSpacing");
+    for k in ["paragraphIndent", "listSpacing", "hangingPunctuation", "hangingList", "leadingTrim"] {
+        copy(&mut m, o, k, k);
+    }
+    if let Some(flags) = crate::textfmt::flags_from_kiwi(o) {
+        m.insert("opentypeFlags".into(), flags);
+    }
     if let Some(ls) = o.get("letterSpacing") {
         let v = fnum(ls, "value").unwrap_or(0.0);
         let px = if fstr(ls, "units") == Some("PERCENT") { v / 100.0 * size.unwrap_or(0.0) } else { v };
@@ -694,6 +707,9 @@ fn convert_text(m: &mut Map<String, Value>, nc: &Value) {
     // textTruncation ENDING and maxLines (kiwi fields of the same names).
     copy(m, nc, "textTruncation", "textTruncation");
     copy(m, nc, "maxLines", "maxLines");
+    if let Some(lines) = td.and_then(|t| t.get("lines")).and_then(Value::as_array) {
+        crate::textfmt::lines_from_kiwi(lines, m, &mut style);
+    }
     m.insert("style".into(), Value::Object(style));
     if let Some(td) = td {
         text_overrides(m, td, fnum(nc, "fontSize"));

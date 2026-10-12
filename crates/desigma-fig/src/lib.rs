@@ -21,6 +21,7 @@ mod rest_import;
 pub mod svgpath;
 #[doc(hidden)]
 pub mod testkit;
+mod textfmt;
 mod variables;
 
 pub use desigma_doc::Document;
