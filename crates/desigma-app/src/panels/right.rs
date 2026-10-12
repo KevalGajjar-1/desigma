@@ -8,6 +8,15 @@ use crate::widgets;
 use egui::{Align2, Pos2, Rect, Sense, Ui, Vec2};
 
 pub fn show(app: &mut App, ui: &mut Ui, rect: Rect) {
+    // Version history and comment mode replace the whole inspector.
+    if app.history.open {
+        crate::history::panel::show(app, ui, rect);
+        return;
+    }
+    if app.comment_mode() {
+        crate::comments::panel::show(app, ui, rect);
+        return;
+    }
     let p = ui.painter().clone();
     p.rect_filled(rect, 0.0, theme::BG);
     widgets::vline(&p, rect.left(), rect.top(), rect.bottom(), theme::BORDER);

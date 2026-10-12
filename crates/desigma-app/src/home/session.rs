@@ -44,7 +44,7 @@ impl Autosave {
     }
 }
 
-fn doc_hash(doc: &Document) -> u64 {
+pub(crate) fn doc_hash(doc: &Document) -> u64 {
     let mut h = std::collections::hash_map::DefaultHasher::new();
     doc.to_json().unwrap_or_default().hash(&mut h);
     h.finish()
@@ -77,6 +77,7 @@ impl App {
             self.show_toast("The projects library is unavailable", true);
             return;
         };
+        self.save_close_version();
         self.flush_autosave();
         self.canvas.reset_interaction();
         let mut home = Home::new();
@@ -103,6 +104,7 @@ impl App {
         self.replace_document(doc, None);
         self.lib_file = Some(LibFile { id: entry.id.clone(), project_id: entry.project.clone(), project, name: entry.name.clone() });
         self.autosave = Autosave { seen_rev: self.canvas.tiles.rev(), saved_hash: doc_hash(&self.doc), ..Default::default() };
+        self.history_open_file();
         let _ = lib.mark_opened(id);
         self.home = None;
         self.ui.menu = None;
@@ -144,6 +146,10 @@ impl App {
     /// Writes the open library file (no toast); also refreshes its thumbnail.
     pub fn save_library_file(&mut self) -> Result<(), String> {
         let (Some(lib), Some(lf)) = (self.lib.clone(), self.lib_file.clone()) else { return Err("This file is not in the library".into()) };
+        if self.history.viewing.is_some() {
+            // an old version is on screen: the file on disk must keep the live document
+            return Err("Go back to the current version before saving".into());
+        }
         lib.save_file(&lf.id, &self.doc).map_err(|e| format!("Cannot save: {e}"))?;
         self.autosave.saved_hash = doc_hash(&self.doc);
         self.autosave.changed_at = None;
@@ -164,6 +170,9 @@ impl App {
 
     /// Saves pending edits right away (before leaving the editor or the app).
     pub fn flush_autosave(&mut self) {
+        if self.history.viewing.is_some() {
+            return;
+        }
         if self.lib_file.is_some() && doc_hash(&self.doc) != self.autosave.saved_hash {
             if let Err(e) = self.save_library_file() {
                 self.show_toast(e, true);
@@ -174,7 +183,7 @@ impl App {
 
     /// Called every frame: debounced autosave of the open library file.
     pub fn autosave_tick(&mut self, ctx: &egui::Context) {
-        if self.lib_file.is_none() || self.home.is_some() {
+        if self.lib_file.is_none() || self.home.is_some() || self.history.viewing.is_some() {
             self.autosave.changed_at = None;
             return;
         }
@@ -238,6 +247,7 @@ impl App {
                 let project_name = lib.project(project).map(|p| p.name).unwrap_or_default();
                 self.lib_file = Some(LibFile { id: e.id.clone(), project_id: project.to_string(), project: project_name.clone(), name: e.name });
                 self.autosave = Autosave { seen_rev: self.canvas.tiles.rev(), saved_hash: doc_hash(&self.doc), ..Default::default() };
+                self.history_open_file();
                 self.file_path = None;
                 thumb::refresh_in_background(lib, e.id, self.export_doc().into_owned());
                 self.show_toast(format!("Saved to {project_name}"), false);

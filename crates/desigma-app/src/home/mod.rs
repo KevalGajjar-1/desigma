@@ -13,6 +13,7 @@ pub mod thumb;
 pub mod time;
 
 pub use dialog::{Dialog, Intent};
+pub(crate) use session::doc_hash;
 pub use session::{Autosave, LibFile};
 
 use crate::app::App;

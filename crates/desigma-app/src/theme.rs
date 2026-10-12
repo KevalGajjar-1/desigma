@@ -347,6 +347,33 @@ pub const TOAST_RADIUS: u8 = 13;
 pub const TOAST_HEIGHT: f32 = 40.0;
 pub const TOAST_BOTTOM: f32 = 72.0;
 pub const TOAST_SECONDS: f64 = 4.0;
+// ---------------------------------------------------------------- comments and version history
+/// Comment pin: bubble diameter and the white ring around it.
+pub const COMMENT_PIN: f32 = 32.0;
+pub const COMMENT_PIN_RING: f32 = 2.0;
+pub const COMMENT_PIN_HIT_PAD: f32 = 2.0;
+/// Resolved pins are greyed out.
+pub const COMMENT_PIN_RESOLVED: Color32 = rgb(0x757575);
+/// Avatar colours picked from the author's name.
+pub const AVATAR_COLORS: [Color32; 6] = [rgb(0xF24822), rgb(0xFFA629), rgb(0x14AE5C), rgb(0x0C8CE9), rgb(0x9747FF), rgb(0xEE46BC)];
+pub const COMMENT_AVATAR: f32 = 24.0;
+/// Thread popover: width, gap to its pin, inner padding, header height.
+pub const COMMENT_POP_W: f32 = 300.0;
+pub const COMMENT_POP_GAP: f32 = 8.0;
+pub const COMMENT_PAD: f32 = 12.0;
+pub const COMMENT_HEADER_H: f32 = 36.0;
+pub const COMMENT_BTN_H: f32 = 24.0;
+pub const COMMENT_BOX_MIN_H: f32 = 56.0;
+pub const COMMENT_BOX_MAX_H: f32 = 160.0;
+pub const COMMENT_ICON_BTN: f32 = 20.0;
+/// Comments panel (right side): filter row height and thread card padding.
+pub const COMMENT_PANEL_HEADER_H: f32 = 48.0;
+pub const COMMENT_FILTER_H: f32 = 24.0;
+pub const COMMENT_CARD_PAD: f32 = 12.0;
+/// Version history panel rows and the "Viewing" banner.
+pub const HISTORY_ROW_H: f32 = 44.0;
+pub const HISTORY_DAY_H: f32 = 28.0;
+pub const HISTORY_BANNER_H: f32 = 40.0;
 
 // ---------------------------------------------------------------- canvas
 pub const CANVAS_OUTLINE_WIDTH: f32 = 1.0;

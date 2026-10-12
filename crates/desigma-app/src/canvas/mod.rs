@@ -186,9 +186,12 @@ pub fn show(app: &mut App, ui: &mut Ui, rect: ERect) {
     let resp = ui.interact(rect, ui.id().with("canvas"), Sense::click_and_drag());
     // While the colour picker waits for an eyedropper click the canvas must not react.
     let eyedropping = app.props.picker.as_ref().is_some_and(|p| p.eyedrop);
-    if !eyedropping && !proto::process(app, ui, rect, &resp) {
+    // An old version shown from the version history is read-only.
+    let read_only = app.history.viewing.is_some();
+    if !eyedropping && !read_only && !proto::process(app, ui, rect, &resp) {
         interact::process(app, ui, rect, &resp);
     }
+    crate::comments::pins::process(app, rect, &resp);
     grids::paint(app, ui, rect);
     draw::overlays(app, ui, rect);
     rulers::overlay(app, ui, rect);
@@ -202,4 +205,6 @@ pub fn show(app: &mut App, ui: &mut Ui, rect: ERect) {
     if proto::active(app) && (app.proto.hot.is_some() || app.proto.connect.is_some()) {
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
     }
+    // Comment pins and popovers sit above everything painted on the canvas.
+    crate::comments::pins::overlay(app, ui, rect);
 }
