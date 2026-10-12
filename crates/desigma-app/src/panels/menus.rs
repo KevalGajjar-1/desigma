@@ -75,6 +75,12 @@ pub enum Action {
     /// Home screen (file browser).
     BackToFiles,
     SaveToLibrary,
+    /// File -> Show version history.
+    ToggleVersionHistory,
+    /// Ctrl+Alt+S: save a named version.
+    SaveVersion,
+    /// Preferences -> Your name.
+    YourName,
     Shortcuts,
     AboutDesigma,
     OpenGithub,
@@ -155,6 +161,9 @@ pub fn run(app: &mut App, ctx: &Context, a: Action) {
         Action::About => app.show_toast("desigma, a Figma-compatible design editor", false),
         Action::BackToFiles => app.go_home(),
         Action::SaveToLibrary => app.begin_save_to_library(),
+        Action::ToggleVersionHistory => app.toggle_version_history(),
+        Action::SaveVersion => app.begin_save_version(),
+        Action::YourName => app.ask_author_name(),
         Action::Shortcuts => app.show_shortcuts(),
         Action::AboutDesigma => app.show_about(),
         Action::OpenGithub => app.confirm_open_github(),
@@ -278,6 +287,8 @@ fn main_nodes(app: &App) -> Vec<Node> {
         leaf("Save", "Ctrl+S", Action::Save),
         leaf("Save as…", "Ctrl+Shift+S", Action::SaveAs),
         leaf("Save to library…", "", Action::SaveToLibrary).off(app.lib.is_none() || app.lib_file.is_some()).sep(),
+        leaf("Show version history", "", Action::ToggleVersionHistory).on(app.history.open),
+        leaf("Save to version history…", "Ctrl+Alt+S", Action::SaveVersion).off(!app.has_history()).sep(),
         leaf("Export selection as PNG…", "", Action::Export).off(!has_sel),
     ];
     let edit = vec![
@@ -359,7 +370,7 @@ fn main_nodes(app: &App) -> Vec<Node> {
         submenu("Vector", vector).sep(),
         stub_sub("Plugins"),
         stub_sub("Widgets"),
-        stub_sub("Preferences"),
+        submenu("Preferences", vec![leaf("Your name…", "", Action::YourName)]),
         leaf("Libraries", "", Action::About).off(true).sep(),
         submenu("Help", help),
     ]
@@ -420,6 +431,8 @@ fn file_items(app: &App) -> Vec<(MenuItem, Option<Action>)> {
         (MenuItem::new("Save").shortcut("Ctrl+S"), Some(Action::Save)),
         (MenuItem::new("Save as…").shortcut("Ctrl+Shift+S"), Some(Action::SaveAs)),
         (MenuItem::new("Save to library…").disabled(app.lib.is_none() || app.lib_file.is_some()).sep(), Some(Action::SaveToLibrary)),
+        (MenuItem::new("Show version history").checked(app.history.open), Some(Action::ToggleVersionHistory)),
+        (MenuItem::new("Save to version history…").shortcut("Ctrl+Alt+S").disabled(!app.has_history()).sep(), Some(Action::SaveVersion)),
         (MenuItem::new("Undo").shortcut("Ctrl+Z").disabled(!app.hist.can_undo()), Some(Action::Undo)),
         (MenuItem::new("Redo").shortcut("Ctrl+Shift+Z").disabled(!app.hist.can_redo()).sep(), Some(Action::Redo)),
         (MenuItem::new("Select all").shortcut("Ctrl+A"), Some(Action::SelectAll)),

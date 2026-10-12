@@ -153,6 +153,10 @@ pub struct App {
     pub autosave: crate::home::Autosave,
     /// The header file name is being renamed (double-click).
     pub renaming_file: bool,
+    /// Comment threads UI (composer, open thread, panel filters).
+    pub comments: crate::comments::CommentsState,
+    /// Version history of the open library file.
+    pub history: crate::history::HistoryState,
 }
 
 impl App {
@@ -194,6 +198,8 @@ impl App {
             dialog: None,
             autosave: Default::default(),
             renaming_file: false,
+            comments: Default::default(),
+            history: Default::default(),
         }
     }
 

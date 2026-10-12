@@ -136,6 +136,13 @@ impl App {
 
     // ------------------------------------------------------------ plumbing
     pub fn run_tx(&mut self, tx: Tx) -> bool {
+        if self.history.viewing.is_some() {
+            // an old version is shown read-only
+            tx.cancel(&mut self.doc);
+            self.changed();
+            self.show_toast("Viewing an old version is read-only", true);
+            return false;
+        }
         if self.scrub.is_some() {
             // Scrubbing: edits stay live in the document; `scrub_end` records them as one step.
             self.changed();
@@ -205,6 +212,9 @@ impl App {
     }
 
     pub fn undo(&mut self) {
+        if self.try_undo_restore() {
+            return;
+        }
         match self.hist.undo(&mut self.doc) {
             Ok(true) => {
                 self.changed();
@@ -216,6 +226,9 @@ impl App {
     }
 
     pub fn redo(&mut self) {
+        if self.try_redo_restore() {
+            return;
+        }
         match self.hist.redo(&mut self.doc) {
             Ok(true) => {
                 self.changed();
@@ -768,7 +781,8 @@ impl App {
 
     // ------------------------------------------------------------ files
     pub fn replace_document(&mut self, doc: Document, path: Option<PathBuf>) {
-        // Pending edits of the library file being left are saved first.
+        // Pending edits of the library file being left are saved first (from the live state, not an old version).
+        self.exit_version_view();
         self.flush_autosave();
         self.lib_file = None;
         self.renaming_file = false;
@@ -777,6 +791,8 @@ impl App {
         self.page = doc.pages[0];
         self.doc = doc;
         self.hist = History::default();
+        self.history.reset();
+        self.comments.close_popovers();
         self.selection.clear();
         self.hover = None;
         self.file_path = path;
@@ -797,6 +813,11 @@ impl App {
         // A variables-only JSON opened alongside a design merges into it.
         if p.extension().is_some_and(|e| e.eq_ignore_ascii_case("json")) {
             if let Ok(text) = std::fs::read_to_string(&p) {
+                // Figma REST comments (`/v1/files/:key/comments`) are merged the same way.
+                if crate::comments::import::is_comments_payload(&text) {
+                    self.import_comments_file(&p);
+                    return;
+                }
                 if crate::variables::is_variables_payload(&text) {
                     self.import_variables_file(&p);
                     return;

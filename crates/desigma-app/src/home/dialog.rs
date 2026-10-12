@@ -19,6 +19,10 @@ pub enum Intent {
     /// Store the open document as a new library file.
     SaveToLibrary,
     EmptyTrash,
+    /// Settings: the name comments are posted under.
+    AuthorName,
+    /// Names the version history entry with this number.
+    NameVersion(u32),
     OpenGithub,
     Shortcuts,
     About,
@@ -352,6 +356,9 @@ pub fn show(app: &mut App, ctx: &Context) {
 
 /// Runs the confirmed dialog.
 pub fn finish(app: &mut App, d: Dialog) {
+    if crate::history::finish_dialog(app, &d) {
+        return;
+    }
     let Some(lib) = app.lib.clone() else { return };
     let text = d.input.clone().unwrap_or_default().trim().to_string();
     let choice = d.picked.and_then(|i| d.choices.get(i)).cloned();
@@ -404,7 +411,7 @@ pub fn finish(app: &mut App, d: Dialog) {
             }
             Ok(())
         }
-        Intent::Shortcuts | Intent::About => {
+        Intent::Shortcuts | Intent::About | Intent::AuthorName | Intent::NameVersion(_) => {
             dirty = false;
             Ok(())
         }

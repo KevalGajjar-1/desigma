@@ -51,6 +51,9 @@ impl Shell {
         if opts.fixture.as_deref() != Some("variables") {
             app.doc.name = "Untitled".into();
         }
+        if opts.fixture.as_deref() == Some("comments") {
+            crate::comments::fixture::apply(&mut app);
+        }
         if let Some(root) = opts.library.clone() {
             app.attach_library(root);
         }
@@ -130,6 +133,7 @@ impl Shell {
         }
         match opts.panel.as_deref() {
             Some("libraries") => app.open_libraries(),
+            Some("version-history") => crate::history::preset::apply(&mut app, opts.library.clone()),
             Some(panel @ ("variables" | "variables-floating")) => {
                 app.vars.full = panel == "variables";
                 app.open_variables();
@@ -193,7 +197,7 @@ impl Shell {
     }
 
     fn handle_keys(&mut self, ctx: &Context) {
-        if self.app.dialog.is_some() {
+        if self.app.dialog.is_some() || self.app.history.save_modal.is_some() {
             return;
         }
         let typing = ctx.egui_wants_keyboard_input();
@@ -242,6 +246,7 @@ impl Shell {
                 (Key::Z, false, _) => Some(Action::Undo),
                 (Key::Z, true, _) | (Key::Y, false, _) => Some(Action::Redo),
                 (Key::O, false, _) => Some(Action::Open),
+                (Key::S, false, true) => Some(Action::SaveVersion),
                 (Key::S, false, _) => Some(Action::Save),
                 (Key::S, true, _) => Some(Action::SaveAs),
                 (Key::D, false, _) => Some(Action::Duplicate),
@@ -299,6 +304,9 @@ impl Shell {
         }
         match key {
             Key::Delete | Key::Backspace => menus::run(app, ctx, Action::Delete),
+            // an open comment draft or thread takes the Escape itself (egui drops text focus on Escape,
+            // so the shortcut handler cannot tell that the key was meant for the text box)
+            Key::Escape if app.comments.captures_escape() => {}
             Key::Escape => {
                 if !matches!(app.canvas.inter, canvas::Interaction::None) {
                     app.cancel_interaction();
@@ -485,6 +493,7 @@ impl Shell {
         self.app.now = ctx.input(|i| i.time);
         self.drive_screenshot(&ctx);
         if ctx.input(|i| i.viewport().close_requested()) {
+            self.app.save_close_version();
             self.app.flush_autosave();
         }
         self.app.scrub_sync(&ctx);
@@ -493,6 +502,7 @@ impl Shell {
             return;
         }
         self.app.autosave_tick(&ctx);
+        self.app.history_tick();
         if self.app.proto.present.is_some() {
             crate::present::show(&mut self.app, ui);
             return;
@@ -530,6 +540,7 @@ impl Shell {
             }
             right::show(&mut self.app, ui, right_rect);
             toolbar::show(&mut self.app, ui, canvas_rect_for_toolbar(full));
+            crate::history::banner::show(&mut self.app, ui, canvas_rect);
             self.context_menu(ui, canvas_rect);
             menus::show(&mut self.app, &ctx);
             panels::context::show(&mut self.app, &ctx);
@@ -537,6 +548,7 @@ impl Shell {
             crate::variables::view::show(&mut self.app, ui, full);
         }
         crate::home::dialog::show(&mut self.app, &ctx);
+        crate::history::modal::show(&mut self.app, &ctx);
         crate::libraries::show(&mut self.app, &ctx);
         self.toast(ui, full);
 

@@ -1,0 +1,56 @@
+{
+  "comments": [
+    {
+      "id": "101",
+      "file_key": "AbCdEf123",
+      "parent_id": "",
+      "user": { "id": "u1", "handle": "Jane Cooper", "img_url": "https://example.invalid/jane.png" },
+      "created_at": "2024-03-01T10:00:00Z",
+      "resolved_at": null,
+      "message": "Can we make the title bigger?",
+      "client_meta": { "node_id": "10:1", "node_offset": { "x": 24, "y": 16.5 } },
+      "order_id": "1"
+    },
+    {
+      "id": "102",
+      "file_key": "AbCdEf123",
+      "parent_id": "101",
+      "user": { "id": "u2", "handle": "kir" },
+      "created_at": "2024-03-01T11:30:00Z",
+      "resolved_at": null,
+      "message": "Done, check the new size.",
+      "client_meta": { "node_id": "10:1", "node_offset": { "x": 24, "y": 16.5 } }
+    },
+    {
+      "id": "103",
+      "file_key": "AbCdEf123",
+      "parent_id": "",
+      "user": { "id": "u3", "handle": "Marcus" },
+      "created_at": "2024-03-02T09:15:00.250Z",
+      "resolved_at": "2024-03-03T08:00:00Z",
+      "message": "Spacing between the cards looks off here.",
+      "client_meta": { "x": 640, "y": 120 },
+      "order_id": "2"
+    },
+    {
+      "id": "104",
+      "file_key": "AbCdEf123",
+      "parent_id": "",
+      "user": {},
+      "created_at": "2024-03-04T16:45:00+02:00",
+      "resolved_at": null,
+      "message": "This layer was deleted in the source file.",
+      "client_meta": { "node_id": "99:9", "node_offset": { "x": 5, "y": 5 } },
+      "order_id": "3"
+    },
+    {
+      "id": "105",
+      "file_key": "AbCdEf123",
+      "parent_id": "777",
+      "user": { "handle": "ghost" },
+      "created_at": "2024-03-05T09:00:00Z",
+      "resolved_at": null,
+      "message": "A reply whose thread is not in the export."
+    }
+  ]
+}

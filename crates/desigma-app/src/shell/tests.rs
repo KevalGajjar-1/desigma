@@ -927,8 +927,10 @@ fn layout_guide_section_edits_the_grids_of_a_frame() {
     }
 }
 
+mod comments;
 mod components;
 mod find;
+mod history;
 mod home;
 mod menus;
 mod proto;
