@@ -611,6 +611,7 @@ impl Ctx {
         n.blend = fstr(v, "blendMode").map(blend).unwrap_or(default_blend);
         n.is_mask = fbool(v, "isMask").unwrap_or(false);
         n.export_settings = parse_export_settings(v);
+        n.dev = crate::dev::parse_dev(v);
         n.fill_geometry = fill_geo;
         n.stroke_geometry = stroke_geo;
 
