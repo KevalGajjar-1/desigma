@@ -102,6 +102,17 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
+          # Shown above the generated notes.
+          body: |
+            ### Installing
+
+            Download the archive for your platform below. These builds are **not code-signed yet**, so the first launch shows a warning:
+
+            - **Windows:** in the SmartScreen dialog, click **More info → Run anyway**.
+            - **macOS:** open it once, then click **Open Anyway** in **System Settings → Privacy & Security**, or run `xattr -d com.apple.quarantine ./desigma ./desigma-diff`.
+            - **Linux:** no warning; unpack and run `./desigma`.
+
+            Full instructions: [docs/install.md](https://github.com/deepfounder-ai/desigma/blob/main/docs/install.md). Check downloads against `SHA256SUMS`.
           prerelease: ${{ contains(github.ref_name, '-') }}
           files: |
             dist/*.zip

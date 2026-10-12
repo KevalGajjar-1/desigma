@@ -204,6 +204,15 @@ The `.fig` format is undocumented. Our decoder follows community reverse enginee
 
 ## Get started
 
+### Download
+
+Grab the build for your platform from the [latest release](https://github.com/deepfounder-ai/desigma/releases): Windows, macOS (Apple Silicon and Intel) and Linux.
+
+> [!NOTE]
+> Release builds are **not code-signed yet**, so the first launch shows a warning. On **Windows**, click **More info → Run anyway** in the SmartScreen dialog. On **macOS**, open it once, then click **Open Anyway** in **System Settings → Privacy & Security**, or run `xattr -d com.apple.quarantine ./desigma`. Step-by-step instructions: [docs/install.md](docs/install.md).
+
+### Build from source
+
 ```sh
 git clone https://github.com/deepfounder-ai/desigma
 cd desigma
@@ -231,7 +240,11 @@ desigma-diff compare reference.png actual.png --out diff.png   # pixel-compare t
 ```
 
 > [!IMPORTANT]
-> **Status:** desigma is in early alpha. Much of Figma's everyday design surface exists, but **it is not yet a replacement for professional daily work**. The biggest gaps are real-world `.fig` coverage, collaboration, plugins, PDF export, and GPU rendering for very large files. Expect rough edges, and please file issues with your OS, a sample file if you can share one, and a screenshot.
+> **Status:** desigma is in early alpha. Much of Figma's everyday design surface exists, but **it is not yet a replacement for professional daily work**. The biggest gaps are collaboration, plugins, PDF export, `.fig` features that real files haven't exercised yet, and code-signed release builds. Expect rough edges, and please file issues with your OS, a sample file if you can share one, and a screenshot.
+
+## Spread the word
+
+Logos, social images, banners and copy are in [`marketing/`](marketing/).
 
 ## License
 
