@@ -104,6 +104,7 @@ fn main() {
                     ],
                     fill_rule: FillRule::NonZero,
                 }],
+                network: None,
             },
         );
         n.transform = Affine::translate(590.0, 20.0);

@@ -575,7 +575,7 @@ impl Ctx {
                 count: v.get("pointCount").and_then(Value::as_u64).unwrap_or(5).clamp(3, 1000) as u32,
                 inner_ratio: fnum(v, "starInnerRadius").unwrap_or(0.382),
             },
-            "VECTOR" => NodeKind::Vector { paths: fill_geo.clone().unwrap_or_default() },
+            "VECTOR" => NodeKind::Vector { paths: fill_geo.clone().unwrap_or_default(), network: None },
             "TEXT" => NodeKind::Text(text_props(v)),
             "BOOLEAN_OPERATION" => NodeKind::BooleanOp(match fstr(v, "booleanOperation") {
                 Some("SUBTRACT") => BooleanOp::Subtract,
@@ -1073,7 +1073,7 @@ impl Ctx {
         }
         if has("fillGeometry") {
             let g = parse_geometry(farr(set, "fillGeometry"));
-            if let NodeKind::Vector { paths } = &mut n.kind {
+            if let NodeKind::Vector { paths, .. } = &mut n.kind {
                 *paths = g.clone();
             }
             n.fill_geometry = Some(g).filter(|g| !g.is_empty());

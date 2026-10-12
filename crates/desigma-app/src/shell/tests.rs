@@ -179,7 +179,7 @@ fn pen_tool_creates_vector_path() {
     s.key(Key::Enter);
     let id = s.app().selection[0];
     match &s.app().doc.get(id).unwrap().kind {
-        NodeKind::Vector { paths } => assert_eq!(paths[0].cmds.len(), 3),
+        NodeKind::Vector { paths, .. } => assert_eq!(paths[0].cmds.len(), 3),
         k => panic!("unexpected {k:?}"),
     }
 }
@@ -629,7 +629,7 @@ fn sim_with_vector() -> (Sim, NodeId) {
 
 fn vector_cmds(s: &Sim, id: NodeId) -> Vec<desigma_doc::PathCmd> {
     match &s.app().doc.get(id).unwrap().kind {
-        NodeKind::Vector { paths } => paths[0].cmds.clone(),
+        NodeKind::Vector { paths, .. } => paths[0].cmds.clone(),
         _ => panic!("not a vector"),
     }
 }

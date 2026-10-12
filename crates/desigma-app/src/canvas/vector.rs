@@ -299,7 +299,7 @@ fn write_model(doc: &mut Document, ed: &mut crate::edit::Edit, id: NodeId, model
         })
         .collect();
     if let Some(n) = ed.node(doc, id) {
-        n.kind = NodeKind::Vector { paths: to_paths(&shifted, rules) };
+        n.kind = NodeKind::Vector { paths: to_paths(&shifted, rules), network: None };
         n.transform = t0 * Affine::translate(origin.x, origin.y);
         n.size = v2(bb.w.max(1.0), bb.h.max(1.0));
         n.fill_geometry = None;
@@ -313,7 +313,7 @@ pub fn is_vector(app: &App, id: NodeId) -> bool {
 
 /// Enters point editing for a Vector node.
 pub fn enter(app: &mut App, id: NodeId) -> bool {
-    let Some(NodeKind::Vector { paths }) = app.doc.get(id).map(|n| n.kind.clone()) else { return false };
+    let Some(NodeKind::Vector { paths, .. }) = app.doc.get(id).map(|n| n.kind.clone()) else { return false };
     let (model, rules) = from_paths(&paths);
     if model.is_empty() {
         return false;
@@ -342,7 +342,7 @@ pub fn reload(app: &mut App) {
         return;
     }
     match app.doc.get(v.id).map(|n| &n.kind) {
-        Some(NodeKind::Vector { paths }) => {
+        Some(NodeKind::Vector { paths, .. }) => {
             let (m, r) = from_paths(paths);
             if m.is_empty() {
                 app.canvas.vedit = None;
@@ -690,7 +690,7 @@ mod tests {
         let mut d = Document::new("t");
         let page = d.add_page("p");
         let fid = d.alloc_id();
-        let mut n = desigma_doc::Node::new(fid, NodeKind::Vector { paths: line_path() });
+        let mut n = desigma_doc::Node::new(fid, NodeKind::Vector { paths: line_path(), network: None });
         n.transform = Affine::translate(200.0, 100.0);
         n.size = v2(100.0, 100.0);
         n.stroke.paints = vec![desigma_doc::Paint::solid(desigma_doc::Color::BLACK)];
@@ -702,7 +702,7 @@ mod tests {
 
     fn paths_of(app: &App, id: NodeId) -> Vec<Path> {
         match &app.doc.get(id).unwrap().kind {
-            NodeKind::Vector { paths } => paths.clone(),
+            NodeKind::Vector { paths, .. } => paths.clone(),
             _ => unreachable!(),
         }
     }
@@ -737,7 +737,7 @@ mod tests {
         let n = app.doc.get(id).unwrap();
         // the geometry moved up by 30 and the box was re-fitted: world position of the vertex is right
         let p = match &n.kind {
-            NodeKind::Vector { paths } => paths[0].cmds.iter().filter_map(|c| if let PathCmd::LineTo(p) = c { Some(*p) } else { None }).next().unwrap(),
+            NodeKind::Vector { paths, .. } => paths[0].cmds.iter().filter_map(|c| if let PathCmd::LineTo(p) = c { Some(*p) } else { None }).next().unwrap(),
             _ => unreachable!(),
         };
         let wp = app.doc.world_transform(id).apply(p);
@@ -771,6 +771,7 @@ mod tests {
                     ],
                     fill_rule: FillRule::NonZero,
                 }],
+                network: None,
             },
         );
         n.size = v2(100.0, 50.0);

@@ -51,7 +51,7 @@ fn zero_smoothing_matches_plain_rounding() {
             fill_rule: FillRule::NonZero,
         };
         t.add(None, |id| {
-            let mut n = Node::new(id, NodeKind::Vector { paths: vec![path] });
+            let mut n = Node::new(id, NodeKind::Vector { paths: vec![path], network: None });
             n.transform = Affine::translate(10.0, 10.0);
             n.size = Vec2::new(100.0, 100.0);
             n.fills = vec![Paint::solid(RED)];

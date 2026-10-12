@@ -439,7 +439,7 @@ fn derived_shape(doc: &Document, n: &Node, tol: f32) -> Option<Shape> {
         NodeKind::Star { count, inner_ratio } => {
             Some(Shape::single(poly_path(w, h, &star_points(*count, *inner_ratio), n.corner_radii[0])?, sk::FillRule::Winding, true))
         }
-        NodeKind::Vector { paths } => {
+        NodeKind::Vector { paths, .. } => {
             let s = vector_paths(paths);
             if s.paths.is_empty() {
                 None

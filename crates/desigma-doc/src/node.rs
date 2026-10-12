@@ -219,8 +219,14 @@ pub enum NodeKind {
         inner_ratio: f32,
     },
     /// Arbitrary vector geometry in local space.
+    ///
+    /// `paths` is the rendered geometry. When `network` is present it is the
+    /// source of truth (vertices, segments, filled regions, per-vertex corner
+    /// radius) and `paths` is derived from it with `VectorNetwork::to_paths`.
     Vector {
         paths: Vec<Path>,
+        #[serde(default)]
+        network: Option<VectorNetwork>,
     },
     Text(TextProps),
     BooleanOp(BooleanOp),

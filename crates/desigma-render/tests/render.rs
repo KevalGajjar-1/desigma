@@ -346,6 +346,7 @@ fn polygon_star_vector() {
                     ],
                     fill_rule: FillRule::NonZero,
                 }],
+                network: None,
             },
         );
         n.size = Vec2::new(40.0, 40.0);

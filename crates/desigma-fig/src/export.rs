@@ -491,7 +491,7 @@ fn export_node(doc: &Document, id: NodeId, parent_abs: Option<&Affine>, depth: u
             m.insert("pointCount".into(), (*count).into());
             m.insert("starInnerRadius".into(), n(*inner_ratio));
         }
-        NodeKind::Vector { paths } => {
+        NodeKind::Vector { paths, .. } => {
             if node.fill_geometry.is_none() {
                 m.insert("fillGeometry".into(), geometry(paths));
             }

@@ -242,7 +242,7 @@ pub fn node_geo(n: &Node) -> Option<Geo> {
         }
         NodeKind::Polygon { count } => Some(single(poly_cmds(w, h, &polygon_points(*count))?, GeoKind::Path, true, true, false)),
         NodeKind::Star { count, inner_ratio } => Some(single(poly_cmds(w, h, &star_points(*count, *inner_ratio))?, GeoKind::Path, true, true, false)),
-        NodeKind::Vector { paths } => {
+        NodeKind::Vector { paths, .. } => {
             let g = from_doc_paths(paths);
             (!g.paths.is_empty()).then_some(g)
         }

@@ -246,7 +246,7 @@ pub fn commit_pen(app: &mut App, tx: &mut Tx, pts: &[PenPoint], closed: bool) ->
     let bb = pen_bounds(&local_pts, closed);
     let origin = v2(bb.x, bb.y);
     let id = app.doc.alloc_id();
-    let mut n = Node::new(id, NodeKind::Vector { paths: vec![pen_path(&local_pts, closed, origin)] });
+    let mut n = Node::new(id, NodeKind::Vector { paths: vec![pen_path(&local_pts, closed, origin)], network: None });
     n.name = app.unique_name("Vector");
     n.transform = Affine::translate(bb.x, bb.y);
     n.size = v2(bb.w.max(1.0), bb.h.max(1.0));

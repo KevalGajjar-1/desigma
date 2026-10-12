@@ -69,7 +69,7 @@ fn geometry_is_stored_on_every_node_that_has_it() {
     let v = find(&doc, "Vec");
     assert_eq!(v.fill_geometry.as_ref().unwrap().len(), 1);
     assert!(v.stroke_geometry.is_some());
-    assert!(matches!(&v.kind, NodeKind::Vector { paths } if paths == v.fill_geometry.as_ref().unwrap()));
+    assert!(matches!(&v.kind, NodeKind::Vector { paths, .. } if paths == v.fill_geometry.as_ref().unwrap()));
     let plain = find(&doc, "Plain");
     assert!(plain.fill_geometry.is_none() && plain.stroke_geometry.is_none());
 }

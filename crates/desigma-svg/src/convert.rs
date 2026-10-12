@@ -442,7 +442,7 @@ impl Conv<'_> {
         };
         let (kind, radius) = kind.unwrap_or_else(|| {
             let cmds = path_cmds(p.data(), fr.origin);
-            (NodeKind::Vector { paths: vec![Path { cmds, fill_rule: rule }] }, 0.0)
+            (NodeKind::Vector { paths: vec![Path { cmds, fill_rule: rule }], network: None }, 0.0)
         });
 
         let mut node = self.new_node(kind);
