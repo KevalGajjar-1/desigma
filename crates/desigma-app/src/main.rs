@@ -5,6 +5,7 @@ mod clipboard;
 mod comments;
 mod comp_ops;
 mod demo;
+mod dev;
 mod edit;
 mod find;
 mod fonts;

@@ -190,6 +190,7 @@ pub fn css_for(doc: &Document, node: NodeId) -> String {
     if let Some(b) = blend_css(n.blend) {
         push("mix-blend-mode", b.into());
     }
+    crate::codegen::apply_css_vars(doc, n, &mut out);
     out.join("\n")
 }
 

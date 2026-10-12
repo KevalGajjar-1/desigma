@@ -157,6 +157,8 @@ pub struct App {
     pub comments: crate::comments::CommentsState,
     /// Version history of the open library file.
     pub history: crate::history::HistoryState,
+    /// Dev mode: code language, annotation / link editors, Compare changes.
+    pub dev: crate::dev::DevState,
 }
 
 impl App {
@@ -200,6 +202,7 @@ impl App {
             renaming_file: false,
             comments: Default::default(),
             history: Default::default(),
+            dev: Default::default(),
         }
     }
 

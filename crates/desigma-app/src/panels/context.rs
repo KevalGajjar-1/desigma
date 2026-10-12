@@ -48,7 +48,9 @@ fn entries(app: &App) -> Vec<Entry> {
         .selection
         .iter()
         .any(|id| app.doc.get(*id).is_some_and(|n| !matches!(n.kind, NodeKind::Component(_) | NodeKind::ComponentSet(_) | NodeKind::Page { .. })));
-    vec![
+    let can_mark = app.selection.iter().any(|id| crate::dev::markable(app, *id));
+    let has_status = app.selection.iter().any(|id| app.doc.get(*id).is_some_and(|n| n.dev.status.is_some()));
+    let mut list = vec![
         leaf(MenuItem::new("Duplicate").shortcut("Ctrl+D").disabled(!has), Action::Duplicate),
         leaf(MenuItem::new("Group selection").shortcut("Ctrl+G").disabled(!has), Action::Group),
         leaf(MenuItem::new("Frame selection").shortcut("Ctrl+Alt+G").disabled(!has), Action::FrameSelection),
@@ -62,8 +64,14 @@ fn entries(app: &App) -> Vec<Entry> {
         leaf(MenuItem::new("Bring to front").shortcut("Ctrl+Shift+]").disabled(!has), Action::BringToFront),
         leaf(MenuItem::new("Send to back").shortcut("Ctrl+Shift+[").disabled(!has).sep(), Action::SendToBack),
         select_submenu(has),
-        leaf(MenuItem::new("Delete").shortcut("Del").disabled(!has), Action::Delete),
-    ]
+        leaf(MenuItem::new("Mark as ready for dev").disabled(!can_mark), Action::MarkReadyForDev),
+    ];
+    if has_status {
+        list.push(leaf(MenuItem::new("Mark as completed"), Action::MarkCompleted));
+        list.push(leaf(MenuItem::new("Remove dev status"), Action::ClearDevStatus));
+    }
+    list.push(leaf(MenuItem::new("Delete").shortcut("Del").disabled(!has), Action::Delete));
+    list
 }
 
 /// The action behind an index path of the open menu.

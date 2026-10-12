@@ -63,7 +63,17 @@ pub fn show(app: &mut App, ui: &mut Ui, rect: Rect) {
 
     // ---- layers
     let lt = Rect::from_min_size(Pos2::new(x0, y), Vec2::new(inner.width(), theme::LAYER_HEADER_HEIGHT));
-    section_title(ui, lt, "Layers");
+    let dev_list = app.ui.dev_mode && app.dev.left_tab == crate::dev::LeftTab::ReadyForDev;
+    if app.ui.dev_mode {
+        crate::dev::list::tabs(app, ui, lt);
+    } else {
+        section_title(ui, lt, "Layers");
+    }
+    if dev_list {
+        let below = Rect::from_min_max(Pos2::new(x0, y + theme::LAYER_HEADER_HEIGHT), inner.max);
+        crate::dev::list::show(app, ui, below);
+        return;
+    }
     let fb = Rect::from_min_size(
         Pos2::new(lt.right() - theme::PANEL_ACTION_RIGHT_PAD - theme::PANEL_ACTION_BUTTON, lt.top() + 8.0),
         Vec2::splat(theme::PANEL_ACTION_BUTTON),

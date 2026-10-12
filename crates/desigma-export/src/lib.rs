@@ -3,23 +3,34 @@
 //! * [`export_png`] / [`export_jpg`] rasterise a layer through `desigma_render`,
 //!   growing the image to include shadows, blur and outside strokes like Figma.
 //! * [`export_svg`] writes real vector SVG (see [`SvgOptions`]).
-//! * [`css_for`] prints Dev Mode style CSS for a layer.
+//! * [`css_for`] prints Dev Mode style CSS for a layer; [`tailwind_for`], [`swiftui_for`],
+//!   [`compose_for`] and [`react_for`] generate code for the other Dev Mode languages.
 //!
 //! PDF export is not provided: no pure-Rust PDF writer with usable vector
 //! output is vendored in this workspace.
 
 mod bounds;
+mod codegen;
+mod compose;
 mod css;
 mod geo;
 mod raster;
+mod react;
 mod svg;
+mod swiftui;
+mod tailwind;
 mod text;
 mod util;
 
 pub use bounds::render_bounds;
+pub use codegen::{is_vector_asset, vector_assets};
+pub use compose::compose_for;
 pub use css::{css_for, font_family_css, paint_css, text_style_css};
 pub use raster::{export_jpg, export_png, render_export, rgba_bytes, ExportScale};
+pub use react::{react_for, react_with, ReactOptions};
 pub use svg::{export_svg, SvgOptions};
+pub use swiftui::swiftui_for;
+pub use tailwind::tailwind_for;
 pub use text::register_font;
 pub use util::css_color;
 

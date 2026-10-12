@@ -54,6 +54,9 @@ pub struct Node {
     /// Export presets shown in the inspector's Export section.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub export_settings: Vec<ExportPreset>,
+    /// Dev mode status, links and annotations; empty for most nodes.
+    #[serde(default, skip_serializing_if = "DevInfo::is_empty")]
+    pub dev: DevInfo,
 }
 
 /// A node property that an instance can override independently of its main
@@ -160,6 +163,7 @@ impl Node {
             prototype: PrototypeProps::default(),
             variables: NodeVariables::default(),
             export_settings: Vec::new(),
+            dev: DevInfo::default(),
         }
     }
 

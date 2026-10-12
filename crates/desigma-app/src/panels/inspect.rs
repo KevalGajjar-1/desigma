@@ -8,10 +8,9 @@ use crate::widgets::{self, elide, fmt_num, text_width};
 use desigma_doc::*;
 use egui::{Align2, Color32, Id, Pos2, Rect, Sense, Stroke, Ui, Vec2};
 
-const PAD: f32 = 16.0;
-const ROW_H: f32 = 24.0;
-/// Figma's measurement red.
-const MEASURE: Color32 = Color32::from_rgb(0xF2, 0x48, 0x22);
+pub(crate) const PAD: f32 = 16.0;
+pub(crate) const ROW_H: f32 = 24.0;
+const MEASURE: Color32 = theme::MEASURE;
 
 fn c32(c: &Color, opacity: f32) -> Color32 {
     let f = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
@@ -179,32 +178,33 @@ pub fn collect_assets(doc: &Document, root: NodeId) -> Vec<Asset> {
 
 // ------------------------------------------------------------------ drawing
 
-struct Cur {
-    x0: f32,
-    oy: f32,
-    y: f32,
-    w: f32,
+pub(crate) struct Cur {
+    pub x0: f32,
+    pub oy: f32,
+    pub y: f32,
+    pub w: f32,
 }
 
 impl Cur {
-    fn rect(&self, x: f32, dy: f32, w: f32, h: f32) -> Rect {
+    pub fn rect(&self, x: f32, dy: f32, w: f32, h: f32) -> Rect {
         Rect::from_min_size(Pos2::new(self.x0 + x, self.oy + self.y + dy), Vec2::new(w, h))
     }
 }
 
-fn copy(app: &mut App, ui: &Ui, text: String, what: &str) {
+pub(crate) fn copy(app: &mut App, ui: &Ui, text: String, what: &str) {
     ui.ctx().copy_text(text);
     app.show_toast(format!("Copied {what}"), false);
 }
 
-fn small_button(ui: &mut Ui, rect: Rect, key: impl widgets::Key, label: &str) -> bool {
+pub(crate) fn small_button(ui: &mut Ui, rect: Rect, key: impl widgets::Key, label: &str) -> bool {
+    widgets::record(ui, &format!("btn-{key:?}"), rect);
     let r = ui.interact(rect, ui.id().with(("insp-btn", key)), Sense::click());
     ui.painter().rect_filled(rect, theme::cr(theme::RADIUS_MEDIUM), if r.hovered() { theme::BG_TERTIARY } else { theme::BG_SECONDARY });
     ui.painter().text(rect.center(), Align2::CENTER_CENTER, label, theme::font_body(), theme::TEXT);
     r.clicked()
 }
 
-fn section_title(ui: &Ui, c: &mut Cur, label: &str) {
+pub(crate) fn section_title(ui: &Ui, c: &mut Cur, label: &str) {
     widgets::hline(ui.painter(), c.x0, c.x0 + c.w, c.oy + c.y, theme::BORDER);
     c.y += 1.0;
     let r = c.rect(PAD, 0.0, c.w - 2.0 * PAD, theme::SECTION_TITLE_HEIGHT);
@@ -212,7 +212,7 @@ fn section_title(ui: &Ui, c: &mut Cur, label: &str) {
     c.y += theme::SECTION_TITLE_HEIGHT - 8.0;
 }
 
-fn kv(ui: &mut Ui, app: &mut App, c: &mut Cur, label: &str, value: &str) {
+pub(crate) fn kv(ui: &mut Ui, app: &mut App, c: &mut Cur, label: &str, value: &str) {
     let r = c.rect(PAD, 0.0, c.w - 2.0 * PAD, ROW_H);
     let resp = ui.interact(r, ui.id().with(("insp-kv", label)), Sense::click());
     if resp.hovered() {
@@ -227,63 +227,6 @@ fn kv(ui: &mut Ui, app: &mut App, c: &mut Cur, label: &str, value: &str) {
     c.y += ROW_H;
 }
 
-/// Splits a CSS line so each piece fits `max_w` (breaking after commas/spaces).
-fn wrap_line(ui: &Ui, line: &str, max_w: f32) -> Vec<String> {
-    let font = theme::font_mono();
-    let p = ui.painter();
-    if text_width(p, line, &font) <= max_w {
-        return vec![line.to_string()];
-    }
-    let mut out = Vec::new();
-    let mut cur = String::new();
-    for word in line.split_inclusive(' ') {
-        let cand = format!("{cur}{word}");
-        if !cur.is_empty() && text_width(p, cand.trim_end(), &font) > max_w {
-            out.push(cur.trim_end().to_string());
-            cur = format!("  {word}");
-        } else {
-            cur = cand;
-        }
-    }
-    if !cur.trim().is_empty() {
-        out.push(cur.trim_end().to_string());
-    }
-    out
-}
-
-fn code_block(ui: &mut Ui, c: &mut Cur, css: &str) {
-    let font = theme::font_mono();
-    let line_h = 16.0;
-    let inner_w = c.w - 2.0 * PAD - 16.0;
-    let mut lines: Vec<(String, bool)> = Vec::new(); // (text, starts a declaration)
-    for l in css.lines() {
-        for (i, piece) in wrap_line(ui, l, inner_w).into_iter().enumerate() {
-            lines.push((piece, i == 0));
-        }
-    }
-    let h = lines.len() as f32 * line_h + 16.0;
-    let r = c.rect(PAD, 0.0, c.w - 2.0 * PAD, h);
-    ui.painter().rect_filled(r, theme::cr(theme::RADIUS_MEDIUM), theme::BG_SECONDARY);
-    let mut y = r.top() + 8.0;
-    for (text, decl) in lines {
-        let x = r.left() + 8.0;
-        let split = if decl { text.find(':') } else { None };
-        match split {
-            Some(i) => {
-                let (prop, rest) = text.split_at(i + 1);
-                ui.painter().text(Pos2::new(x, y + line_h / 2.0), Align2::LEFT_CENTER, prop, font.clone(), theme::TEXT_BRAND);
-                let w = text_width(ui.painter(), prop, &font);
-                ui.painter().text(Pos2::new(x + w, y + line_h / 2.0), Align2::LEFT_CENTER, rest, font.clone(), theme::TEXT);
-            }
-            None => {
-                ui.painter().text(Pos2::new(x, y + line_h / 2.0), Align2::LEFT_CENTER, text, font.clone(), theme::TEXT);
-            }
-        }
-        y += line_h;
-    }
-    c.y += h + 8.0;
-}
-
 fn ext_for(bytes: &[u8]) -> &'static str {
     match image::guess_format(bytes) {
         Ok(image::ImageFormat::Jpeg) => "jpg",
@@ -293,7 +236,7 @@ fn ext_for(bytes: &[u8]) -> &'static str {
     }
 }
 
-fn download(app: &mut App, id: NodeId, asset: &Asset) {
+pub(crate) fn download(app: &mut App, id: NodeId, asset: &Asset) {
     let name = app.doc.get(id).map(|n| desigma_export::sanitize_file_name(&n.name)).unwrap_or_else(|| "asset".into());
     let (file, bytes, label, ext): (String, Vec<u8>, &str, &str) = match asset {
         Asset::Image(r) => {
@@ -361,6 +304,11 @@ fn body(app: &mut App, ui: &mut Ui, c: &mut Cur, id: NodeId, count: usize) {
     ui.painter().text(Pos2::new(sub_r.left(), sub_r.center().y), Align2::LEFT_CENTER, sub, theme::font_body(), theme::TEXT_SECONDARY);
     c.y += 26.0;
 
+    crate::dev::sections::status_header(app, ui, c, id);
+    crate::dev::sections::component_section(app, ui, c, id);
+    crate::dev::sections::annotations_section(app, ui, c, id);
+    crate::dev::sections::links_section(app, ui, c, id);
+
     // Layout.
     section_title(ui, c, "Layout");
     kv(ui, app, c, "Width", &format!("{}px", fmt_num(n.size.x)));
@@ -371,22 +319,12 @@ fn body(app: &mut App, ui: &mut Ui, c: &mut Cur, id: NodeId, count: usize) {
     if rot.abs() > 0.01 {
         kv(ui, app, c, "Rotation", &format!("{}°", fmt_num(rot)));
     }
-    c.y += 8.0;
+    c.y += 4.0;
+    crate::dev::sections::box_model_section(ui, c, &app.doc, id);
 
     // Code.
-    section_title(ui, c, "CSS");
-    let css = desigma_export::css_for(&app.export_doc(), id);
-    let head = c.rect(c.w - PAD - 56.0, -24.0, 56.0, 24.0);
-    if small_button(ui, head, "copy-css", "Copy") {
-        copy(app, ui, css.clone(), "CSS");
-    }
-    if css.is_empty() {
-        let r = c.rect(PAD, 0.0, c.w - 2.0 * PAD, ROW_H);
-        ui.painter().text(Pos2::new(r.left(), r.center().y), Align2::LEFT_CENTER, "No styles", theme::font_body(), theme::TEXT_TERTIARY);
-        c.y += ROW_H;
-    } else {
-        code_block(ui, c, &css);
-    }
+    crate::dev::sections::code_section(app, ui, c, id);
+    crate::dev::sections::variables_section(app, ui, c, id);
 
     // Colors.
     let colors = collect_colors(&app.doc, id);
@@ -425,30 +363,12 @@ fn body(app: &mut App, ui: &mut Ui, c: &mut Cur, id: NodeId, count: usize) {
         c.y += 8.0;
     }
 
-    // Assets.
-    section_title(ui, c, "Assets");
-    let assets = collect_assets(&app.doc, id);
-    let base = desigma_export::sanitize_file_name(&n.name);
-    for (i, a) in assets.iter().enumerate() {
-        let r = c.rect(PAD, 0.0, c.w - 2.0 * PAD, 28.0);
-        let label = match a {
-            Asset::Image(r) => format!("Image {}", r.chars().take(6).collect::<String>()),
-            Asset::Svg => format!("{base}.svg"),
-            Asset::Png2x => format!("{base}@2x.png"),
-        };
-        let label = elide(ui.painter(), &label, &theme::font_body(), r.width() - 84.0);
-        ui.painter().text(Pos2::new(r.left(), r.center().y), Align2::LEFT_CENTER, label, theme::font_body(), theme::TEXT);
-        let b = Rect::from_min_size(Pos2::new(r.right() - 76.0, r.top() + 2.0), Vec2::new(76.0, 24.0));
-        if small_button(ui, b, ("asset", i), "Download") {
-            download(app, id, a);
-        }
-        c.y += 28.0;
-    }
+    crate::dev::sections::assets_section(app, ui, c, id);
 }
 
 // ------------------------------------------------------------------ measurements
 
-fn page_aabb(doc: &Document, id: NodeId) -> Option<Rect> {
+pub(crate) fn page_aabb(doc: &Document, id: NodeId) -> Option<Rect> {
     doc.get(id)?;
     let pts = world_corners(doc, id);
     let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);

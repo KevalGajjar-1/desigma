@@ -343,6 +343,7 @@ fn export_node(doc: &Document, id: NodeId, parent_abs: Option<&Affine>, depth: u
     if !node.export_settings.is_empty() {
         m.insert("exportSettings".into(), Value::Array(node.export_settings.iter().map(export_preset).collect()));
     }
+    crate::dev::export_dev(node, &mut m);
     let guides = guides_of(doc, id);
     if !guides.is_empty() {
         m.insert("guides".into(), Value::Array(guides));
