@@ -993,6 +993,7 @@ dependencies = [
  "image",
  "rayon",
  "tiny-skia",
+ "ttf-parser",
 ]
 
 [[package]]

@@ -279,7 +279,16 @@ pub fn record_override(before: &Node, after: &Node) -> BTreeSet<OverrideField> {
     add(before.corner_radii != after.corner_radii || before.corner_smoothing != after.corner_smoothing, OverrideField::CornerRadii);
     if let (NodeKind::Text(a), NodeKind::Text(b)) = (&before.kind, &after.kind) {
         add(a.content != b.content, OverrideField::Characters);
-        add(a.style != b.style || a.runs != b.runs || a.auto_resize != b.auto_resize || a.max_lines != b.max_lines, OverrideField::TextStyle);
+        add(
+            a.style != b.style
+                || a.runs != b.runs
+                || a.auto_resize != b.auto_resize
+                || a.max_lines != b.max_lines
+                || a.paragraph != b.paragraph
+                || a.lists != b.lists
+                || a.direction != b.direction,
+            OverrideField::TextStyle,
+        );
     }
     add(before.kind.frame_props() != after.kind.frame_props() || before.layout_child != after.layout_child, OverrideField::Layout);
     add(instance_component(before) != instance_component(after), OverrideField::MainComponent);
@@ -591,6 +600,9 @@ fn copy_field(f: OverrideField, from: &Node, to: &mut Node) {
                 b.runs = a.runs.clone();
                 b.auto_resize = a.auto_resize;
                 b.max_lines = a.max_lines;
+                b.paragraph = a.paragraph.clone();
+                b.lists = a.lists.clone();
+                b.direction = a.direction;
             }
         }
         OverrideField::Layout => {
@@ -627,6 +639,8 @@ fn apply_reference(r: &Node, n: &mut Node, top: bool, values: &BTreeMap<String, 
                 b.style = a.style.clone();
                 b.auto_resize = a.auto_resize;
                 b.max_lines = a.max_lines;
+                b.paragraph = a.paragraph.clone();
+                b.direction = a.direction;
             }
             continue;
         }

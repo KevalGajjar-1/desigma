@@ -221,31 +221,10 @@ fn expand(template: &str, groups: &[Option<String>]) -> String {
     out
 }
 
-/// Maps a byte offset through the edit `a..b -> a..a + new_len`. Offsets inside
-/// the replaced range collapse to the end of the new text.
-fn map_offset(p: usize, a: usize, b: usize, new_len: usize) -> usize {
-    if p <= a {
-        p
-    } else if p >= b {
-        p + new_len - (b - a)
-    } else {
-        a + new_len
-    }
-}
-
-/// Replaces `range` of the text and keeps the runs aligned: the new text takes
-/// the style of the first replaced char (its run, or the base style).
+/// Replaces `range` of the text and keeps the runs and lists aligned: the new
+/// text takes the style of the first replaced char (its run, or the base style).
 fn splice_text(t: &mut TextProps, range: Range<usize>, new: &str) {
-    let (a, b) = (range.start, range.end);
-    let mut runs = Vec::with_capacity(t.runs.len());
-    for r in &t.runs {
-        let (start, end) = (map_offset(r.start, a, b, new.len()), map_offset(r.end, a, b, new.len()));
-        if start < end {
-            runs.push(TextRun { start, end, style: r.style.clone() });
-        }
-    }
-    t.runs = runs;
-    t.content.replace_range(range, new);
+    crate::replace_text_range(t, range, new);
 }
 
 fn valid_range(s: &str, r: &Range<usize>) -> bool {

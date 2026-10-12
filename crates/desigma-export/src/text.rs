@@ -350,6 +350,7 @@ mod tests {
             runs: vec![],
             auto_resize: TextAutoResize::Height,
             max_lines: None,
+            ..Default::default()
         };
         let out = layout(&p, Vec2::new(60.0, 100.0));
         assert!(out.lines.len() >= 2, "wraps in a 60px box");

@@ -171,6 +171,7 @@ mod tests {
             runs: vec![],
             auto_resize: d::TextAutoResize::WidthAndHeight,
             max_lines: None,
+            ..Default::default()
         }
     }
 

@@ -26,7 +26,8 @@ use geom::{node_shape, to_sk_transform, transformed_bounds, Shape};
 pub use index::SceneIndex;
 use paint::{blend_mode, fill_paths, stroke_paths, PaintEnv};
 pub use text::{
-    available_families, font_generation, load_font_data, register_font, resolve_font, text_geometry, GlyphSpan, LineGeom, ResolvedFont, TextGeometry,
+    available_families, font_features, font_generation, load_font_data, register_font, resolve_font, text_geometry, GlyphSpan, LineGeom, ResolvedFont,
+    TextGeometry,
 };
 pub use tiles::{Tile, TileBudget, TileCache, TileFrame, TileKey, TILE_SIZE};
 pub use tiny_skia;

@@ -377,7 +377,14 @@ mod tests {
     use desigma_doc::{Color, TextAutoResize};
 
     fn props(s: &str) -> TextProps {
-        TextProps { content: s.into(), style: TextStyle::default(), runs: vec![], auto_resize: TextAutoResize::WidthAndHeight, max_lines: None }
+        TextProps {
+            content: s.into(),
+            style: TextStyle::default(),
+            runs: vec![],
+            auto_resize: TextAutoResize::WidthAndHeight,
+            max_lines: None,
+            ..Default::default()
+        }
     }
 
     fn bold(s: &mut TextStyle) {

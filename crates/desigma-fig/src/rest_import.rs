@@ -1357,7 +1357,7 @@ fn text_props(v: &Value) -> TextProps {
 
     let overrides: Vec<u64> = farr(v, "characterStyleOverrides").iter().map(|x| x.as_u64().unwrap_or(0)).collect();
     let runs = build_runs(&content, &style, &overrides, v.get("styleOverrideTable"));
-    TextProps { content, style, runs, auto_resize: auto, max_lines }
+    TextProps { content, style, runs, auto_resize: auto, max_lines, ..Default::default() }
 }
 
 /// Style runs over byte ranges from per-UTF-16-unit override ids.

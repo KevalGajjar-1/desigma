@@ -11,6 +11,7 @@ desigma-doc.workspace = true
 # Bundled fonts only; the renderer never touches the network.
 desigma-fonts = { path = "../desigma-fonts", default-features = false }
 i_overlay = "9.0.1"
+ttf-parser = "0.25"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 rayon = "1"
 tiny-skia.workspace = true

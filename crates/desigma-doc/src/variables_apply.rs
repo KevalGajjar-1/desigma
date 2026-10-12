@@ -343,8 +343,14 @@ mod tests {
         assert_eq!(property_kind("paddingTop"), Some(VariableKind::Number));
         assert_eq!(property_kind("nope"), None);
         let frame = NodeKind::Frame(FrameProps::default());
-        let text =
-            NodeKind::Text(TextProps { content: String::new(), style: TextStyle::default(), runs: vec![], auto_resize: TextAutoResize::None, max_lines: None });
+        let text = NodeKind::Text(TextProps {
+            content: String::new(),
+            style: TextStyle::default(),
+            runs: vec![],
+            auto_resize: TextAutoResize::None,
+            max_lines: None,
+            ..Default::default()
+        });
         assert!(scope_allows(&[], "width", &frame));
         assert!(scope_allows(&["GAP".into()], "itemSpacing", &frame));
         assert!(!scope_allows(&["GAP".into()], "width", &frame));

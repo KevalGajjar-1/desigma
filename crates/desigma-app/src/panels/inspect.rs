@@ -638,6 +638,7 @@ mod tests {
             runs: vec![],
             auto_resize: TextAutoResize::None,
             max_lines: None,
+            ..Default::default()
         };
         let rows = typography_rows(&t);
         assert_eq!(rows[1], ("Style", "SemiBold Italic".to_string()));
