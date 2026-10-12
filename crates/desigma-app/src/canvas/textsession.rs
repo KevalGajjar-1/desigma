@@ -68,8 +68,16 @@ pub fn begin_text_edit(app: &mut App, id: NodeId) {
         _ => return,
     };
     app.selection = vec![id];
-    // Like Figma, entering edit mode selects all the text.
-    app.canvas.text = Some(TextSession::new(id, len, 0, Tx::new(), false));
+    // Like Figma, entering edit mode selects all the text; when the layer is the current Find result
+    // the match is selected instead (so Enter / double-click after "next match" lands on it).
+    let (mut caret, mut anchor) = (len, 0);
+    if app.find.open {
+        let hit = app.find.current.and_then(|i| app.find.results.get(i)).filter(|m| m.node == id && m.field == desigma_doc::find::MatchField::Text);
+        if let Some(m) = hit.filter(|m| m.range.end <= len) {
+            (caret, anchor) = (m.range.end, m.range.start);
+        }
+    }
+    app.canvas.text = Some(TextSession::new(id, caret, anchor, Tx::new(), false));
 }
 
 pub fn finish_text(app: &mut App, commit: bool) {

@@ -209,6 +209,8 @@ pub fn overlays(app: &App, ui: &Ui, rect: ERect) {
         p.add(egui::Shape::line(line, Stroke::new(theme::PEN_LINE_WIDTH, theme::CANVAS_SELECTION)));
     }
 
+    draw_find_matches(app, &p, rect);
+
     // Text caret.
     if let Some(sess) = &app.canvas.text {
         if let Some(n) = app.doc.get(sess.id) {
@@ -237,6 +239,44 @@ pub fn overlays(app: &App, ui: &Ui, rect: ERect) {
                 }
                 ui.ctx().request_repaint_after(Duration::from_millis(250));
             }
+        }
+    }
+}
+
+/// Highlights the Find results inside text layers (the current one outlined), using the same
+/// glyph geometry as the editor so the boxes sit exactly on the drawn characters.
+fn draw_find_matches(app: &App, p: &Painter, rect: ERect) {
+    if !app.find.open || app.find.results.is_empty() {
+        return;
+    }
+    let to_s = |v: DV| app.view.to_screen(rect.min, v);
+    let current = app.find.current;
+    let mut drawn = 0;
+    for (i, m) in app.find.results.iter().enumerate() {
+        if m.field != desigma_doc::find::MatchField::Text || drawn >= theme::FIND_CANVAS_MATCH_MAX {
+            continue;
+        }
+        let Some(n) = app.doc.get(m.node) else { continue };
+        let NodeKind::Text(t) = &n.kind else { continue };
+        if !n.visible || app.doc.page_of(m.node) != Some(app.page) {
+            continue;
+        }
+        // skip layers outside the view
+        let bb = world_aabb(&app.doc, m.node);
+        let (a, b) = (to_s(v2(bb.x, bb.y)), to_s(v2(bb.x + bb.w, bb.y + bb.h)));
+        if !ERect::from_two_pos(a, b).expand(4.0).intersects(rect) {
+            continue;
+        }
+        let w = app.doc.world_transform(m.node);
+        drawn += 1;
+        for (x, y, rw, rh) in crate::textmeasure::selection_rects(t, n.size, m.range.clone()) {
+            let quad = [v2(x, y), v2(x + rw, y), v2(x + rw, y + rh), v2(x, y + rh)].map(|c| to_s(w.apply(c)));
+            let is_current = current == Some(i);
+            p.add(egui::Shape::convex_polygon(
+                quad.to_vec(),
+                theme::FIND_CANVAS_MATCH,
+                if is_current { Stroke::new(1.0, theme::FIND_CANVAS_MATCH_CURRENT) } else { Stroke::NONE },
+            ));
         }
     }
 }

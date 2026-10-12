@@ -315,3 +315,78 @@ fn edit_menu_and_context_menu_list_the_selection_commands() {
     s.right_click(p);
     assert!(s.app().ui.ctx_menu.is_some());
 }
+
+/// Number of filled polygons / rects on screen painted with `color`.
+fn filled_with(s: &Sim, color: egui::Color32) -> Vec<Rect> {
+    let mut out = Vec::new();
+    for cs in &s.shapes {
+        match &cs.shape {
+            egui::Shape::Path(p) if p.fill == color => out.push(Rect::from_points(&p.points)),
+            egui::Shape::Rect(r) if r.fill == color => out.push(r.rect),
+            _ => {}
+        }
+    }
+    out
+}
+
+#[test]
+fn matches_are_highlighted_on_the_canvas_text() {
+    let mut s = Sim::new();
+    let canvas_boxes =
+        |s: &Sim| -> Vec<Rect> { filled_with(s, crate::theme::FIND_CANVAS_MATCH).into_iter().filter(|r| s.app().canvas_rect.intersects(*r)).collect() };
+    assert!(canvas_boxes(&s).is_empty(), "no search, no highlight");
+    open_find(&mut s, "quarter");
+    s.frame(vec![]);
+    let boxes = canvas_boxes(&s);
+    assert_eq!(boxes.len(), 2, "one box per match in view: {boxes:?}");
+    // each box sits exactly where the editor geometry puts the match
+    for m in s.app().find.results.clone() {
+        let n = s.app().doc.get(m.node).unwrap();
+        let NodeKind::Text(t) = &n.kind else { panic!() };
+        let rects = crate::textmeasure::selection_rects(t, n.size, m.range.clone());
+        assert_eq!(rects.len(), 1);
+        let w = s.app().doc.world_transform(m.node);
+        let (x, y, rw, rh) = rects[0];
+        let a = s.app().view.to_screen(s.app().canvas_rect.min, w.apply(DV::new(x, y)));
+        let b = s.app().view.to_screen(s.app().canvas_rect.min, w.apply(DV::new(x + rw, y + rh)));
+        let want = Rect::from_two_pos(a, b);
+        assert!(boxes.iter().any(|r| (r.min - want.min).length() < 0.6 && (r.max - want.max).length() < 0.6), "{want:?} not in {boxes:?}");
+    }
+    // the box covers only the matched word, not the whole layer
+    let body = s.app().doc.get(s.by_name("Revenue grew 18% over the last quarter.")).unwrap().size.x * s.app().view.zoom;
+    assert!(boxes.iter().all(|r| r.width() < body * 0.5), "{boxes:?}");
+    // a different query moves the highlight; closing the panel removes it
+    s.cmd_key(Key::A);
+    s.type_text("Revenue");
+    s.frame(vec![]);
+    s.frame(vec![]);
+    assert_eq!(canvas_boxes(&s).len(), 1);
+    s.key(Key::Escape);
+    s.frame(vec![]);
+    assert!(canvas_boxes(&s).is_empty(), "closing Find clears the highlights");
+}
+
+#[test]
+fn entering_edit_mode_after_next_match_selects_the_match() {
+    let mut s = Sim::new();
+    open_find(&mut s, "quarter");
+    s.key(Key::Enter);
+    s.key(Key::Enter);
+    let m = s.app().find.results[s.app().find.current.unwrap()].clone();
+    let id = m.node;
+    assert_eq!(s.app().selection, vec![id]);
+    crate::canvas::textsession::begin_text_edit(&mut s.shell.app, id);
+    let sess = s.app().canvas.text.as_ref().unwrap();
+    assert_eq!(sess.range(), m.range, "the caret selection is the match");
+    assert_eq!(text_content(&s, id)[sess.range()].to_lowercase(), "quarter");
+    // typing replaces just that word
+    let before = text_content(&s, id);
+    crate::canvas::textsession::insert_text(&mut s.shell.app, "period", crate::textedit::EditKind::Typing);
+    let after = text_content(&s, id);
+    assert_eq!(after, format!("{}period{}", &before[..m.range.start], &before[m.range.end..]));
+    crate::canvas::textsession::finish_text(&mut s.shell.app, true);
+    // without a search, entering selects everything as before
+    s.shell.app.close_find();
+    crate::canvas::textsession::begin_text_edit(&mut s.shell.app, id);
+    assert_eq!(s.app().canvas.text.as_ref().unwrap().range(), 0..text_content(&s, id).len());
+}

@@ -380,6 +380,10 @@ pub fn text_style_css(st: &TextStyle) -> Vec<String> {
         TextCase::Title => push("text-transform", "capitalize".into()),
         TextCase::SmallCaps => push("font-variant", "small-caps".into()),
     }
+    if !st.features.is_empty() {
+        let list: Vec<String> = st.features.iter().map(|(t, v)| format!("\"{t}\" {v}")).collect();
+        push("font-feature-settings", list.join(", "));
+    }
     out
 }
 
@@ -397,6 +401,20 @@ fn text_block(t: &TextProps, out: &mut Vec<String>) {
         }
     }
     out.extend(text_style_css(st));
+    match t.direction {
+        TextDirection::Auto => {}
+        TextDirection::Ltr => out.push("direction: ltr;".into()),
+        TextDirection::Rtl => out.push("direction: rtl;".into()),
+    }
+    if t.paragraph.indent > 0.0 {
+        out.push(format!("text-indent: {}px;", num(t.paragraph.indent)));
+    }
+    if t.paragraph.hanging_punctuation {
+        out.push("hanging-punctuation: first last;".into());
+    }
+    if t.paragraph.leading_trim == LeadingTrim::CapHeight {
+        out.push("text-box: trim-both cap alphabetic;".into());
+    }
 }
 
 #[cfg(test)]
@@ -512,6 +530,32 @@ mod tests {
             css_for(&d, id),
             "color: #123;\nfont-family: \"Roboto Mono\";\nfont-size: 14px;\nfont-style: normal;\nfont-weight: 500;\nline-height: 150%;\nletter-spacing: -0.28px;\ntext-align: center;"
         );
+    }
+
+    #[test]
+    fn text_features_direction_and_paragraph_settings_css() {
+        let (d, id) = doc_with(|d, page| {
+            let i = d.alloc_id();
+            let st = TextStyle { features: vec![("ss01".into(), 1), ("tnum".into(), 1)], fills: vec![], ..Default::default() };
+            let mut n = Node::text(i, Rect::new(0.0, 0.0, 120.0, 21.0), "Hi", st);
+            if let NodeKind::Text(t) = &mut n.kind {
+                t.direction = TextDirection::Rtl;
+                t.paragraph.indent = 12.0;
+                t.paragraph.hanging_punctuation = true;
+                t.paragraph.leading_trim = LeadingTrim::CapHeight;
+            }
+            d.insert(page, n).unwrap();
+        });
+        let css = css_for(&d, id);
+        for want in [
+            "font-feature-settings: \"ss01\" 1, \"tnum\" 1;",
+            "direction: rtl;",
+            "text-indent: 12px;",
+            "hanging-punctuation: first last;",
+            "text-box: trim-both cap alphabetic;",
+        ] {
+            assert!(css.contains(want), "{want} missing in:\n{css}");
+        }
     }
 
     #[test]

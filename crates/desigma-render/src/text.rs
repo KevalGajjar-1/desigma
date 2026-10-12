@@ -431,9 +431,9 @@ impl Shaper {
     }
 }
 
-fn compute_layout(fonts: &mut Fonts, props: &TextProps, size: Vec2) -> TextLayout {
+/// Shapes and flows `props` in a box of `size`, truncating with an ellipsis when asked to.
+fn laid_out(fonts: &mut Fonts, props: &TextProps, size: Vec2) -> (Shaper, Vec<Para>, Flow) {
     let shaper = Shaper::new(fonts, props);
-    let styles = shaper.styles.clone();
     let mut paras = split_paragraphs(props, false);
     let mut fl = flow(fonts, &shaper, props, size, &paras);
 
@@ -453,6 +453,7 @@ fn compute_layout(fonts: &mut Fonts, props: &TextProps, size: Vec2) -> TextLayou
                     cut -= 1;
                 }
                 paras[pi].segs = truncated_segments(&original, cut);
+                paras[pi].text = paras[pi].segs.iter().map(|s| s.text.as_str()).collect();
                 fl = flow(fonts, &shaper, props, size, &paras);
                 if fl.lines.len() <= limit || cut == 0 {
                     break;
@@ -462,6 +463,12 @@ fn compute_layout(fonts: &mut Fonts, props: &TextProps, size: Vec2) -> TextLayou
         }
     }
 
+    (shaper, paras, fl)
+}
+
+fn compute_layout(fonts: &mut Fonts, props: &TextProps, size: Vec2) -> TextLayout {
+    let (shaper, _, fl) = laid_out(fonts, props, size);
+    let styles = shaper.styles.clone();
     let mut builders: Vec<sk::PathBuilder> = styles.iter().map(|_| sk::PathBuilder::new()).collect();
     for line in &fl.lines {
         for g in &line.glyphs {
@@ -488,6 +495,121 @@ fn compute_layout(fonts: &mut Fonts, props: &TextProps, size: Vec2) -> TextLayou
         marker_outline(fonts, &mut builders[m.style], m, baseline);
     }
     TextLayout { styles, paths: builders.into_iter().map(|b| b.finish()).collect() }
+}
+
+// ------------------------------------------------------------------ outlines (SVG export)
+/// A run of glyphs of one style on one line, as outlines (and the text they show).
+#[derive(Clone, Debug)]
+pub struct OutlineSpan {
+    /// Index into [`TextOutlines::styles`].
+    pub style: usize,
+    /// Left edge of the run, node-local px.
+    pub x: f32,
+    /// The characters shown (list markers included), in shaping order.
+    pub text: String,
+    /// Glyph outlines (and underline / strikethrough bars) in node-local space.
+    pub outline: Vec<d::PathCmd>,
+}
+
+#[derive(Clone, Debug)]
+pub struct OutlineLine {
+    pub baseline: f32,
+    pub spans: Vec<OutlineSpan>,
+}
+
+/// The laid out text of a node as per-line spans of vector outlines, for exporters.
+#[derive(Clone, Debug)]
+pub struct TextOutlines {
+    /// 0 = base style, i + 1 = `runs[i].style`.
+    pub styles: Vec<d::TextStyle>,
+    pub lines: Vec<OutlineLine>,
+}
+
+fn path_cmds(path: &sk::Path, out: &mut Vec<d::PathCmd>) {
+    let v = |p: sk::Point| Vec2::new(p.x, p.y);
+    for seg in path.segments() {
+        out.push(match seg {
+            sk::PathSegment::MoveTo(p) => d::PathCmd::MoveTo(v(p)),
+            sk::PathSegment::LineTo(p) => d::PathCmd::LineTo(v(p)),
+            sk::PathSegment::QuadTo(c, p) => d::PathCmd::QuadTo(v(c), v(p)),
+            sk::PathSegment::CubicTo(c1, c2, p) => d::PathCmd::CubicTo(v(c1), v(c2), v(p)),
+            sk::PathSegment::Close => d::PathCmd::Close,
+        });
+    }
+}
+
+/// Lays out `props` in a box of `size` exactly as [`layout`] does, but keeps the glyph runs per
+/// line with their outlines as path commands. Right-to-left runs list their text in shaping
+/// order (right to left); the outlines are exact either way.
+pub fn text_outlines(props: &TextProps, size: Vec2) -> TextOutlines {
+    with_fonts(|f| compute_outlines(f, props, size))
+}
+
+fn compute_outlines(fonts: &mut Fonts, props: &TextProps, size: Vec2) -> TextOutlines {
+    let (shaper, paras, fl) = laid_out(fonts, props, size);
+    let mut lines = Vec::new();
+    for (li, line) in fl.lines.iter().enumerate() {
+        let para: &Para = &paras[line.para];
+        let mut spans: Vec<OutlineSpan> = Vec::new();
+        for m in fl.markers.iter().filter(|m| m.line == li) {
+            let mut pb = sk::PathBuilder::new();
+            marker_outline(fonts, &mut pb, m, line.baseline);
+            let mut outline = Vec::new();
+            if let Some(p) = pb.finish() {
+                path_cmds(&p, &mut outline);
+            }
+            let text = match (m.shape, para.marker) {
+                (Some(d::BulletShape::Disc), _) => "\u{2022}".to_string(),
+                (Some(d::BulletShape::Ring), _) => "\u{25E6}".to_string(),
+                (Some(d::BulletShape::Square), _) => "\u{25AA}".to_string(),
+                (None, Some(mk)) => mk.label().unwrap_or_default(),
+                (None, None) => String::new(),
+            };
+            spans.push(OutlineSpan { style: m.style, x: m.x, text, outline });
+        }
+        let first_glyph = spans.len();
+        for g in &line.glyphs {
+            if g.end <= para.mark_len {
+                continue;
+            }
+            if spans.len() == first_glyph || spans.last().map(|s| s.style) != Some(g.style) {
+                spans.push(OutlineSpan { style: g.style, x: g.x, text: String::new(), outline: Vec::new() });
+            }
+            let span = spans.last_mut().unwrap();
+            span.x = span.x.min(g.x);
+            span.text.push_str(para.text.get(g.start..g.end).unwrap_or(""));
+            let mut pb = sk::PathBuilder::new();
+            glyph_outline(fonts, &mut pb, g, g.x, line.baseline);
+            if let Some(p) = pb.finish() {
+                path_cmds(&p, &mut span.outline);
+            }
+        }
+        for dc in &line.decos {
+            let mut bar = |offset: f32, thickness: f32| {
+                let t = (thickness * dc.fs).max(1.0);
+                let y = line.baseline - offset * dc.fs;
+                if let Some(span) = spans.iter_mut().find(|s| s.style == dc.style) {
+                    span.outline.extend([
+                        d::PathCmd::MoveTo(Vec2::new(dc.x0, y)),
+                        d::PathCmd::LineTo(Vec2::new(dc.x1, y)),
+                        d::PathCmd::LineTo(Vec2::new(dc.x1, y + t)),
+                        d::PathCmd::LineTo(Vec2::new(dc.x0, y + t)),
+                        d::PathCmd::Close,
+                    ]);
+                }
+            };
+            if let Some((o, t)) = dc.underline {
+                bar(o, t);
+            }
+            if let Some((o, t)) = dc.strike {
+                bar(o, t);
+            }
+        }
+        if !spans.is_empty() {
+            lines.push(OutlineLine { baseline: line.baseline, spans });
+        }
+    }
+    TextOutlines { styles: shaper.styles.clone(), lines }
 }
 
 // ------------------------------------------------------------------ editor geometry
