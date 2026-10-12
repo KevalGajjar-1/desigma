@@ -947,6 +947,7 @@ name = "desigma-fig"
 version = "0.1.0"
 dependencies = [
  "desigma-doc",
+ "desigma-render",
  "flate2",
  "ruzstd",
  "serde",

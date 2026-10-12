@@ -63,6 +63,129 @@ fn guid_str(g: &Value) -> Option<String> {
     Some(format!("{}:{}", g.get("sessionID")?.as_u64()?, g.get("localID")?.as_u64()?))
 }
 
+/// Library asset key of an `{assetRef: {key, version}}` reference.
+pub(crate) fn asset_key(v: &Value) -> Option<&str> {
+    v.get("assetRef").and_then(|a| fstr(a, "key"))
+}
+
+/// Cross-node lookups of a message: blobs, library keys and property
+/// definitions. Library assets (styles, variables, variable sets) are
+/// referenced by `{assetRef: {key}}`; files that define them locally use a
+/// plain `{guid}` instead.
+struct Lk<'a> {
+    blobs: &'a [&'a [u8]],
+    /// Variable key -> `VariableID:s:l`.
+    var_by_key: HashMap<&'a str, String>,
+    /// Variable-set key -> `VariableCollectionId:s:l`.
+    set_by_key: HashMap<&'a str, String>,
+    /// Style key -> `s:l` of the style node.
+    style_by_key: HashMap<&'a str, String>,
+    /// Style key -> its node (for paints the style supplies).
+    style_nodes: HashMap<&'a str, &'a Value>,
+    /// Style node id (`s:l`) -> node, for styles defined in this file.
+    style_by_id: HashMap<&'a str, &'a Value>,
+    /// Property definition id (including the `parentPropDefId` aliases that
+    /// variants carry) -> (`Name#s:l`, REST type).
+    prop_defs: HashMap<String, (String, &'static str)>,
+}
+
+impl<'a> Lk<'a> {
+    fn new(entries: &'a [Entry], blobs: &'a [&'a [u8]]) -> Self {
+        let mut lk = Lk {
+            blobs,
+            var_by_key: HashMap::new(),
+            set_by_key: HashMap::new(),
+            style_by_key: HashMap::new(),
+            style_nodes: HashMap::new(),
+            style_by_id: HashMap::new(),
+            prop_defs: HashMap::new(),
+        };
+        let mut aliases: Vec<(String, String)> = Vec::new();
+        for e in entries {
+            let j = &e.json;
+            let key = fstr(j, "key").filter(|k| !k.is_empty());
+            if fstr(j, "styleType").is_some() {
+                lk.style_by_id.insert(e.id.as_str(), j);
+            }
+            match (fstr(j, "type"), key) {
+                (Some("VARIABLE"), Some(k)) => {
+                    lk.var_by_key.insert(k, format!("VariableID:{}", e.id));
+                }
+                (Some("VARIABLE_SET"), Some(k)) => {
+                    lk.set_by_key.insert(k, format!("VariableCollectionId:{}", e.id));
+                }
+                (_, Some(k)) if fstr(j, "styleType").is_some() => {
+                    lk.style_by_key.insert(k, e.id.clone());
+                    lk.style_nodes.insert(k, j);
+                }
+                _ => {}
+            }
+            for d in rest_import::farr(j, "componentPropDefs") {
+                let Some(id) = d.get("id").and_then(guid_str) else { continue };
+                match fstr(d, "name") {
+                    Some(name) => {
+                        let ty = match fstr(d, "type") {
+                            Some("BOOL") => "BOOLEAN",
+                            Some("TEXT") => "TEXT",
+                            Some("INSTANCE_SWAP") => "INSTANCE_SWAP",
+                            _ => "VARIANT",
+                        };
+                        let key = if ty == "VARIANT" { name.to_string() } else { format!("{name}#{id}") };
+                        lk.prop_defs.insert(id, (key, ty));
+                    }
+                    None => {
+                        if let Some(parent) = d.get("parentPropDefId").and_then(guid_str) {
+                            aliases.push((id, parent));
+                        }
+                    }
+                }
+            }
+        }
+        for (id, parent) in aliases {
+            if let Some(def) = lk.prop_defs.get(&parent).cloned() {
+                lk.prop_defs.entry(id).or_insert(def);
+            }
+        }
+        lk
+    }
+
+    /// Variable id for an alias value (`{assetRef}` or a local `{guid}`).
+    fn variable_id(&self, alias: &Value) -> Option<String> {
+        if let Some(k) = asset_key(alias) {
+            return self.var_by_key.get(k).cloned();
+        }
+        alias.get("guid").and_then(guid_str).map(|g| format!("VariableID:{g}"))
+    }
+
+    fn set_id(&self, r: &Value) -> Option<String> {
+        if let Some(k) = asset_key(r) {
+            return self.set_by_key.get(k).cloned();
+        }
+        r.get("guid").and_then(guid_str).map(|g| format!("VariableCollectionId:{g}"))
+    }
+
+    /// Style id of a `styleIdFor*` reference: the style node's id, or
+    /// `key:<key>` for a library style that is not in the file.
+    fn style_id(&self, r: &Value) -> Option<String> {
+        if let Some(k) = asset_key(r) {
+            return Some(self.style_by_key.get(k).cloned().unwrap_or_else(|| format!("key:{k}")));
+        }
+        r.get("guid").and_then(guid_str)
+    }
+
+    /// The style node a `styleIdFor*` reference points at.
+    fn style_node(&self, r: &Value) -> Option<&'a Value> {
+        match asset_key(r) {
+            Some(k) => self.style_nodes.get(k).copied(),
+            None => self.style_by_id.get(r.get("guid").and_then(guid_str)?.as_str()).copied(),
+        }
+    }
+
+    fn prop_def(&self, r: &Value) -> Option<&(String, &'static str)> {
+        self.prop_defs.get(&r.get("defID").and_then(guid_str)?)
+    }
+}
+
 /// Builds the REST-shaped `{name, document, ...}` value from a decoded message.
 pub(crate) fn message_to_rest(msg: &KiwiValue, name: &str) -> Value {
     let blobs: Vec<&[u8]> = msg
@@ -70,10 +193,22 @@ pub(crate) fn message_to_rest(msg: &KiwiValue, name: &str) -> Value {
         .and_then(KiwiValue::as_array)
         .map(|a| a.iter().map(|b| b.get("bytes").and_then(KiwiValue::as_bytes).unwrap_or(&[])).collect())
         .unwrap_or_default();
+    let changes: Vec<Value> = msg.get("nodeChanges").and_then(KiwiValue::as_array).unwrap_or(&[]).iter().map(kiwi::to_json).collect();
+    nodes_to_rest(changes, &blobs, name)
+}
 
+/// Imports node changes given as kiwi-shaped JSON (`[{guid, parentIndex, type, ...}]`,
+/// enums by name), as `fig2json` prints them. For synthetic test fixtures.
+#[doc(hidden)]
+pub fn import_fig_node_changes(changes: &Value, name: &str) -> Result<Document, FigError> {
+    let list = changes.as_array().cloned().unwrap_or_default();
+    let rest = nodes_to_rest(list, &[], name);
+    rest_import::import_rest_value(&rest, true)
+}
+
+fn nodes_to_rest(changes: Vec<Value>, blobs: &[&[u8]], name: &str) -> Value {
     let mut entries: Vec<Entry> = Vec::new();
-    for nc in msg.get("nodeChanges").and_then(KiwiValue::as_array).unwrap_or(&[]) {
-        let j = kiwi::to_json(nc);
+    for j in changes {
         if fstr(&j, "phase") == Some("REMOVED") {
             continue;
         }
@@ -102,15 +237,27 @@ pub(crate) fn message_to_rest(msg: &KiwiValue, name: &str) -> Value {
         None => roots.iter().copied().filter(|&i| fstr(&entries[i].json, "type") == Some("CANVAS")).collect(),
     };
 
+    let lk = Lk::new(&entries, blobs);
     let mut visited: HashSet<usize> = HashSet::new();
+    let is_internal = |i: usize| entries[i].json.get("internalOnly").and_then(Value::as_bool) == Some(true);
     let pages: Vec<Value> = canvases
-        .into_iter()
-        .filter(|&i| entries[i].json.get("internalOnly").and_then(Value::as_bool) != Some(true))
-        .filter_map(|i| build(&entries, &children, &blobs, i, &mut visited, 0))
+        .iter()
+        .copied()
+        .filter(|&i| !is_internal(i))
+        .filter_map(|i| build(&entries, &children, &lk, i, &mut visited, 0))
         .map(|mut p| {
             crate::proto::lift_flow_starts(&mut p);
             p
         })
+        .collect();
+    // Internal-only canvases hold what the file uses from libraries (remote
+    // components and styles); they become the hidden library page.
+    let library_pages: Vec<Value> = canvases
+        .iter()
+        .copied()
+        .filter(|&i| is_internal(i))
+        .filter_map(|i| build(&entries, &children, &lk, i, &mut visited, 0))
+        .filter(|p| p.get("children").and_then(Value::as_array).is_some_and(|c| !c.is_empty()))
         .collect();
 
     let var_entries: Vec<&Value> = entries.iter().map(|e| &e.json).filter(|j| matches!(fstr(j, "type"), Some("VARIABLE_SET" | "VARIABLE"))).collect();
@@ -122,19 +269,21 @@ pub(crate) fn message_to_rest(msg: &KiwiValue, name: &str) -> Value {
     if let (Some(v), Some(o)) = (crate::variables::from_fig_entries(&var_entries), out.as_object_mut()) {
         o.insert("variables".into(), v);
     }
+    if !library_pages.is_empty() {
+        out["libraryPages"] = Value::Array(library_pages);
+    }
     out
 }
 
 /// REST-style `styles` map from shared-style nodes (nodes carrying `styleType`
 /// FILL/TEXT/EFFECT/GRID; they normally live on the internal-only canvas). The
-/// library key is looked up in `sharedStyleMasterData.styleKey`, `styleKey` or
-/// `key`; all of it is optional.
+/// library key is the node's `key`, the description its `styleDescription`.
 fn style_table(entries: &[Entry]) -> Value {
     let mut out = Map::new();
     for e in entries {
         let j = &e.json;
         let Some(ty) = fstr(j, "styleType").filter(|t| matches!(*t, "FILL" | "TEXT" | "EFFECT" | "GRID")) else { continue };
-        let key = j.get("sharedStyleMasterData").and_then(|d| fstr(d, "styleKey")).or_else(|| fstr(j, "styleKey")).or_else(|| fstr(j, "key")).unwrap_or("");
+        let key = fstr(j, "key").unwrap_or("");
         let mut m = Map::new();
         if !key.is_empty() {
             m.insert("key".into(), key.into());
@@ -147,14 +296,14 @@ fn style_table(entries: &[Entry]) -> Value {
     Value::Object(out)
 }
 
-fn build(entries: &[Entry], children: &HashMap<usize, Vec<usize>>, blobs: &[&[u8]], i: usize, visited: &mut HashSet<usize>, depth: usize) -> Option<Value> {
+fn build(entries: &[Entry], children: &HashMap<usize, Vec<usize>>, lk: &Lk, i: usize, visited: &mut HashSet<usize>, depth: usize) -> Option<Value> {
     if depth > 250 || !visited.insert(i) {
         return None;
     }
     let e = &entries[i];
-    let mut m = convert_node(&e.json, &e.id, blobs)?;
+    let mut m = convert_node(&e.json, &e.id, lk)?;
     let kids: Vec<Value> =
-        children.get(&i).map(|c| c.iter().filter_map(|&k| build(entries, children, blobs, k, visited, depth + 1)).collect()).unwrap_or_default();
+        children.get(&i).map(|c| c.iter().filter_map(|&k| build(entries, children, lk, k, visited, depth + 1)).collect()).unwrap_or_default();
     if !kids.is_empty() || matches!(fstr(&e.json, "type"), Some("CANVAS" | "FRAME" | "GROUP" | "SYMBOL" | "INSTANCE" | "SECTION" | "BOOLEAN_OPERATION")) {
         m.insert("children".into(), Value::Array(kids));
     }
@@ -214,9 +363,11 @@ fn convert_guides(nc: &Value) -> Option<Value> {
     (!out.is_empty()).then_some(Value::Array(out))
 }
 
-fn convert_node(nc: &Value, id: &str, blobs: &[&[u8]]) -> Option<Map<String, Value>> {
+fn convert_node(nc: &Value, id: &str, lk: &Lk) -> Option<Map<String, Value>> {
+    let blobs = lk.blobs;
     let ty = match fstr(nc, "type")? {
-        "DOCUMENT" | "NONE" => return None,
+        // Variables are mapped separately (`variables::from_fig_entries`); they are not canvas content.
+        "DOCUMENT" | "NONE" | "VARIABLE" | "VARIABLE_SET" | "VARIABLE_OVERRIDE" => return None,
         "SYMBOL" => "COMPONENT",
         "ROUNDED_RECTANGLE" => "RECTANGLE",
         "FRAME" if nc.get("isStateGroup").and_then(Value::as_bool) == Some(true) => "COMPONENT_SET",
@@ -225,7 +376,13 @@ fn convert_node(nc: &Value, id: &str, blobs: &[&[u8]]) -> Option<Map<String, Val
     let mut m = Map::new();
     m.insert("id".into(), id.into());
     m.insert("type".into(), ty.into());
+    // Override paths address nodes by `overrideKey`, not by guid.
+    if let Some(k) = nc.get("overrideKey").and_then(guid_str) {
+        m.insert("_overrideKey".into(), k.into());
+    }
     copy(&mut m, nc, "name", "name");
+    copy(&mut m, nc, "componentKey", "componentKey");
+    copy(&mut m, nc, "sourceLibraryKey", "sourceLibraryKey");
     copy(&mut m, nc, "visible", "visible");
     copy(&mut m, nc, "locked", "locked");
     copy(&mut m, nc, "opacity", "opacity");
@@ -248,9 +405,16 @@ fn convert_node(nc: &Value, id: &str, blobs: &[&[u8]]) -> Option<Map<String, Val
     crate::proto::convert_fig(&mut m, nc);
 
     // Paint.
-    let paints = |k: &str| -> Value { Value::Array(rest_import::farr(nc, k).iter().filter_map(convert_paint).collect()) };
-    m.insert("fills".into(), paints("fillPaints"));
-    m.insert("strokes".into(), paints("strokePaints"));
+    // A style the file defines wins over the node's own (possibly stale) copy of its values,
+    // unless a variable is bound to one of the paints.
+    let paints = |k: &str, style_key: &str| -> Value {
+        let own = rest_import::farr(nc, k);
+        let from_style = nc.get(style_key).and_then(|r| lk.style_node(r)).filter(|_| !own.iter().any(|p| p.get("colorVar").is_some()));
+        let list = from_style.map(|s| rest_import::farr(s, "fillPaints")).unwrap_or(own);
+        Value::Array(list.iter().filter_map(convert_paint).collect())
+    };
+    m.insert("fills".into(), paints("fillPaints", "styleIdForFill"));
+    m.insert("strokes".into(), paints("strokePaints", "styleIdForStrokeFill"));
     copy(&mut m, nc, "strokeWeight", "strokeWeight");
     copy(&mut m, nc, "strokeAlign", "strokeAlign");
     enum_map(&mut m, nc, "strokeCap", "strokeCap", &[("ARROW_LINES", "NONE"), ("ARROW_EQUILATERAL", "NONE")]);
@@ -334,18 +498,25 @@ fn convert_node(nc: &Value, id: &str, blobs: &[&[u8]]) -> Option<Map<String, Val
         }
     }
 
-    // Style references.
+    // Style references (`{assetRef: {key}}` for library styles, `{guid}` for local ones).
     let mut styles = Map::new();
     for (src, dst) in
         [("styleIdForFill", "fill"), ("styleIdForStrokeFill", "stroke"), ("styleIdForText", "text"), ("styleIdForEffect", "effect"), ("styleIdForGrid", "grid")]
     {
-        if let Some(g) = nc.get(src).and_then(|s| s.get("guid")).and_then(guid_str) {
+        if let Some(g) = nc.get(src).and_then(|r| lk.style_id(r)) {
             styles.insert(dst.into(), g.into());
         }
     }
     if !styles.is_empty() {
         m.insert("styles".into(), Value::Object(styles));
     }
+    if let Some(b) = bound_variables(nc, lk) {
+        m.insert("boundVariables".into(), b);
+    }
+    if let Some(modes) = explicit_modes(nc, lk) {
+        m.insert("explicitVariableModes".into(), modes);
+    }
+    component_props(&mut m, nc, lk);
 
     // Type-specific.
     match ty {
@@ -367,11 +538,14 @@ fn convert_node(nc: &Value, id: &str, blobs: &[&[u8]]) -> Option<Map<String, Val
             if let Some(g) = sd.and_then(|s| s.get("symbolID")).and_then(guid_str) {
                 m.insert("componentId".into(), g.into());
             }
-            let ov = override_entries(sd.and_then(|s| s.get("symbolOverrides")), blobs, false);
+            if let Some(s) = sd.and_then(|s| s.get("uniformScaleFactor")) {
+                m.insert("_uniformScale".into(), s.clone());
+            }
+            let ov = override_entries(sd.and_then(|s| s.get("symbolOverrides")), lk, false);
             if !ov.is_empty() {
                 m.insert("_overrides".into(), Value::Array(ov));
             }
-            let derived = override_entries(nc.get("derivedSymbolData").or_else(|| sd.and_then(|s| s.get("derivedSymbolData"))), blobs, true);
+            let derived = override_entries(nc.get("derivedSymbolData").or_else(|| sd.and_then(|s| s.get("derivedSymbolData"))), lk, true);
             if !derived.is_empty() {
                 m.insert("_derived".into(), Value::Array(derived));
             }
@@ -394,6 +568,129 @@ fn convert_node(nc: &Value, id: &str, blobs: &[&[u8]]) -> Option<Map<String, Val
         }
     }
     Some(m)
+}
+
+/// `boundVariables` (REST shape) from `variableConsumptionMap` entries
+/// (`{variableField, variableData: {dataType: ALIAS, value: {alias}}}`) and
+/// the `colorVar` of fill, stroke and effect colors.
+fn bound_variables(nc: &Value, lk: &Lk) -> Option<Value> {
+    let alias = |data: &Value| -> Option<Value> {
+        let a = data.get("value")?.get("alias")?;
+        Some(json!({"type": "VARIABLE_ALIAS", "id": lk.variable_id(a)?}))
+    };
+    let mut out = Map::new();
+    let entries = nc.get("variableConsumptionMap").map(|m| rest_import::farr(m, "entries")).unwrap_or(&[]);
+    for e in entries {
+        let (Some(field), Some(a)) = (fstr(e, "variableField"), e.get("variableData").and_then(alias)) else { continue };
+        let keys: &[&str] = match field {
+            "STACK_PADDING_LEFT" => &["paddingLeft"],
+            "STACK_PADDING_RIGHT" => &["paddingRight"],
+            "STACK_PADDING_TOP" => &["paddingTop"],
+            "STACK_PADDING_BOTTOM" => &["paddingBottom"],
+            "STACK_SPACING" => &["itemSpacing"],
+            "STACK_COUNTER_SPACING" => &["counterAxisSpacing"],
+            "RECTANGLE_TOP_LEFT_CORNER_RADIUS" => &["topLeftRadius"],
+            "RECTANGLE_TOP_RIGHT_CORNER_RADIUS" => &["topRightRadius"],
+            "RECTANGLE_BOTTOM_LEFT_CORNER_RADIUS" => &["bottomLeftRadius"],
+            "RECTANGLE_BOTTOM_RIGHT_CORNER_RADIUS" => &["bottomRightRadius"],
+            "CORNER_RADIUS" => &["topLeftRadius", "topRightRadius", "bottomLeftRadius", "bottomRightRadius"],
+            "WIDTH" => &["width"],
+            "HEIGHT" => &["height"],
+            "OPACITY" => &["opacity"],
+            "STROKE_WEIGHT" => &["strokeWeight"],
+            "FONT_SIZE" => &["fontSize"],
+            "FONT_FAMILY" => &["fontFamily"],
+            "FONT_WEIGHT" => &["fontWeight"],
+            "LINE_HEIGHT" => &["lineHeight"],
+            "LETTER_SPACING" => &["letterSpacing"],
+            _ => &[],
+        };
+        for k in keys {
+            out.insert((*k).into(), a.clone());
+        }
+    }
+    for (src, dst) in [("fillPaints", "fills"), ("strokePaints", "strokes")] {
+        let list: Vec<Value> = rest_import::farr(nc, src).iter().map(|p| p.get("colorVar").and_then(alias).unwrap_or(Value::Null)).collect();
+        if list.iter().any(|v| !v.is_null()) {
+            out.insert(dst.into(), Value::Array(list));
+        }
+    }
+    let fx: Vec<Value> = rest_import::farr(nc, "effects")
+        .iter()
+        .map(|e| match e.get("colorVar").and_then(alias) {
+            Some(a) => json!({"color": a}),
+            None => Value::Null,
+        })
+        .collect();
+    if fx.iter().any(|v| !v.is_null()) {
+        out.insert("effects".into(), Value::Array(fx));
+    }
+    (!out.is_empty()).then_some(Value::Object(out))
+}
+
+/// `explicitVariableModes` (collection id -> mode id) from `variableModeBySetMap`.
+fn explicit_modes(nc: &Value, lk: &Lk) -> Option<Value> {
+    let entries = nc.get("variableModeBySetMap").map(|m| rest_import::farr(m, "entries")).unwrap_or(&[]);
+    let out: Map<String, Value> =
+        entries.iter().filter_map(|e| Some((lk.set_id(e.get("variableSetID")?)?, Value::String(guid_str(e.get("variableModeID")?)?)))).collect();
+    (!out.is_empty()).then_some(Value::Object(out))
+}
+
+/// Component properties in REST shape: `componentPropertyDefinitions` (from
+/// `componentPropDefs`), `componentProperties` (instance
+/// `componentPropAssignments`) and `componentPropertyReferences` (node
+/// `componentPropRefs`). Variants refer to their set's definitions through
+/// `parentPropDefId`; see [`Lk::prop_defs`].
+fn component_props(m: &mut Map<String, Value>, nc: &Value, lk: &Lk) {
+    let text_of = |v: &Value| -> Option<Value> { Some(Value::String(fstr(v.get("textValue")?, "characters")?.to_string())) };
+    let value_of = |v: &Value| -> Option<Value> {
+        v.get("boolValue").cloned().or_else(|| text_of(v)).or_else(|| v.get("guidValue").and_then(guid_str).map(Value::String))
+    };
+    let mut defs = Map::new();
+    for d in rest_import::farr(nc, "componentPropDefs") {
+        let (Some(id), Some(_)) = (d.get("id").and_then(guid_str), fstr(d, "name")) else { continue };
+        let Some((key, ty)) = lk.prop_defs.get(&id) else { continue };
+        let mut def = Map::new();
+        def.insert("type".into(), (*ty).into());
+        if let Some(v) = d.get("initialValue").and_then(value_of) {
+            def.insert("defaultValue".into(), v);
+        }
+        if *ty == "VARIANT" {
+            let options: Vec<Value> = rest_import::farr(nc, "stateGroupPropertyValueOrders")
+                .iter()
+                .find(|o| fstr(o, "property") == fstr(d, "name"))
+                .map(|o| rest_import::farr(o, "values").to_vec())
+                .unwrap_or_default();
+            def.insert("variantOptions".into(), Value::Array(options));
+        }
+        defs.insert(key.clone(), Value::Object(def));
+    }
+    if !defs.is_empty() {
+        m.insert("componentPropertyDefinitions".into(), Value::Object(defs));
+    }
+    let mut vals = Map::new();
+    for a in rest_import::farr(nc, "componentPropAssignments") {
+        let Some((key, ty)) = a.get("defID").and_then(guid_str).and_then(|id| lk.prop_defs.get(&id)) else { continue };
+        let Some(v) = a.get("value").and_then(value_of) else { continue };
+        vals.insert(key.clone(), json!({"type": ty, "value": v}));
+    }
+    if !vals.is_empty() {
+        m.insert("componentProperties".into(), Value::Object(vals));
+    }
+    let mut refs = Map::new();
+    for r in rest_import::farr(nc, "componentPropRefs") {
+        let Some((key, _)) = lk.prop_def(r) else { continue };
+        let field = match fstr(r, "componentPropNodeField") {
+            Some("VISIBLE") => "visible",
+            Some("TEXT_DATA") => "characters",
+            Some("OVERRIDDEN_SYMBOL_ID") => "mainComponent",
+            _ => continue,
+        };
+        refs.insert(field.into(), key.clone().into());
+    }
+    if !refs.is_empty() {
+        m.insert("componentPropertyReferences".into(), Value::Object(refs));
+    }
 }
 
 /// REST-shaped `vectorNetwork` from the `vectorData` blob of a `.fig` vector.
@@ -472,7 +769,8 @@ fn guid_path(o: &Value) -> Vec<String> {
 
 /// Partial REST node fields from an override / derived-data entry: only keys
 /// present in the entry are emitted.
-fn convert_override(o: &Value, blobs: &[&[u8]]) -> Map<String, Value> {
+fn convert_override(o: &Value, lk: &Lk) -> Map<String, Value> {
+    let blobs = lk.blobs;
     let mut m = Map::new();
     for k in ["name", "visible", "locked", "opacity", "blendMode", "size", "strokeWeight", "strokeAlign", "cornerRadius"] {
         copy(&mut m, o, k, k);
@@ -481,9 +779,12 @@ fn convert_override(o: &Value, blobs: &[&[u8]]) -> Map<String, Value> {
     if let Some(t) = o.get("transform") {
         m.insert("relativeTransform".into(), matrix_json(t));
     }
-    for (src, dst) in [("fillPaints", "fills"), ("strokePaints", "strokes")] {
+    for (src, dst, style) in [("fillPaints", "fills", "styleIdForFill"), ("strokePaints", "strokes", "styleIdForStrokeFill")] {
         if o.get(src).is_some() {
             m.insert(dst.into(), Value::Array(rest_import::farr(o, src).iter().filter_map(convert_paint).collect()));
+        } else if let Some(sn) = o.get(style).and_then(|r| lk.style_node(r)) {
+            // An override that only names a library style: the style supplies the paints.
+            m.insert(dst.into(), Value::Array(rest_import::farr(sn, "fillPaints").iter().filter_map(convert_paint).collect()));
         }
     }
     if o.get("effects").is_some() {
@@ -526,11 +827,11 @@ fn convert_override(o: &Value, blobs: &[&[u8]]) -> Map<String, Value> {
     m
 }
 
-fn override_entries(list: Option<&Value>, blobs: &[&[u8]], derived: bool) -> Vec<Value> {
+fn override_entries(list: Option<&Value>, lk: &Lk, derived: bool) -> Vec<Value> {
     let Some(a) = list.and_then(Value::as_array) else { return Vec::new() };
     a.iter()
         .map(|o| {
-            let mut set = convert_override(o, blobs);
+            let mut set = convert_override(o, lk);
             if derived {
                 set.retain(|k, _| matches!(k.as_str(), "size" | "relativeTransform" | "fillGeometry" | "strokeGeometry"));
             }
@@ -571,7 +872,10 @@ fn convert_stack(m: &mut Map<String, Value>, nc: &Value) {
     m.insert("primaryAxisAlignItems".into(), align(fstr(nc, "stackPrimaryAlignItems")).into());
     m.insert("counterAxisAlignItems".into(), align(fstr(nc, "stackCounterAlignItems")).into());
     let sizing = |s: Option<&str>| if s.map(|s| s.starts_with("RESIZE_TO_FIT")).unwrap_or(false) { "AUTO" } else { "FIXED" };
-    m.insert("primaryAxisSizingMode".into(), sizing(fstr(nc, "stackPrimarySizing")).into());
+    // Real files only ever write `FIXED` for the primary axis (absent = hug) and
+    // `RESIZE_TO_FIT_WITH_IMPLICIT_SIZE` for the counter axis (absent = fixed).
+    let primary = if fstr(nc, "stackPrimarySizing") == Some("FIXED") { "FIXED" } else { "AUTO" };
+    m.insert("primaryAxisSizingMode".into(), primary.into());
     m.insert("counterAxisSizingMode".into(), sizing(fstr(nc, "stackCounterSizing")).into());
     if nc.get("stackWrap").and_then(Value::as_bool) == Some(true) {
         m.insert("layoutWrap".into(), "WRAP".into());

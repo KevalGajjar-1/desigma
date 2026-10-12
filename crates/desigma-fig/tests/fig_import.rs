@@ -122,7 +122,8 @@ fn fig_document_exports_and_reimports() {
     let again = import_rest_json(&json.to_string()).unwrap();
     // NodeIds differ (expanded instance children are allocated last on the first pass), so compare exported shapes.
     assert!(json == export_rest_json(&again), "export differs after re-import");
-    assert_eq!(doc.nodes.len(), again.nodes.len());
+    let visible = |d: &Document| d.nodes.keys().filter(|id| !is_library_node(d, **id)).count();
+    assert_eq!(visible(&doc), visible(&again));
 }
 
 #[test]

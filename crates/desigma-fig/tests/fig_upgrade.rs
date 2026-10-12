@@ -184,7 +184,8 @@ fn fig_round_trips_through_rest_export() {
     let d = doc();
     let json = export_rest_json(&d);
     let again = import_rest_json(&json.to_string()).unwrap();
-    assert_eq!(d.nodes.len(), again.nodes.len());
+    let visible = |d: &Document| d.nodes.keys().filter(|id| !is_library_node(d, **id)).count();
+    assert_eq!(visible(&d), visible(&again));
     assert_eq!(d.style_meta, again.style_meta);
     assert_eq!(json, export_rest_json(&again), "export is a fixed point after re-import");
     let bool_node = find(&again, "Bool");

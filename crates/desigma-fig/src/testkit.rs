@@ -185,8 +185,6 @@ pub fn figma_like_schema() -> Schema {
     let gp = b.define("GuidPath", DefKind::Message);
     let gt = def(&b, "GUID");
     b.field(gp, "guids", gt, true, 1);
-    let ssm = b.define("SharedStyleMasterData", DefKind::Message);
-    b.field(ssm, "styleKey", nat(String), false, 1);
 
     let so = b.define("StyleOverride", DefKind::Message);
     b.field(so, "styleID", nat(Uint), false, 1);
@@ -317,11 +315,11 @@ pub fn figma_like_schema() -> Schema {
     let lgt = def(&b, "LayoutGrid");
     f(&mut b, "layoutGrids", lgt, true);
     f(&mut b, "maxLines", nat(Uint), false);
-    let (ttr, sty, gpt, ssmt) = (def(&b, "TextTruncation"), def(&b, "StyleType"), def(&b, "GuidPath"), def(&b, "SharedStyleMasterData"));
+    let (ttr, sty, gpt) = (def(&b, "TextTruncation"), def(&b, "StyleType"), def(&b, "GuidPath"));
     f(&mut b, "textTruncation", ttr, false);
     f(&mut b, "styleType", sty, false);
     f(&mut b, "styleDescription", nat(String), false);
-    f(&mut b, "sharedStyleMasterData", ssmt, false);
+    f(&mut b, "key", nat(String), false);
     f(&mut b, "guidPath", gpt, false);
     // Overrides are NodeChange-shaped messages.
     b.field(sd, "symbolOverrides", FieldType::Def(nc), true, 2);
@@ -606,7 +604,7 @@ pub fn upgrade_message() -> V {
     let style_node = |l: u32, name: &str, ty: &str, desc: &str, key: Option<&str>| {
         let mut f = vec![("styleType", en(ty)), ("styleDescription", V::String(desc.into())), size(1.0, 1.0)];
         if let Some(k) = key {
-            f.push(("sharedStyleMasterData", msg(vec![("styleKey", V::String(k.into()))])));
+            f.push(("key", V::String(k.into())));
         }
         node((2, l), (0, 2), &format!("{l}"), "RECTANGLE", name, f)
     };
