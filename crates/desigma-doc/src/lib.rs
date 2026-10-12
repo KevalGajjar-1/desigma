@@ -6,6 +6,7 @@
 
 mod comments;
 mod components;
+mod dev;
 pub mod find;
 mod geom;
 mod history;
@@ -24,6 +25,7 @@ mod vector_fit;
 
 pub use comments::*;
 pub use components::*;
+pub use dev::*;
 pub use geom::*;
 pub use history::*;
 pub use library::*;
