@@ -142,7 +142,7 @@ fn pages_list(app: &mut App, ui: &mut Ui, list: Rect) {
                 app.layers.page_drag = Some(*pid);
             }
             if selected {
-                p.rect_filled(row, theme::cr(theme::RADIUS_MEDIUM), theme::BG_SELECTED);
+                p.rect_filled(row, theme::cr(theme::RADIUS_MEDIUM), theme::BG_SECONDARY);
             } else if r.hovered() && app.layers.page_drag.is_none() {
                 p.rect_filled(row, theme::cr(theme::RADIUS_MEDIUM), theme::BG_HOVER);
             }

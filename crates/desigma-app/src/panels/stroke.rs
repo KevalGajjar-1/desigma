@@ -48,7 +48,7 @@ pub(super) fn section(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[NodeId
     // Labels, then the controls row.
     sub_label(ui, pane, POSITION_X, "Position");
     sub_label(ui, pane, WEIGHT_X, "Weight");
-    pane.y += 16.0;
+    pane.y += 16.0 + 3.0;
     let aligns = ["Inside", "Center", "Outside"].map(String::from);
     let cur = match n0.stroke.align {
         StrokeAlign::Inside => 0,
@@ -103,7 +103,7 @@ pub(super) fn section(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[NodeId
             row_end(pane);
         }
     }
-    pane.y += 4.0;
+    pane.y += 14.0;
 }
 
 const CAPS: [(&str, StrokeCap); 3] = [("None", StrokeCap::None), ("Round", StrokeCap::Round), ("Square", StrokeCap::Square)];

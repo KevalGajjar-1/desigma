@@ -243,6 +243,9 @@ pub const FIELD_PREFIX_W: f32 = 24.0;
 pub const FIELD_PREFIX_X: f32 = 8.0;
 /// Prefix icon slot (16px glyph at x+8); the value then starts at x+24.
 pub const FIELD_PREFIX_ICON: f32 = 16.0;
+/// Glyph box at the slot's left edge (x+8..x+20): Lucide fills its box edge to edge where
+/// Figma's art has margins, so the glyph is smaller to leave a gap before the value.
+pub const FIELD_PREFIX_GLYPH: f32 = 12.0;
 /// Fields without a prefix start their value 8px in.
 pub const FIELD_PLAIN_X: f32 = 8.0;
 /// Gap between a value and a worded suffix such as " ms".

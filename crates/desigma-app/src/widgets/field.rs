@@ -127,10 +127,10 @@ pub fn num_field(ui: &mut Ui, rect: Rect, key: impl crate::widgets::Key, prefix:
         }
         Prefix::Icon(i) => {
             let slot = Rect::from_min_size(
-                Pos2::new(rect.left() + theme::FIELD_PREFIX_X, rect.center().y - theme::FIELD_PREFIX_ICON / 2.0),
-                Vec2::splat(theme::FIELD_PREFIX_ICON),
+                Pos2::new(rect.left() + theme::FIELD_PREFIX_X, rect.center().y - theme::FIELD_PREFIX_GLYPH / 2.0),
+                Vec2::splat(theme::FIELD_PREFIX_GLYPH),
             );
-            super::paint_icon_in(&p, slot, i, theme::FIELD_PREFIX_ICON, theme::TEXT_SECONDARY);
+            super::paint_icon_in(&p, slot, i, theme::FIELD_PREFIX_GLYPH, theme::TEXT_SECONDARY);
         }
     }
     let scrubbed = if has_prefix { scrub_prefix(ui, Rect::from_min_size(rect.min, egui::vec2(pw, rect.height())), id, value) } else { None };

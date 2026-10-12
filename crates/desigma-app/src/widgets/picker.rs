@@ -8,7 +8,6 @@ use super::menu::{popup_menu, MenuItem, MenuResult};
 use super::*;
 use crate::theme;
 use desigma_doc::{Color, GradientStop, Paint, PaintKind, Vec2 as DV};
-use egui::ecolor::Hsva;
 use egui::{Mesh, Shape};
 
 pub const W: f32 = 240.0;
@@ -333,6 +332,56 @@ pub fn parse_css(s: &str, keep_alpha: u8) -> Option<[u8; 4]> {
     Some([u[0], u[1], u[2], if t.trim_start_matches('#').len() == 8 { u[3] } else { keep_alpha }])
 }
 
+// ---------------------------------------------------------------- HSB in gamma space
+/// Hue / saturation / brightness / alpha, all 0..1, computed on the gamma-encoded sRGB values
+/// (what Figma's HSB fields and colour area use; egui's own `Hsva` works in linear light).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Hsva {
+    pub h: f32,
+    pub s: f32,
+    pub v: f32,
+    pub a: f32,
+}
+
+impl Hsva {
+    pub fn new(h: f32, s: f32, v: f32, a: f32) -> Self {
+        Self { h, s, v, a }
+    }
+
+    pub fn from_srgba_unmultiplied(c: [u8; 4]) -> Self {
+        let (r, g, b) = (c[0] as f32 / 255.0, c[1] as f32 / 255.0, c[2] as f32 / 255.0);
+        let (mx, mn) = (r.max(g).max(b), r.min(g).min(b));
+        let d = mx - mn;
+        let h = if d <= f32::EPSILON {
+            0.0
+        } else if mx == r {
+            ((g - b) / d).rem_euclid(6.0) / 6.0
+        } else if mx == g {
+            ((b - r) / d + 2.0) / 6.0
+        } else {
+            ((r - g) / d + 4.0) / 6.0
+        };
+        Self { h, s: if mx <= 0.0 { 0.0 } else { d / mx }, v: mx, a: c[3] as f32 / 255.0 }
+    }
+
+    pub fn to_srgba_unmultiplied(self) -> [u8; 4] {
+        let h6 = self.h.rem_euclid(1.0) * 6.0;
+        let (i, f) = (h6.floor() as i32, h6 - h6.floor());
+        let (v, s) = (self.v.clamp(0.0, 1.0), self.s.clamp(0.0, 1.0));
+        let (p, q, t) = (v * (1.0 - s), v * (1.0 - s * f), v * (1.0 - s * (1.0 - f)));
+        let (r, g, b) = match i {
+            0 => (v, t, p),
+            1 => (q, v, p),
+            2 => (p, v, t),
+            3 => (p, q, v),
+            4 => (t, p, v),
+            _ => (v, p, q),
+        };
+        let u = |x: f32| (x * 255.0).round().clamp(0.0, 255.0) as u8;
+        [u(r), u(g), u(b), u(self.a)]
+    }
+}
+
 // ---------------------------------------------------------------- state
 pub struct State {
     pub tab: Tab,
@@ -594,7 +643,14 @@ pub fn show(ui: &mut Ui, pos: Pos2, st: &mut State, paint: &mut Paint, env: &Env
         let w = text_width(ui.painter(), label, &tab_font) + 16.0;
         let r = Rect::from_min_size(Pos2::new(tab_x, rect.top() + 8.0), Vec2::new(w, 24.0));
         let resp = ui.interact(r, ui.id().with(("picker-tab", label)), Sense::click());
+        // Without Libraries (page background, shadows) the header is a plain title.
+        let plain = !env.paint_types;
         let active = st.tab == t;
+        if plain {
+            let font = tab_font.clone();
+            text_on_baseline(ui.painter(), rect.left() + PAD, centered_baseline(r, &font), label, font, theme::TEXT);
+            continue;
+        }
         if active {
             ui.painter().rect_filled(r, theme::cr(theme::RADIUS_MEDIUM), theme::BG_SECONDARY);
         } else if resp.hovered() {
@@ -1209,6 +1265,15 @@ mod tests {
         assert_eq!(hsl, [0.0, 100.0, 50.0]);
         assert_eq!(hsl_to_rgb(120.0, 100.0, 50.0), [0, 255, 0]);
         assert_eq!(parse_css("hsl(240, 100%, 50%)", 255), Some([0, 0, 255, 255]));
+    }
+
+    #[test]
+    fn hsb_is_computed_in_gamma_space() {
+        // Half saturation and half brightness of red: (128, 64, 64), as in Figma.
+        assert_eq!(Hsva::new(0.0, 0.5, 0.5, 1.0).to_srgba_unmultiplied(), [128, 64, 64, 255]);
+        for c in [[255, 0, 0, 255], [30, 30, 30, 255], [217, 217, 217, 255], [12, 140, 233, 255], [200, 100, 50, 255]] {
+            assert_eq!(Hsva::from_srgba_unmultiplied(c).to_srgba_unmultiplied(), c);
+        }
     }
 
     #[test]

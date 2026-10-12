@@ -158,7 +158,7 @@ pub(super) fn paint_title(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[No
 
 pub(super) fn sublabel(ui: &Ui, pane: &mut Pane, text: &str) {
     let r = pane.rect(theme::SECTION_CONTENT_X, 0.0, theme::SECTION_CONTENT_W, theme::SUBLABEL_HEIGHT);
-    ui.painter().text(Pos2::new(r.left(), r.center().y), Align2::LEFT_CENTER, text, theme::font_body_strong(), theme::TEXT_SECONDARY);
+    ui.painter().text(Pos2::new(r.left(), r.center().y), Align2::LEFT_CENTER, text, theme::font_small_medium(), theme::TEXT_SECONDARY);
     pane.y += theme::SUBLABEL_HEIGHT + 4.0;
 }
 
@@ -659,6 +659,10 @@ fn selection_ui(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[NodeId]) {
             app.edit_nodes(sel, |n| n.fills.push(paint.clone()));
         }
         paint_rows(app, ui, pane, sel, &n0.fills, false);
+        if !n0.fills.is_empty() {
+            // 16px under the last row (8 of it came with the row).
+            pane.y += 8.0;
+        }
     }
 
     // ---- Stroke
@@ -915,6 +919,10 @@ pub(super) fn paint_rows(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[Nod
         .and_then(|s| app.doc.get(*s))
         .and_then(|n| n.style_refs.get(if stroke { "stroke" } else { "fill" }))
         .map(|k| app.doc.style_name(k).to_string());
+    if !paints.is_empty() {
+        // Figma sits the first row 4px under the title row.
+        pane.y += 4.0;
+    }
     for (i, p) in paints.iter().enumerate() {
         let key = (stroke, i);
         let g = pane.rect(theme::SWATCH_ROW_X, 0.0, PAINT_GROUP_W, theme::FIELD_HEIGHT);
@@ -1161,7 +1169,7 @@ pub(super) fn picker_popup(app: &mut App, ui: &mut Ui, region: Rect) {
     let h = picker::panel_height(&env, picker::mode_of(&pk.paint.kind), pk.state.tab, pk.state.source);
     let screen = ctx.content_rect();
     let x = (region.left() - picker::W).max(screen.left() + 8.0);
-    let y = (pk.anchor.top() - 8.0).min(screen.bottom() - h - 8.0).max(screen.top() + 8.0);
+    let y = (pk.anchor.top() - 8.0).min(screen.bottom() - h - 16.0).max(screen.top() + 8.0);
     let mut out = picker::Out::default();
     let mut panel = Rect::NOTHING;
     egui::Area::new(egui::Id::new("color-picker")).order(egui::Order::Foreground).fixed_pos(Pos2::new(x, y)).show(&ctx, |ui| {
@@ -1362,6 +1370,17 @@ fn gradient_handles(app: &mut App, ctx: &egui::Context, pk: &mut Picker, changed
 
 /// Opens an inspector popup on the current selection (`--panel`, for screenshots).
 pub fn preset_popup(app: &mut App, spec: &str, screen: Vec2) {
+    if spec == "picker-page" {
+        // The page background picker, anchored on the Page row swatch.
+        let bg = match app.doc.get(app.page).map(|n| &n.kind) {
+            Some(NodeKind::Page { background }) => *background,
+            _ => Color::WHITE,
+        };
+        let sw =
+            Rect::from_min_size(Pos2::new(screen.x - theme::RIGHT_PANEL_WIDTH + 17.0 + theme::PAGE_SWATCH_CX - 6.0, 131.0), Vec2::splat(theme::PAGE_SWATCH));
+        open_picker(app, PickTarget::PageBg, to_c32(bg, 1.0), sw, vec![app.page]);
+        return;
+    }
     let Some(id) = app.selection.first().copied() else { return };
     let sw = Rect::from_min_size(Pos2::new(screen.x - theme::RIGHT_PANEL_WIDTH + 29.0, 660.0), Vec2::splat(theme::SWATCH_SIZE));
     match spec {
@@ -1378,6 +1397,10 @@ pub fn preset_popup(app: &mut App, spec: &str, screen: Vec2) {
             }
             let c = app.doc.get(id).and_then(|n| n.fills.first()).map(paint_preview).unwrap_or(Color32::GRAY);
             open_picker(app, PickTarget::Fill(0), c, sw, vec![id]);
+        }
+        "fill-d9" => {
+            // Screenshot aid: the Figma reference fill (#D9D9D9, 100 %) for crop comparisons.
+            app.edit_nodes(&[id], |n| n.fills = vec![Paint::solid(Color::rgb(0xD9, 0xD9, 0xD9))]);
         }
         "effects-menu" => {
             app.props.scroll = 1.0e6;

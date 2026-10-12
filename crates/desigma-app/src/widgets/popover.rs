@@ -17,7 +17,7 @@ pub const CONTROL_W: f32 = 112.0;
 pub fn show(ctx: &egui::Context, id: Id, anchor: Rect, region: Rect, w: f32, h: f32, title: &str, body: impl FnOnce(&mut Ui, Rect)) -> bool {
     let screen = ctx.content_rect();
     let x = (region.left() - w).max(screen.left() + 8.0);
-    let y = (anchor.top() - 8.0).min(screen.bottom() - h - 8.0).max(screen.top() + 8.0);
+    let y = (anchor.top() - 8.0).min(screen.bottom() - h - 16.0).max(screen.top() + 8.0);
     let rect = Rect::from_min_size(Pos2::new(x, y), Vec2::new(w, h));
     let mut close = false;
     let area = egui::Area::new(id).order(egui::Order::Foreground).fixed_pos(rect.min).show(ctx, |ui| {

@@ -150,6 +150,9 @@ fn header(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[NodeId], empty: bo
 pub(super) fn section(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[NodeId], effects: &[Effect]) {
     header(app, ui, pane, sel, effects.is_empty());
     let names: Vec<String> = KINDS.iter().map(|(n, _)| n.to_string()).collect();
+    if !effects.is_empty() {
+        pane.y += 4.0;
+    }
     for (i, e) in effects.iter().enumerate() {
         let kind = kind_of(e);
         let dd = pane.rect(theme::SECTION_CONTENT_X, 0.0, 134.0, theme::FIELD_HEIGHT);
@@ -185,6 +188,9 @@ pub(super) fn section(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[NodeId
             });
         }
         pane.y += theme::FIELD_HEIGHT + 8.0;
+    }
+    if !effects.is_empty() {
+        pane.y += 8.0;
     }
 }
 

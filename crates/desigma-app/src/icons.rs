@@ -283,7 +283,7 @@ impl Icon {
             Icon::Play => "play",
             Icon::Eyedropper => "pipette",
             Icon::Close => "x",
-            Icon::Styles => "layout-grid",
+            Icon::Styles => "styles-dots",
             Icon::PaintSolid => "square",
             Icon::PaintLinear => "blend",
             Icon::PaintRadial => "circle-dot",
@@ -387,7 +387,7 @@ lucide!(
     "play",
     "pipette",
     "x",
-    "layout-grid",
+    "styles-dots",
     "blend",
     "circle-dot",
     "ban",
@@ -408,11 +408,11 @@ pub fn svg_source(icon: Icon) -> Option<&'static str> {
     LUCIDE.iter().find(|(n, _)| *n == name).map(|(_, s)| *s)
 }
 
-/// Stroke width in Lucide's 24-unit space. 1.875 gives a 1.25px line on a 16px glyph
-/// (Lucide's own 2 would give 1.33px; Figma's icons are a touch lighter). Never thinner
-/// than one device pixel.
+/// Stroke width in Lucide's 24-unit space. 2.25 gives a 1.5px line on a 16px glyph
+/// (Lucide's own 2 gives 1.33px, which reads thin next to the UI3 captures at 1x). Never
+/// thinner than one device pixel.
 fn stroke_units(px: u32) -> f32 {
-    (1.875f32).max(24.0 / px.max(1) as f32)
+    (2.25f32).max(24.0 / px.max(1) as f32)
 }
 
 /// Rasterises `icon` into a `px` x `px` coverage mask (one alpha byte per pixel).
