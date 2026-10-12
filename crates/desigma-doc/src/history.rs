@@ -36,6 +36,11 @@ pub enum Command {
     SetFlows {
         flows: Vec<Flow>,
     },
+    /// Replace shared styles and their metadata (style create / edit / delete).
+    SetStyles {
+        styles: BTreeMap<String, Style>,
+        style_meta: BTreeMap<String, StyleMeta>,
+    },
     /// Replace all comment threads.
     SetComments {
         comments: Vec<CommentThread>,
@@ -126,6 +131,9 @@ impl Command {
                 Command::InsertPage { index, nodes }
             }
             Command::SetFlows { flows } => Command::SetFlows { flows: std::mem::replace(&mut doc.flows, flows) },
+            Command::SetStyles { styles, style_meta } => {
+                Command::SetStyles { styles: std::mem::replace(&mut doc.styles, styles), style_meta: std::mem::replace(&mut doc.style_meta, style_meta) }
+            }
             Command::SetComments { comments } => Command::SetComments { comments: std::mem::replace(&mut doc.comments, comments) },
             Command::SetLibraryState { state, library_page } => Command::SetLibraryState {
                 state: std::mem::replace(&mut doc.library, state),
@@ -256,5 +264,27 @@ mod tests {
         assert_eq!(d.get(pid).unwrap().children, vec![rid]);
         h.undo(&mut d).unwrap();
         assert_eq!(d.pages, vec![p1]);
+    }
+}
+
+#[cfg(test)]
+mod style_tests {
+    use crate::*;
+
+    #[test]
+    fn set_styles_undo() {
+        let mut d = Document::new("t");
+        d.add_page("P");
+        let mut h = History::default();
+        let mut styles = d.styles.clone();
+        styles.insert("s1".into(), Style::Fill(vec![Paint::solid(Color::WHITE)]));
+        let mut meta = d.style_meta.clone();
+        meta.insert("s1".into(), StyleMeta { name: "Brand/White".into(), ..Default::default() });
+        h.exec(&mut d, Command::SetStyles { styles, style_meta: meta }).unwrap();
+        assert_eq!(d.style_name("s1"), "Brand/White");
+        h.undo(&mut d).unwrap();
+        assert!(d.styles.is_empty() && d.style_meta.is_empty());
+        h.redo(&mut d).unwrap();
+        assert_eq!(d.styles.len(), 1);
     }
 }
