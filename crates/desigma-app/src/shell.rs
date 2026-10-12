@@ -20,6 +20,8 @@ pub static SHOT_OK: AtomicBool = AtomicBool::new(false);
 struct Shot {
     path: PathBuf,
     size: (u32, u32),
+    /// Device pixel ratio: the PNG is `size * scale` pixels, laid out as `size` points.
+    scale: f32,
     frames: u32,
     requested: bool,
 }
@@ -58,13 +60,14 @@ impl Shell {
         let mut app = App::new(match opts.fixture.as_deref() {
             Some("no-selection") => demo::reference_document(),
             Some("variables") => demo::variables_document(),
+            Some(crate::showcase::FIXTURE) => crate::showcase::document(),
             Some(crate::protovars::FIXTURE) => crate::protovars::document(),
             Some("board") => crate::board::demo::document(),
             Some("board-empty") => crate::board::create::new_document("Untitled"),
             Some(f) if crate::vecfixture::FIXTURES.contains(&f) => crate::vecfixture::document(),
             _ => demo::demo_document(),
         });
-        if opts.fixture.as_deref() != Some("variables") {
+        if !matches!(opts.fixture.as_deref(), Some("variables" | crate::showcase::FIXTURE)) {
             app.doc.name = "Untitled".into();
         }
         if opts.fixture.as_deref() == Some("comments") {
@@ -85,7 +88,10 @@ impl Shell {
             app.go_home();
         }
         if let Some(name) = opts.select.as_ref().filter(|n| n.as_str() != "none") {
-            if let Some(id) = app.doc.nodes.values().find(|n| &n.name == name).map(|n| n.id) {
+            // a top-level layer (screen) wins over same-named layers deeper in the tree
+            let named =
+                |top: bool| app.doc.nodes.values().find(|n| &n.name == name && (!top || n.parent.is_some_and(|p| app.doc.pages.contains(&p)))).map(|n| n.id);
+            if let Some(id) = named(true).or_else(|| named(false)) {
                 if let Some(pg) = app.doc.page_of(id) {
                     app.page = pg;
                 }
@@ -193,6 +199,7 @@ impl Shell {
         let shot = opts.screenshot.map(|path| Shot {
             path,
             size: opts.size.unwrap_or((theme::DEFAULT_WINDOW.0 as u32, theme::DEFAULT_WINDOW.1 as u32)),
+            scale: opts.scale.unwrap_or(1.0),
             frames: 0,
             requested: false,
         });
@@ -204,10 +211,11 @@ impl Shell {
         shot.frames += 1;
         ctx.request_repaint();
         if shot.frames == 1 {
-            // 1 egui point == 1 physical pixel so the PNG matches the requested size.
-            ctx.set_pixels_per_point(1.0);
+            // `scale` physical pixels per egui point (1 by default, so the PNG matches the requested size).
+            ctx.set_pixels_per_point(shot.scale);
             let npp = ctx.input(|i| i.viewport().native_pixels_per_point).unwrap_or(1.0).max(0.1);
-            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(Vec2::new(shot.size.0 as f32 / npp, shot.size.1 as f32 / npp)));
+            let phys = Vec2::new(shot.size.0 as f32 * shot.scale, shot.size.1 as f32 * shot.scale);
+            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(phys / npp));
         }
         let events = ctx.input(|i| i.events.clone());
         for ev in events {
@@ -215,8 +223,8 @@ impl Shell {
                 let (w, h) = (image.width() as u32, image.height() as u32);
                 let raw: Vec<u8> = image.pixels.iter().flat_map(|c| c.to_array()).collect();
                 if let Some(buf) = image::RgbaImage::from_raw(w, h, raw) {
-                    let buf =
-                        if (w, h) != shot.size { image::imageops::resize(&buf, shot.size.0, shot.size.1, image::imageops::FilterType::Lanczos3) } else { buf };
+                    let want = ((shot.size.0 as f32 * shot.scale).round() as u32, (shot.size.1 as f32 * shot.scale).round() as u32);
+                    let buf = if (w, h) != want { image::imageops::resize(&buf, want.0, want.1, image::imageops::FilterType::Lanczos3) } else { buf };
                     if let Some(dir) = shot.path.parent() {
                         let _ = std::fs::create_dir_all(dir);
                     }

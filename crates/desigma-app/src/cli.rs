@@ -7,11 +7,13 @@ pub struct Options {
     pub file: Option<PathBuf>,
     pub screenshot: Option<PathBuf>,
     pub size: Option<(u32, u32)>,
+    /// Device pixel ratio of `--screenshot` (`--scale 2` writes a PNG twice the `--size`, with crisp UI and text).
+    pub scale: Option<f32>,
     /// Select the first layer with this name after loading (handy for screenshots).
     pub select: Option<String>,
     /// Open a menu after loading: `main`, `main/File`, `shape`, `palette` (for screenshots).
     pub menu: Option<String>,
-    /// Built-in test document instead of the demo (`proto-vars`: a shop prototype with variables; `no-selection`: the Figma page-level reference;
+    /// Built-in test document instead of the demo (`showcase`: the Marlow product-design file the README screenshots use; `proto-vars`: a shop prototype with variables; `no-selection`: the Figma page-level reference;
     /// `variables`; `comments`: Figma comments imported, one thread open in comment mode;
     /// `board`: a sample whiteboard; `board-empty`: an empty one).
     pub fixture: Option<String>,
@@ -50,6 +52,8 @@ pub struct Options {
     pub dev: Option<String>,
     /// With `--dev`: mark the selected layer Ready for dev and give it a demo annotation and link.
     pub dev_demo: bool,
+    /// Write the showcase sample files into this library directory and exit (screenshot aid).
+    pub seed_library: Option<PathBuf>,
     pub help: bool,
 }
 
@@ -90,6 +94,12 @@ pub fn parse_size(s: &str) -> Option<(u32, u32)> {
     (w >= 200 && h >= 200 && w <= 8192 && h <= 8192).then_some((w, h))
 }
 
+/// Parses a screenshot scale like `2` or `1.5` (device pixel ratio, 1..=4).
+pub fn parse_scale(s: &str) -> Option<f32> {
+    let v: f32 = s.trim().trim_end_matches(['x', 'X']).trim().parse().ok()?;
+    (v.is_finite() && (1.0..=4.0).contains(&v)).then_some(v)
+}
+
 /// Parses a zoom like `800`, `800%` or `12.5%` (percent, 1..=25600).
 pub fn parse_zoom(s: &str) -> Option<f32> {
     let v: f32 = s.trim().trim_end_matches('%').trim().parse().ok()?;
@@ -110,6 +120,10 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Options, String> 
             "--size" => {
                 let v = it.next().ok_or("--size needs WxH")?;
                 o.size = Some(parse_size(&v).ok_or_else(|| format!("invalid size '{v}' (expected WxH, e.g. 1600x1088)"))?);
+            }
+            "--scale" => {
+                let v = it.next().ok_or("--scale needs a factor (e.g. 2)")?;
+                o.scale = Some(parse_scale(&v).ok_or_else(|| format!("invalid scale '{v}' (expected 1..4, e.g. 2)"))?);
             }
             "--select" => o.select = Some(it.next().ok_or("--select needs a layer name")?),
             "--menu" => o.menu = Some(it.next().ok_or("--menu needs a name (main, main/File, shape, palette)")?),
@@ -161,6 +175,7 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Options, String> 
                 o.dev = Some(l);
             }
             "--dev-demo" => o.dev_demo = true,
+            "--seed-library" => o.seed_library = Some(it.next().ok_or("--seed-library needs a directory")?.into()),
             "-h" | "--help" => o.help = true,
             s if s.starts_with("--") => return Err(format!("unknown option {s}")),
             _ => {
@@ -174,11 +189,13 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Options, String> 
     Ok(o)
 }
 
-pub const USAGE: &str = "usage: desigma [FILE] [--screenshot OUT.png] [--size WxH] [--select LAYER|none] [--menu main|main/File|shape|palette] [--panel interaction|present-variables|variables|variables-floating|libraries|picker|picker-page|fill-d9|picker-gradient|effects-menu|stroke-settings|type-details|effect-noise|effect-texture|effect-glass|version-history|dev-annotate|dev-compare]\n               [--zoom PERCENT] [--rulers] [--grid] [--gpu] [--home] [--library DIR] [--layout-grid grid|columns|rows] [--edit-text LAYER [--select-text START-END]]\n  FILE  .fig, .json (Figma REST or native), .svg or .desigma; without a file the projects home screen opens
+pub const USAGE: &str = "usage: desigma [FILE] [--screenshot OUT.png] [--size WxH] [--scale FACTOR] [--select LAYER|none] [--menu main|main/File|shape|palette] [--panel interaction|present-variables|variables|variables-floating|libraries|picker|picker-page|fill-d9|picker-gradient|effects-menu|stroke-settings|type-details|effect-noise|effect-texture|effect-glass|version-history|dev-annotate|dev-compare]\n               [--zoom PERCENT] [--rulers] [--grid] [--gpu] [--home] [--library DIR] [--layout-grid grid|columns|rows] [--edit-text LAYER [--select-text START-END]]\n  FILE  .fig, .json (Figma REST or native), .svg or .desigma; without a file the projects home screen opens
+  --scale    with --screenshot: device pixel ratio (2 writes a PNG twice --size, rendered crisp rather than upscaled)
   --home     show the home screen (also in --screenshot mode)
   --gpu      draw the canvas on the GPU; --screenshot uses the CPU renderer unless this is given
   --library  use DIR as the projects library instead of the default location
   --dev      open Dev mode with a code language (css|tailwind|swiftui|compose|react); --dev-demo marks the selection Ready for dev with an annotation
+  --seed-library  write the showcase sample files (a project with three files) into DIR and exit
   --find     open the Find and replace panel searching for TEXT (--replace-with TEXT shows the replace row)";
 
 #[cfg(test)]
@@ -213,6 +230,14 @@ mod tests {
         assert!(p(&["--dev", "cobol"]).is_err());
         assert!(p(&["--dev"]).is_err());
         assert!(p(&["--panel", "dev-compare"]).is_ok());
+    }
+
+    #[test]
+    fn parses_scale() {
+        assert_eq!(p(&["--scale", "2"]).unwrap().scale, Some(2.0));
+        assert_eq!(p(&["--scale", "1.5x"]).unwrap().scale, Some(1.5));
+        assert_eq!(p(&[]).unwrap().scale, None);
+        assert!(p(&["--scale", "0.5"]).is_err() && p(&["--scale", "9"]).is_err() && p(&["--scale"]).is_err());
     }
 
     #[test]

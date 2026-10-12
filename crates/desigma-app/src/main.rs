@@ -25,6 +25,7 @@ mod proto;
 mod protovars;
 mod richtext;
 mod shell;
+mod showcase;
 mod styles;
 mod textedit;
 mod textmeasure;
@@ -48,6 +49,16 @@ fn main() {
     };
     if opts.help {
         println!("{}", cli::USAGE);
+        return;
+    }
+    if let Some(dir) = &opts.seed_library {
+        match showcase::seed_library(dir) {
+            Ok(()) => println!("desigma: wrote the showcase sample files to {}", dir.display()),
+            Err(e) => {
+                eprintln!("desigma: cannot seed {}: {e}", dir.display());
+                std::process::exit(1);
+            }
+        }
         return;
     }
     let (w, h) = opts.size.unwrap_or((theme::DEFAULT_WINDOW.0 as u32, theme::DEFAULT_WINDOW.1 as u32));
