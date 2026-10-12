@@ -452,6 +452,14 @@ pub(crate) fn import_rest_value(v: &Value, expand_instances: bool) -> Result<Doc
     }
     cx.finish(expand_instances);
     cx.doc.kind = if crate::board::is_figjam(v) { DocumentKind::Board } else { DocumentKind::Design };
+    if cx.doc.kind == DocumentKind::Board {
+        // a board draws its own dotted canvas: the pages are transparent over it
+        for p in cx.doc.pages.clone() {
+            if let Some(NodeKind::Page { background }) = cx.doc.get_mut(p).map(|n| &mut n.kind) {
+                background.a = 0.0;
+            }
+        }
+    }
     crate::board::link_connectors(&mut cx.doc, &cx.ids, root);
     cx.link_remote_components(v);
     crate::variables::import_variables_value(&mut cx.doc, v);

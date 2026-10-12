@@ -220,6 +220,10 @@ pub fn lower(doc: &Document, n: &Node) -> Option<Node> {
     body.children = extras.iter().map(|e| e.id).collect();
     SYNTH.with(|s| {
         let mut s = s.borrow_mut();
+        // ids of deleted items are never reused: forget their children when the table gets big
+        if s.len() > 50_000 {
+            s.clear();
+        }
         for e in extras {
             s.insert(e.id, Rc::new(e));
         }

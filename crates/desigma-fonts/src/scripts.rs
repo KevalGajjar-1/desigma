@@ -78,7 +78,7 @@ pub fn script_requests_for(doc: &Document) -> BTreeSet<FontRequest> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use desigma_doc::{Node, Rect, TextRun, TextStyle};
+    use desigma_doc::{Node, NodeKind, Rect, TextRun, TextStyle};
 
     #[test]
     fn classifies_scripts() {
