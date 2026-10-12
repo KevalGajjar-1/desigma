@@ -21,11 +21,19 @@ pub struct Shape {
     /// Precomputed stroke outline (`Node::stroke_geometry`): filled with the
     /// stroke paints instead of stroking `paths`.
     pub stroke_paths: Option<Vec<(sk::Path, sk::FillRule)>>,
+    /// Geometry to fill when it differs from `paths`: a vector network whose
+    /// stroke-only segments must not be filled.
+    pub fill_only: Option<Vec<(sk::Path, sk::FillRule)>>,
 }
 
 impl Shape {
+    /// The paths the fill paints (and insides/outsides are measured against).
+    pub fn fill_paths(&self) -> &[(sk::Path, sk::FillRule)] {
+        self.fill_only.as_deref().unwrap_or(&self.paths)
+    }
+
     fn single(path: sk::Path, rule: sk::FillRule, closed: bool) -> Self {
-        Self { paths: vec![(path, rule)], closed, fillable: true, is_rect: false, stroke_paths: None }
+        Self { paths: vec![(path, rule)], closed, fillable: true, is_rect: false, stroke_paths: None, fill_only: None }
     }
 }
 
@@ -398,7 +406,7 @@ pub fn vector_paths(paths: &[d::Path]) -> Shape {
             out.push((path, fill_rule(p.fill_rule)));
         }
     }
-    Shape { paths: out, closed, fillable: true, is_rect: false, stroke_paths: None }
+    Shape { paths: out, closed, fillable: true, is_rect: false, stroke_paths: None, fill_only: None }
 }
 
 /// Geometry for a node, or `None` when it has no own geometry (groups, pages,
@@ -433,19 +441,30 @@ fn derived_shape(doc: &Document, n: &Node, tol: f32) -> Option<Shape> {
             let mut pb = sk::PathBuilder::new();
             pb.move_to(0.0, 0.0);
             pb.line_to(w, 0.0);
-            Some(Shape { paths: vec![(pb.finish()?, sk::FillRule::Winding)], closed: false, fillable: false, is_rect: false, stroke_paths: None })
+            Some(Shape {
+                paths: vec![(pb.finish()?, sk::FillRule::Winding)],
+                closed: false,
+                fillable: false,
+                is_rect: false,
+                stroke_paths: None,
+                fill_only: None,
+            })
         }
         NodeKind::Polygon { count } => Some(Shape::single(poly_path(w, h, &polygon_points(*count), n.corner_radii[0])?, sk::FillRule::Winding, true)),
         NodeKind::Star { count, inner_ratio } => {
             Some(Shape::single(poly_path(w, h, &star_points(*count, *inner_ratio), n.corner_radii[0])?, sk::FillRule::Winding, true))
         }
-        NodeKind::Vector { paths, .. } => {
-            let s = vector_paths(paths);
+        NodeKind::Vector { paths, network } => {
+            let mut s = vector_paths(paths);
             if s.paths.is_empty() {
-                None
-            } else {
-                Some(s)
+                return None;
             }
+            if let Some(net) = network {
+                if net.has_stroke_only_segments() {
+                    s.fill_only = Some(vector_paths(&net.fill_paths()).paths);
+                }
+            }
+            Some(s)
         }
         NodeKind::BooleanOp(op) => boolean::boolean_shape(doc, n, *op, tol),
         NodeKind::Page { .. } | NodeKind::Group | NodeKind::Text(_) | NodeKind::Unknown { .. } => None,
