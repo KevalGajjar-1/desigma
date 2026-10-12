@@ -1,0 +1,18 @@
+[package]
+name = "desigma-gpu"
+description = "GPU canvas renderer (wgpu + lyon) for desigma documents; the CPU renderer stays the deterministic reference"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+bytemuck = { version = "1", features = ["derive"] }
+desigma-doc.workspace = true
+desigma-render.workspace = true
+lyon_tessellation = "1"
+pollster = "0.4"
+wgpu = "29"
+
+[dev-dependencies]
+desigma-diff = { path = "../desigma-diff" }
+image.workspace = true
