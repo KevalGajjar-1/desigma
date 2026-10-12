@@ -18,21 +18,34 @@ Releases are tag-driven. Pushing a tag `vX.Y.Z` runs `.github/workflows/release.
 
 ## What gets built
 
-| Target | Runner | Archive |
+| Job | Runner | Output |
 |---|---|---|
-| `x86_64-pc-windows-msvc` | `windows-latest` | `desigma-<version>-<target>.zip` |
-| `x86_64-unknown-linux-gnu` | `ubuntu-latest` | `desigma-<version>-<target>.tar.gz` |
-| `aarch64-apple-darwin` | `macos-14` | `desigma-<version>-<target>.tar.gz` |
-| `x86_64-apple-darwin` | `macos-14` (cross-compiled; `macos-13` is retired) | `desigma-<version>-<target>.tar.gz` |
+| `build` `x86_64-pc-windows-msvc` | `windows-latest` | `desigma-<version>-<target>.zip` (the exe has the icon and version info embedded by `crates/desigma-app/build.rs`) |
+| `build` `x86_64-unknown-linux-gnu` | `ubuntu-latest` | `desigma-<version>-<target>.tar.gz` (adds `desigma.desktop`, `icons/`, `install.sh`) |
+| `macos` | `macos-14` (builds `aarch64-apple-darwin` and cross-compiles `x86_64-apple-darwin`; `macos-13` is retired) | `desigma-<version>-macos.dmg` and `desigma-<version>-macos-universal.tar.gz` |
 
-Each archive holds the `desigma` editor, the `desigma-diff` CLI, `LICENSE-MIT`, `LICENSE-APACHE` and `README.md`. The release also carries a combined `SHA256SUMS` (verify with `sha256sum -c SHA256SUMS`). Packaging is done by `scripts/package.sh <target> <version>`, which you can run locally after a release build.
+The Windows and Linux archives hold `desigma`, `desigma-diff`, `LICENSE-MIT`, `LICENSE-APACHE` and `README.md`. They are packaged by `scripts/package.sh <target> <version>`, which you can run locally after a release build.
+
+The macOS job runs `scripts/package-macos.sh <version>`. It `lipo`s a universal `desigma` and `desigma-diff`, assembles `desigma.app` (bundle id `ai.deepfounder.desigma`, `Info.plist` from `packaging/macos/Info.plist.in`, `desigma.icns` built with `iconutil` from `assets/icon/desigma.iconset`), ad-hoc signs it, and writes the `.dmg` (app, `Applications` link, `Read me first.txt`) and the universal `.tar.gz` (app, licenses, README). It needs a Mac, so test changes to it with a dry run (below).
+
+The release carries a combined `SHA256SUMS` covering every file (verify with `sha256sum -c SHA256SUMS`).
+
+## App icons
+
+The masters are `assets/icon/desigma-icon.svg` (full bleed, Windows and Linux) and `assets/icon/desigma-icon-macos.svg` (824 px tile on a 1024 canvas). All generated files are committed; regenerate them after editing a master with:
+
+```sh
+cargo run -p desigma-app --example gen_icons
+```
+
+This rewrites `assets/icon/png/`, `desigma.ico`, `desigma.iconset/` and `desigma.icns`. The window icon is the embedded 256 px PNG.
 
 ## Dry run
 
-Run the workflow from the Actions tab (Release, Run workflow) on any branch. It builds and packages everything and uploads the archives as workflow artifacts, but creates no release. The version is stamped `0.0.0-dev.<sha>`.
+Run the workflow from the Actions tab (Release, Run workflow) on any branch. It builds and packages everything and uploads the archives as workflow artifacts, but creates no release. Run it after any change to `scripts/package-macos.sh` or the macOS plist, then open the downloaded `.dmg` on a Mac to check the icon, the drag-to-Applications layout and the Open Anyway flow. The version is stamped `0.0.0-dev.<sha>`.
 
 ## Not covered yet
 
-- macOS binaries are unsigned and not notarized, so Gatekeeper will warn; users can right-click Open or run `xattr -d com.apple.quarantine`.
-- Windows binaries are unsigned (SmartScreen warning) and carry no embedded icon or version resource.
+- macOS: the app is ad-hoc signed but not signed with a Developer ID or notarized, so Gatekeeper asks for a one-time Open Anyway. Double-clicking a file in Finder does not pass it to desigma (winit 0.30 does not expose `application:openFiles:`); "Open With" lists desigma through `CFBundleDocumentTypes`.
+- Windows binaries are unsigned (SmartScreen warning). There is no installer; the zip is the download.
 - Linux binaries link the build runner's glibc; they run on that distribution or newer.
