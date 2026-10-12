@@ -282,6 +282,9 @@ struct Ctx {
     ids: BTreeMap<String, NodeId>,
     /// (instance, REST componentId)
     instances: Vec<(NodeId, String)>,
+    /// Instances whose component is not in this file (library components of
+    /// other files), by REST componentId.
+    unresolved: Vec<(NodeId, String)>,
     component_keys: BTreeMap<String, String>,
     /// `.fig` instance overrides / derived data, keyed by instance.
     overrides: BTreeMap<NodeId, Overrides>,
@@ -385,6 +388,7 @@ pub(crate) fn import_rest_value(v: &Value, expand_instances: bool) -> Result<Doc
         doc: Document::new(fstr(v, "name").unwrap_or("Untitled")),
         ids: BTreeMap::new(),
         instances: Vec::new(),
+        unresolved: Vec::new(),
         component_keys: BTreeMap::new(),
         overrides: BTreeMap::new(),
         next_clone: 0,
@@ -409,6 +413,7 @@ pub(crate) fn import_rest_value(v: &Value, expand_instances: bool) -> Result<Doc
         cx.import_page(p);
     }
     cx.finish(expand_instances);
+    cx.link_remote_components(v);
     crate::variables::import_variables_value(&mut cx.doc, v);
     cx.doc.style_meta = style_meta(v.get("styles"), &cx.doc);
     Ok(cx.doc)
@@ -750,7 +755,10 @@ impl Ctx {
         let links = std::mem::take(&mut self.instances);
         let mut targets: BTreeMap<NodeId, NodeId> = BTreeMap::new();
         for (inst, cid) in links {
-            let Some(&comp) = self.ids.get(&cid) else { continue };
+            let Some(&comp) = self.ids.get(&cid) else {
+                self.unresolved.push((inst, cid));
+                continue;
+            };
             if let Some(NodeKind::Instance { component, .. }) = self.doc.get_mut(inst).map(|n| &mut n.kind) {
                 *component = Some(comp);
             }
@@ -778,6 +786,42 @@ impl Ctx {
         }
         self.apply_rest_overrides();
         self.resolve_proto();
+    }
+
+    /// Instances of components defined in other files (`remote: true` in the
+    /// REST `components` map, or simply absent from this file) get a stand-in
+    /// main component on the hidden library page, grouped under a placeholder
+    /// library named after the file key, so they keep working and are listed
+    /// as coming from another file.
+    fn link_remote_components(&mut self, v: &Value) {
+        let unresolved = std::mem::take(&mut self.unresolved);
+        if unresolved.is_empty() {
+            return;
+        }
+        let file_key = fstr(v, "fileKey").or_else(|| fstr(v, "file_key")).unwrap_or("external");
+        let library_id = format!("{}{file_key}", desigma_doc::REMOTE_LIBRARY_PREFIX);
+        let meta = v.get("components").and_then(Value::as_object);
+        // Group by component key (falling back to the REST id), in first-use order.
+        let mut order: Vec<String> = Vec::new();
+        let mut groups: BTreeMap<String, (String, Vec<NodeId>)> = BTreeMap::new();
+        for (inst, cid) in unresolved {
+            let info = meta.and_then(|m| m.get(&cid));
+            let key = info.and_then(|c| fstr(c, "key")).map(String::from).unwrap_or_else(|| cid.clone());
+            let name = info.and_then(|c| fstr(c, "name")).map(String::from).or_else(|| self.doc.get(inst).map(|n| n.name.clone())).unwrap_or_default();
+            if !groups.contains_key(&key) {
+                order.push(key.clone());
+            }
+            groups.entry(key).or_insert_with(|| (name, Vec::new())).1.push(inst);
+        }
+        for key in order {
+            let (name, insts) = &groups[&key];
+            for i in insts {
+                if let Some(NodeKind::Instance { component_key, .. }) = self.doc.get_mut(*i).map(|n| &mut n.kind) {
+                    component_key.get_or_insert_with(|| key.clone());
+                }
+            }
+            desigma_doc::link_remote_component(&mut self.doc, &library_id, &key, name, insts);
+        }
     }
 
     /// Maps collected prototype data (REST ids) onto the imported nodes.

@@ -119,6 +119,9 @@ impl Shell {
         if opts.present {
             app.start_present();
         }
+        if opts.panel.as_deref() == Some("libraries") {
+            app.open_libraries();
+        }
         if let Some(panel) = opts.panel.as_deref().filter(|p| p.starts_with("variables")) {
             app.vars.full = panel == "variables";
             app.open_variables();
@@ -515,6 +518,7 @@ impl Shell {
             crate::variables::view::show(&mut self.app, ui, full);
         }
         crate::home::dialog::show(&mut self.app, &ctx);
+        crate::libraries::show(&mut self.app, &ctx);
         self.toast(ui, full);
 
         self.sync_title(&ctx);

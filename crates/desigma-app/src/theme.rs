@@ -29,6 +29,7 @@ pub const BG_SELECTED_HOVER: Color32 = rgb(0x4A5878);
 pub const BG_SELECTED_SECONDARY: Color32 = rgb(0x32394D);
 pub const BG_BRAND: Color32 = rgb(0x0C8CE9);
 pub const BG_BRAND_HOVER: Color32 = rgb(0x0A6DC2);
+pub const BG_BRAND_PRESSED: Color32 = rgb(0x105CAD);
 pub const BG_TOOLBAR: Color32 = rgb(0x2C2C2C);
 pub const BG_TOOLBAR_HOVER: Color32 = rgb(0x111111);
 pub const BG_TOOLBAR_SELECTED: Color32 = rgb(0x0C8CE9);

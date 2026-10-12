@@ -933,3 +933,4 @@ mod svg;
 mod variables;
 
 mod assets_thumbs;
+mod libraries;

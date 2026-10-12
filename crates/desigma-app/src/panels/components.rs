@@ -99,6 +99,11 @@ fn instance_header(app: &mut App, ui: &mut Ui, pane: &mut Pane, inst: NodeId) {
         app.ui.inst_menu = if app.ui.inst_menu.is_some() { None } else { Some(more) };
     }
     pane.y += theme::FIELD_HEIGHT + 8.0;
+    if let Some(info) = library_instance_info(&app.doc, inst) {
+        let row = pane.rect(theme::SECTION_CONTENT_X, 0.0, theme::SECTION_CONTENT_W, 20.0);
+        crate::libraries::instance_library_row(ui, row, &info);
+        pane.y += 28.0;
+    }
     section_sep(ui, pane, false);
 
     if let Some(anchor) = app.ui.inst_menu {

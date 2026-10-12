@@ -87,9 +87,9 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Options, String> 
             }
             "--present" => o.present = true,
             "--panel" => {
-                let t = it.next().ok_or("--panel needs a name (variables, variables-floating)")?;
-                if !matches!(t.as_str(), "variables" | "variables-floating") {
-                    return Err(format!("unknown panel '{t}' (expected variables or variables-floating)"));
+                let t = it.next().ok_or("--panel needs a name (variables, variables-floating, libraries)")?;
+                if !matches!(t.as_str(), "variables" | "variables-floating" | "libraries") {
+                    return Err(format!("unknown panel '{t}' (expected variables, variables-floating or libraries)"));
                 }
                 o.panel = Some(t);
             }
@@ -127,7 +127,7 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Options, String> 
     Ok(o)
 }
 
-pub const USAGE: &str = "usage: desigma [FILE] [--screenshot OUT.png] [--size WxH] [--select LAYER|none] [--menu main|main/File|shape|palette] [--panel variables|variables-floating]\n               [--zoom PERCENT] [--rulers] [--grid] [--home] [--library DIR] [--layout-grid grid|columns|rows] [--edit-text LAYER [--select-text START-END]]\n  FILE  .fig, .json (Figma REST or native), .svg or .desigma; without a file the projects home screen opens
+pub const USAGE: &str = "usage: desigma [FILE] [--screenshot OUT.png] [--size WxH] [--select LAYER|none] [--menu main|main/File|shape|palette] [--panel variables|variables-floating|libraries]\n               [--zoom PERCENT] [--rulers] [--grid] [--home] [--library DIR] [--layout-grid grid|columns|rows] [--edit-text LAYER [--select-text START-END]]\n  FILE  .fig, .json (Figma REST or native), .svg or .desigma; without a file the projects home screen opens
   --home     show the home screen (also in --screenshot mode)
   --library  use DIR as the projects library instead of the default location";
 

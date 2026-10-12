@@ -10,6 +10,7 @@ mod home;
 mod icons;
 mod io;
 mod layout;
+mod libraries;
 mod ops;
 mod panels;
 mod present;

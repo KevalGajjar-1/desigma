@@ -84,6 +84,8 @@ pub enum Icon {
     Clock,
     GridView,
     ListView,
+    /// Libraries (a closed book).
+    Book,
 }
 
 struct G<'a> {
@@ -340,6 +342,12 @@ pub fn paint(p: &Painter, icon: Icon, center: Pos2, size: f32, col: Color32) {
             g.fill_poly(&[(8.0, 9.5), (10.5, 12.0), (8.0, 14.5), (5.5, 12.0)]);
             g.fill_poly(&[(1.5, 8.0), (4.0, 5.5), (6.5, 8.0), (4.0, 10.5)]);
             g.fill_poly(&[(9.5, 8.0), (12.0, 5.5), (14.5, 8.0), (12.0, 10.5)]);
+        }
+        Icon::Book => {
+            g.rect(3.0, 2.0, 10.0, 12.0, 1.0);
+            g.line((6.0, 2.0), (6.0, 14.0));
+            g.line((8.0, 5.5), (11.0, 5.5));
+            g.line((8.0, 8.0), (10.5, 8.0));
         }
         Icon::Instance => g.poly(&[(8.0, 1.5), (14.5, 8.0), (8.0, 14.5), (1.5, 8.0)], true),
         Icon::Boolean => {
