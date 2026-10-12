@@ -21,8 +21,6 @@ mod versions;
 
 pub use publish::*;
 pub use store::*;
-// `versions` starts empty; drop this allow once it exports items.
-#[allow(unused_imports)]
 pub use versions::*;
 
 use std::path::{Path, PathBuf};
