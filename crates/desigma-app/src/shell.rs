@@ -37,7 +37,16 @@ impl Shell {
             opts.library = Some(desigma_library::Library::default_root());
         }
         opts.home = opts.wants_home();
-        Self::build(&cc.egui_ctx, opts)
+        let screenshot = opts.screenshot.is_some();
+        let (gpu_flag, library) = (opts.gpu, opts.library.clone());
+        let mut shell = Self::build(&cc.egui_ctx, opts);
+        if let Some(rs) = &cc.wgpu_render_state {
+            shell.app.canvas.gpu.available = canvas::gpu::init(rs);
+        }
+        // GPU canvas on by default; screenshots stay on the deterministic CPU path unless --gpu
+        let saved = library.as_deref().and_then(|l| crate::comments::settings::load_flag(l, "use_gpu"));
+        shell.app.canvas.gpu.pref = if screenshot { gpu_flag } else { gpu_flag || saved.unwrap_or(true) };
+        shell
     }
 
     pub fn build(ctx: &Context, opts: Options) -> Self {

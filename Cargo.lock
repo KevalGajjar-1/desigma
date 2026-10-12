@@ -896,6 +896,7 @@ dependencies = [
  "desigma-export",
  "desigma-fig",
  "desigma-fonts",
+ "desigma-gpu",
  "desigma-library",
  "desigma-render",
  "desigma-svg",

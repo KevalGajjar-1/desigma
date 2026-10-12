@@ -24,6 +24,9 @@ pub struct Options {
     pub zoom: Option<f32>,
     /// Show the rulers.
     pub rulers: bool,
+    /// Draw the canvas with the GPU renderer (`--screenshot` otherwise always uses the
+    /// deterministic CPU renderer; normal launches use the GPU unless it is turned off).
+    pub gpu: bool,
     /// Force the pixel grid on (it appears from 800% zoom).
     pub grid: bool,
     /// Enter text editing on the first text layer with this name (select it with `--select-text`).
@@ -117,6 +120,7 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Options, String> 
                 o.panel = Some(t);
             }
             "--rulers" => o.rulers = true,
+            "--gpu" => o.gpu = true,
             "--grid" => o.grid = true,
             "--zoom" => {
                 let v = it.next().ok_or("--zoom needs a percentage (e.g. 800)")?;
@@ -152,8 +156,9 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Options, String> 
     Ok(o)
 }
 
-pub const USAGE: &str = "usage: desigma [FILE] [--screenshot OUT.png] [--size WxH] [--select LAYER|none] [--menu main|main/File|shape|palette] [--panel variables|variables-floating|libraries|picker|picker-page|fill-d9|picker-gradient|effects-menu|stroke-settings|effect-noise|effect-texture|effect-glass|version-history]\n               [--zoom PERCENT] [--rulers] [--grid] [--home] [--library DIR] [--layout-grid grid|columns|rows] [--edit-text LAYER [--select-text START-END]]\n  FILE  .fig, .json (Figma REST or native), .svg or .desigma; without a file the projects home screen opens
+pub const USAGE: &str = "usage: desigma [FILE] [--screenshot OUT.png] [--size WxH] [--select LAYER|none] [--menu main|main/File|shape|palette] [--panel variables|variables-floating|libraries|picker|picker-page|fill-d9|picker-gradient|effects-menu|stroke-settings|effect-noise|effect-texture|effect-glass|version-history]\n               [--zoom PERCENT] [--rulers] [--grid] [--gpu] [--home] [--library DIR] [--layout-grid grid|columns|rows] [--edit-text LAYER [--select-text START-END]]\n  FILE  .fig, .json (Figma REST or native), .svg or .desigma; without a file the projects home screen opens
   --home     show the home screen (also in --screenshot mode)
+  --gpu      draw the canvas on the GPU; --screenshot uses the CPU renderer unless this is given
   --library  use DIR as the projects library instead of the default location
   --find     open the Find and replace panel searching for TEXT (--replace-with TEXT shows the replace row)";
 
@@ -163,6 +168,13 @@ mod tests {
 
     fn p(a: &[&str]) -> Result<Options, String> {
         parse(a.iter().map(|s| s.to_string()))
+    }
+
+    #[test]
+    fn gpu_flag_is_off_unless_given() {
+        assert!(!p(&["--screenshot", "x.png"]).unwrap().gpu);
+        let o = p(&["--gpu", "--screenshot", "x.png"]).unwrap();
+        assert!(o.gpu && o.screenshot.is_some());
     }
 
     #[test]
