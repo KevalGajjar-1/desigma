@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleName</key>
+  <string>desigma</string>
+  <key>CFBundleDisplayName</key>
+  <string>desigma</string>
+  <key>CFBundleIdentifier</key>
+  <string>ai.deepfounder.desigma</string>
+  <key>CFBundleExecutable</key>
+  <string>desigma</string>
+  <key>CFBundleIconFile</key>
+  <string>desigma</string>
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+  <key>CFBundleInfoDictionaryVersion</key>
+  <string>6.0</string>
+  <key>CFBundleShortVersionString</key>
+  <string>@SHORT_VERSION@</string>
+  <key>CFBundleVersion</key>
+  <string>@BUNDLE_VERSION@</string>
+  <key>LSMinimumSystemVersion</key>
+  <string>11.0</string>
+  <key>NSHighResolutionCapable</key>
+  <true/>
+  <key>LSApplicationCategoryType</key>
+  <string>public.app-category.graphics-design</string>
+  <key>NSHumanReadableCopyright</key>
+  <string>MIT OR Apache-2.0, desigma contributors</string>
+  <key>CFBundleDocumentTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleTypeName</key>
+      <string>desigma document</string>
+      <key>CFBundleTypeExtensions</key>
+      <array>
+        <string>desigma</string>
+      </array>
+      <key>CFBundleTypeRole</key>
+      <string>Editor</string>
+      <key>LSHandlerRank</key>
+      <string>Owner</string>
+    </dict>
+    <dict>
+      <key>CFBundleTypeName</key>
+      <string>Figma design file</string>
+      <key>CFBundleTypeExtensions</key>
+      <array>
+        <string>fig</string>
+      </array>
+      <key>CFBundleTypeRole</key>
+      <string>Viewer</string>
+      <key>LSHandlerRank</key>
+      <string>Alternate</string>
+    </dict>
+  </array>
+</dict>
+</plist>

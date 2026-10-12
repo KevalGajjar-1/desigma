@@ -6,8 +6,11 @@
 # Expects `desigma` and `desigma-diff` already built in release mode. bin-dir
 # defaults to target/<triple>/release, falling back to target/release (a plain
 # `cargo build --release` without --target). Writes into dist/:
-#   desigma-<version>-<triple>.zip     (Windows) or .tar.gz (everything else)
+#   desigma-<version>-<triple>.zip     (Windows) or .tar.gz (Linux)
 #   <archive>.sha256                   (checksum line; CI merges these into SHA256SUMS)
+# macOS is packaged by scripts/package-macos.sh (universal .app, .dmg and .tar.gz).
+# The Windows exe carries its icon (embedded by crates/desigma-app/build.rs); the Linux
+# tarball adds desigma.desktop, icons/<size>.png and install.sh.
 set -euo pipefail
 
 target=${1:?usage: package.sh <target-triple> <version> [bin-dir]}
@@ -18,6 +21,7 @@ bin_dir=${3:-target/$target/release}
 
 case "$target" in
   *windows*) exe=.exe; fmt=zip ;;
+  *apple-darwin*) echo "package.sh: use scripts/package-macos.sh for macOS" >&2; exit 2 ;;
   *) exe=; fmt=tar.gz ;;
 esac
 
@@ -31,6 +35,18 @@ for bin in desigma desigma-diff; do
   cp "$bin_dir/$bin$exe" "$stage/"
 done
 cp LICENSE-MIT LICENSE-APACHE README.md "$stage/"
+
+case "$target" in
+  *linux*)
+    mkdir -p "$stage/icons"
+    for size in 16 32 48 64 128 256 512; do
+      cp "$root/assets/icon/png/icon_$size.png" "$stage/icons/$size.png"
+    done
+    cp "$root/packaging/linux/desigma.desktop" "$root/packaging/linux/desigma-mime.xml" "$stage/"
+    cp "$root/packaging/linux/install.sh" "$stage/install.sh"
+    chmod +x "$stage/install.sh" "$stage/desigma" "$stage/desigma-diff"
+    ;;
+esac
 
 cd "$root/dist"
 if [ "$fmt" = zip ]; then

@@ -224,10 +224,10 @@ The `.fig` format is undocumented. Our decoder follows community reverse enginee
 
 ### Download
 
-Grab the build for your platform from the [latest release](https://github.com/deepfounder-ai/desigma/releases): Windows, macOS (Apple Silicon and Intel) and Linux.
+Grab the build for your platform from the [latest release](https://github.com/deepfounder-ai/desigma/releases): a `.dmg` for macOS (one file for Apple Silicon and Intel), a `.zip` for Windows and a `.tar.gz` with an installer script for Linux.
 
 > [!NOTE]
-> Release builds are **not code-signed yet**, so the first launch shows a warning. On **Windows**, click **More info → Run anyway** in the SmartScreen dialog. On **macOS**, open it once, then click **Open Anyway** in **System Settings → Privacy & Security**, or run `xattr -d com.apple.quarantine ./desigma`. Step-by-step instructions: [docs/install.md](docs/install.md).
+> Release builds are **not code-signed yet**, so the first launch shows a warning. On **Windows**, click **More info → Run anyway** in the SmartScreen dialog. On **macOS**, open the `.dmg`, drag desigma to Applications, open it once, then click **Open Anyway** in **System Settings → Privacy & Security**, or run `xattr -dr com.apple.quarantine /Applications/desigma.app`. Step-by-step instructions: [docs/install.md](docs/install.md).
 
 ### Build from source
 
