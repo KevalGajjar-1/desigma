@@ -333,6 +333,11 @@ pub struct TextStyle {
     /// Text colour lives here; `Node::fills` is unused for text nodes.
     pub fills: Vec<Paint>,
     /// OpenType feature settings, e.g. `("tnum", 1)`, `("liga", 0)`, `("ss01", 1)`.
+    ///
+    /// They reach the shaper (cosmic-text / harfrust) per style run. Limitation: cosmic-text shapes
+    /// a word as one run with the features of its first character, so a feature set on part of a
+    /// word applies to all of it (or to none of it when the word starts without it); on whole
+    /// words it is exact.
     #[serde(default)]
     pub features: Vec<(String, u32)>,
 }

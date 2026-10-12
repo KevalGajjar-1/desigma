@@ -935,9 +935,7 @@ name = "desigma-export"
 version = "0.1.0"
 dependencies = [
  "base64",
- "cosmic-text",
  "desigma-doc",
- "desigma-fonts",
  "desigma-render",
  "image",
  "tiny-skia",

@@ -36,11 +36,27 @@ pub struct TextSession {
     /// Where the caret is drawn when its offset has two places on screen (the boundary of a
     /// right-to-left and a left-to-right run): set by clicks and arrow keys, cleared by edits.
     pub hint_x: Option<f32>,
+    /// Tab presses (true = with Shift) taken out of the raw input before egui could use them for
+    /// focus navigation; handled with the other keys of the frame.
+    pub tabs: Vec<bool>,
 }
 
 impl TextSession {
     pub fn new(id: NodeId, caret: usize, anchor: usize, tx: Tx, created: bool) -> Self {
-        Self { id, caret, anchor, tx, created, goal_x: None, typing: None, log: UndoLog::default(), preedit: None, dragging: false, hint_x: None }
+        Self {
+            id,
+            caret,
+            anchor,
+            tx,
+            created,
+            goal_x: None,
+            typing: None,
+            log: UndoLog::default(),
+            preedit: None,
+            dragging: false,
+            hint_x: None,
+            tabs: Vec::new(),
+        }
     }
 
     /// Selected byte range (empty when only a caret).
@@ -572,6 +588,10 @@ pub fn text_keys(app: &mut App, ctx: &Context) {
     // A focused inspector field owns the keyboard.
     if ctx.egui_wants_keyboard_input() {
         return;
+    }
+    let tabs = app.canvas.text.as_mut().map(|s| std::mem::take(&mut s.tabs)).unwrap_or_default();
+    for shift in tabs {
+        change_list_level(app, if shift { -1 } else { 1 });
     }
     let events = ctx.input(|i| i.events.clone());
     for ev in events {

@@ -226,7 +226,10 @@ pub(super) fn section(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[NodeId
         set_base(app, sel, |s| s.align_h = a);
     }
     // list buttons share the row
-    if let Some(i) = seg_text(ui, pane, theme::FIELD_COL_X[1], "list", &["\u{2022}", "1."], None, theme::SEGMENT_W) {
+    // the buttons show the list kind of the edited paragraphs (or of the whole layer)
+    let list_range = if in_session { app.canvas.text.as_ref().map(|s| s.range()) } else { Some(0..t.content.len()) };
+    let list_now = list_range.and_then(|r| richtext::list_kind_in(t, r)).map(|k| if k == ListKind::Bullet { 0 } else { 1 });
+    if let Some(i) = seg_text(ui, pane, theme::FIELD_COL_X[1], "list", &["\u{2022}", "1."], list_now, theme::SEGMENT_W) {
         ts::text_command(app, ts::TextCmd::List(if i == 0 { ListKind::Bullet } else { ListKind::Numbered }));
     }
     row_end(pane);

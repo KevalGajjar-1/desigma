@@ -103,3 +103,39 @@ fn features_follow_the_selected_range_while_editing() {
     assert_eq!((t.runs[0].start, t.runs[0].end), (0, 3));
     assert_eq!(t.runs[0].style.features, vec![("case".to_string(), 1)]);
 }
+
+#[test]
+fn tab_in_a_text_session_nests_list_items_and_never_moves_egui_focus() {
+    use eframe::App;
+    let tab = |m: Modifiers| RawInput {
+        events: vec![Event::Key { key: Key::Tab, physical_key: Some(Key::Tab), pressed: true, repeat: false, modifiers: m }],
+        ..Default::default()
+    };
+    let mut s = Sim::new();
+    s.key(Key::T);
+    let p = s.screen(300.0, 820.0);
+    s.click(p);
+    s.type_text("a");
+    let id = s.app().selection[0];
+    s.cmd_key(Key::A);
+    s.mods = Modifiers { command: true, shift: true, ..Default::default() };
+    s.key(Key::Num8);
+    s.mods = Modifiers::NONE;
+    assert!(text_of(&s, id).has_lists());
+    // the platform hook takes Tab out of the raw input before egui sees it
+    let mut raw = tab(Modifiers::NONE);
+    s.shell.raw_input_hook(&s.ctx.clone(), &mut raw);
+    assert!(raw.events.is_empty(), "egui never gets the Tab press");
+    s.frame(vec![]);
+    assert_eq!(text_of(&s, id).paragraph_lists()[0].map(|i| i.level), Some(1), "the list item moved one level in");
+    // Shift+Tab goes back out
+    let mut raw = tab(Modifiers::SHIFT);
+    s.shell.raw_input_hook(&s.ctx.clone(), &mut raw);
+    s.frame(vec![]);
+    assert_eq!(text_of(&s, id).paragraph_lists()[0].map(|i| i.level), Some(0));
+    s.key(Key::Escape);
+    // outside a session Tab is left alone
+    let mut raw = tab(Modifiers::NONE);
+    s.shell.raw_input_hook(&s.ctx.clone(), &mut raw);
+    assert_eq!(raw.events.len(), 1);
+}

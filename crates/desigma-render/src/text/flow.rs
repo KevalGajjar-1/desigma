@@ -332,7 +332,7 @@ fn flow_pass(fonts: &mut Fonts, shaper: &Shaper, props: &TextProps, paras: &[Par
                 None => (Some(bullet_shape(m.level)), Vec::new(), fs0 * 0.3),
             };
             let ref_w = if m.kind == d::ListKind::Numbered && m.level % 3 == 0 { label_glyphs(fonts, shaper, props, style0, "88.").1.max(lw) } else { lw };
-            text_x = (hang + (m.level as f32 + 1.0) * unit).max(mx + ref_w + fs0 * 0.4);
+            text_x = (hang + (m.level as f32 + 1.0) * unit).max(mx + ref_w + fs0 * 0.25);
             marker = Some((shape, glyphs, lw, mx));
         }
         let region_left = if rtl_para { 0.0 } else { text_x };

@@ -274,3 +274,23 @@ fn forced_rtl_keeps_a_latin_line_looking_left_to_right() {
     assert!(gl.windows(2).all(|w| w[0].x <= w[1].x));
     assert_eq!((gl[0].start, gl[6].end), (0, 7));
 }
+
+#[test]
+fn right_to_left_list_items_put_the_marker_on_the_right() {
+    let mut t = props("\u{5E9}\u{5DC}\u{5D5}\u{5DD}");
+    t.auto_resize = TextAutoResize::None;
+    t.style.align_h = TextAlignH::Right;
+    lists(&mut t, &[bullet(0)]);
+    let g = text_geometry(&t, Vec2::new(100.0, 20.0));
+    assert!(g.lines[0].rtl);
+    let right = g.lines[0].glyphs.iter().map(|g| g.x + g.w).fold(0.0f32, f32::max);
+    assert!(right <= 100.0 - 23.0, "the text stops short of the marker column: {right}");
+    let pm = render(&t, 100, 24, 100.0);
+    assert!(ink_in(&pm, 78..100, 0..20), "bullet at the right edge");
+    // a left-to-right paragraph keeps it on the left
+    let mut l = t.clone();
+    l.content = "abc".into();
+    l.style.align_h = TextAlignH::Left;
+    let g = text_geometry(&l, Vec2::new(100.0, 20.0));
+    assert!(!g.lines[0].rtl && g.lines[0].glyphs[0].x >= 23.0);
+}
