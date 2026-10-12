@@ -38,6 +38,11 @@ pub fn show(lib: &Library, h: &mut Home, ui: &mut Ui, rect: Rect, acts: &mut Vec
             acts.push(Act::NewFile);
         }
         right -= 8.0;
+        let r = button(ui, &p, &mut right, head.center().y, "New board", Kind::Secondary, "home-new-board");
+        if r.clicked() {
+            acts.push(Act::NewBoard);
+        }
+        right -= 8.0;
         let r = button(ui, &p, &mut right, head.center().y, "Import\u{2026}", Kind::Secondary, "home-import");
         if r.clicked() {
             acts.push(Act::Import);
@@ -309,6 +314,7 @@ fn files_view(lib: &Library, h: &mut Home, ui: &mut Ui, content: Rect, acts: &mu
                 drag = Some((f.id.clone(), f.name.clone()));
             }
             let tex = h.thumbs.get(&ctx, lib, f, &mut budget);
+            let board = h.kinds.get(lib, f, &mut budget) == desigma_doc::DocumentKind::Board;
             let project = h.snap.project_name(&f.project).to_string();
             let star_r = if list {
                 Rect::from_min_size(Pos2::new(r.right() - 40.0, r.center().y - 12.0), Vec2::splat(24.0))
@@ -320,10 +326,11 @@ fn files_view(lib: &Library, h: &mut Home, ui: &mut Ui, content: Rect, acts: &mu
                 acts.push(Act::Star(f.id.clone(), !f.starred));
             }
             if list {
-                list_row(&p, r, f, &project, tex, resp.hovered(), is_sel, now);
+                list_row(&p, r, f, &project, tex, board, resp.hovered(), is_sel, now);
             } else {
-                card(&p, r, f, &project, tex, resp.hovered(), is_sel, now);
+                card(&p, r, f, &project, tex, board, resp.hovered(), is_sel, now);
             }
+            widgets::record(ui, &format!("home-kind-{}", if board { "board" } else { "design" }), r);
             if resp.hovered() || star.hovered() || f.starred {
                 if star.hovered() || (!list && resp.hovered()) {
                     p.circle_filled(star_r.center(), 12.0, Color32::from_black_alpha(if f.starred && !star.hovered() { 0 } else { 120 }));
@@ -369,8 +376,33 @@ fn paint_star(p: &egui::Painter, c: Pos2, on: bool, hot: bool) {
 
 type Tex = Option<(egui::TextureId, Vec2)>;
 
-/// Thumbnail well; the picture is fitted inside it, keeping its aspect ratio.
-fn thumb_area(p: &egui::Painter, area: Rect, tex: Tex, radius: u8) {
+/// Thumbnail well; the picture is fitted inside it, keeping its aspect ratio. A board's picture
+/// is its own canvas and fills the well; a board without a picture shows the dotted canvas and a
+/// sticky note icon.
+fn thumb_area(p: &egui::Painter, area: Rect, tex: Tex, board: bool, radius: u8) {
+    if board {
+        p.rect_filled(area, theme::cr(radius), theme::rgb(theme::BOARD_BG));
+        match tex {
+            Some((t, _)) => {
+                p.image(t, area, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), Color32::WHITE);
+            }
+            None => {
+                let mut mesh = egui::Mesh::default();
+                let mut y = area.top() + 8.0;
+                while y < area.bottom() {
+                    let mut x = area.left() + 8.0;
+                    while x < area.right() {
+                        mesh.add_colored_rect(Rect::from_center_size(Pos2::new(x, y), Vec2::splat(1.5)), theme::BOARD_DOT);
+                        x += 16.0;
+                    }
+                    y += 16.0;
+                }
+                p.add(egui::Shape::mesh(mesh));
+                icons::paint(p, Icon::Sticky, area.center(), 24.0, Color32::from_black_alpha(110));
+            }
+        }
+        return;
+    }
     p.rect_filled(area, theme::cr(radius), theme::HOME_THUMB_BG);
     match tex {
         Some((t, size)) => {
@@ -383,11 +415,24 @@ fn thumb_area(p: &egui::Painter, area: Rect, tex: Tex, radius: u8) {
     }
 }
 
+/// The "Board" badge on a board's card: a sticky note icon and the word, bottom left of the picture.
+fn board_badge(p: &egui::Painter, area: Rect) {
+    let font = theme::font_small_strong();
+    let w = widgets::text_width(p, "Board", &font) + 28.0;
+    let r = Rect::from_min_size(Pos2::new(area.left() + 8.0, area.bottom() - 8.0 - 20.0), Vec2::new(w, 20.0));
+    p.rect_filled(r, theme::cr(10), theme::BG_MENU);
+    icons::paint(p, Icon::Sticky, Pos2::new(r.left() + 10.0, r.center().y), 12.0, theme::ICON);
+    p.text(Pos2::new(r.left() + 19.0, r.center().y), Align2::LEFT_CENTER, "Board", font, theme::TEXT);
+}
+
 /// A grid card: thumbnail, name, project and edit time.
 #[allow(clippy::too_many_arguments)]
-fn card(p: &egui::Painter, r: Rect, f: &FileEntry, project: &str, tex: Tex, hover: bool, selected: bool, now: u64) {
+fn card(p: &egui::Painter, r: Rect, f: &FileEntry, project: &str, tex: Tex, board: bool, hover: bool, selected: bool, now: u64) {
     let thumb = Rect::from_min_size(r.min, Vec2::new(r.width(), theme::HOME_THUMB_H));
-    thumb_area(p, thumb, tex, theme::RADIUS_LARGE);
+    thumb_area(p, thumb, tex, board, theme::RADIUS_LARGE);
+    if board {
+        board_badge(p, thumb);
+    }
     let stroke = if selected {
         Stroke::new(2.0, theme::BORDER_SELECTED)
     } else if hover {
@@ -412,23 +457,28 @@ fn list_columns(right: f32) -> (f32, f32, f32) {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn list_row(p: &egui::Painter, r: Rect, f: &FileEntry, project: &str, tex: Tex, hover: bool, selected: bool, now: u64) {
+fn list_row(p: &egui::Painter, r: Rect, f: &FileEntry, project: &str, tex: Tex, board: bool, hover: bool, selected: bool, now: u64) {
     if selected {
         p.rect_filled(r, theme::cr(theme::RADIUS_MEDIUM), theme::BG_SELECTED);
     } else if hover {
         p.rect_filled(r, theme::cr(theme::RADIUS_MEDIUM), theme::BG_HOVER);
     }
     let th = Rect::from_min_size(Pos2::new(r.left() + 8.0, r.top() + 5.0), Vec2::new(48.0, r.height() - 10.0));
-    thumb_area(p, th, tex, theme::RADIUS_SMALL);
+    thumb_area(p, th, tex, board, theme::RADIUS_SMALL);
     let cols = list_columns(r.right());
     let font = theme::font_body();
     p.text(
         Pos2::new(r.left() + 68.0, r.center().y),
         Align2::LEFT_CENTER,
-        widgets::elide(p, &f.name, &theme::font_body_strong(), cols.0 - r.left() - 80.0),
+        widgets::elide(p, &f.name, &theme::font_body_strong(), cols.0 - r.left() - 80.0 - if board { 20.0 } else { 0.0 }),
         theme::font_body_strong(),
         theme::TEXT,
     );
+    if board {
+        // the kind next to the name in the list
+        let name_w = widgets::text_width(p, &f.name, &theme::font_body_strong()).min(cols.0 - r.left() - 100.0);
+        icons::paint(p, Icon::Sticky, Pos2::new(r.left() + 68.0 + name_w + 14.0, r.center().y), 14.0, theme::ICON_SECONDARY);
+    }
     p.text(Pos2::new(cols.0, r.center().y), Align2::LEFT_CENTER, widgets::elide(p, project, &font, 150.0), font.clone(), theme::TEXT_SECONDARY);
     p.text(Pos2::new(cols.1, r.center().y), Align2::LEFT_CENTER, relative(now, f.modified), font.clone(), theme::TEXT_SECONDARY);
     p.text(Pos2::new(cols.2, r.center().y), Align2::LEFT_CENTER, relative(now, f.opened), font, theme::TEXT_SECONDARY);
