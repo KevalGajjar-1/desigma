@@ -37,6 +37,10 @@ pub struct Options {
     pub library: Option<PathBuf>,
     /// Open this library file id on start (used by "Open in new window").
     pub open_id: Option<String>,
+    /// Open the Find and replace panel with this query (`--find TEXT`).
+    pub find: Option<String>,
+    /// Replacement text for `--find`; also shows the replace row.
+    pub replace_with: Option<String>,
     pub help: bool,
 }
 
@@ -131,6 +135,8 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Options, String> 
             "--home" => o.home = true,
             "--library" => o.library = Some(it.next().ok_or("--library needs a directory")?.into()),
             "--open-id" => o.open_id = Some(it.next().ok_or("--open-id needs a library file id")?),
+            "--find" => o.find = Some(it.next().ok_or("--find needs the text to search for")?),
+            "--replace-with" => o.replace_with = Some(it.next().ok_or("--replace-with needs the replacement text")?),
             "-h" | "--help" => o.help = true,
             s if s.starts_with("--") => return Err(format!("unknown option {s}")),
             _ => {
@@ -146,7 +152,8 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Options, String> 
 
 pub const USAGE: &str = "usage: desigma [FILE] [--screenshot OUT.png] [--size WxH] [--select LAYER|none] [--menu main|main/File|shape|palette] [--panel variables|variables-floating|libraries|picker|picker-page|fill-d9|picker-gradient|effects-menu|stroke-settings|effect-noise|effect-texture|effect-glass]\n               [--zoom PERCENT] [--rulers] [--grid] [--home] [--library DIR] [--layout-grid grid|columns|rows] [--edit-text LAYER [--select-text START-END]]\n  FILE  .fig, .json (Figma REST or native), .svg or .desigma; without a file the projects home screen opens
   --home     show the home screen (also in --screenshot mode)
-  --library  use DIR as the projects library instead of the default location";
+  --library  use DIR as the projects library instead of the default location
+  --find     open the Find and replace panel searching for TEXT (--replace-with TEXT shows the replace row)";
 
 #[cfg(test)]
 mod tests {
@@ -231,6 +238,13 @@ mod tests {
         assert!(!p(&["--screenshot", "x.png"]).unwrap().wants_home(), "existing screenshot flows keep the editor");
         assert!(!p(&["--fixture", "no-selection"]).unwrap().wants_home());
         assert!(!p(&["--home", "--open-id", "x"]).unwrap().wants_home());
+    }
+
+    #[test]
+    fn parses_find_and_replace_with() {
+        let o = p(&["--find", "quarter", "--replace-with", "period"]).unwrap();
+        assert_eq!((o.find.as_deref(), o.replace_with.as_deref()), (Some("quarter"), Some("period")));
+        assert!(p(&["--find"]).is_err() && p(&["--replace-with"]).is_err());
     }
 
     #[test]

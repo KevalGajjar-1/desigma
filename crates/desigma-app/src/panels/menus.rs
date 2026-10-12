@@ -9,6 +9,7 @@ use crate::richtext::ListKind;
 use crate::theme;
 use crate::widgets::menu::{popup_menu, popup_tree, preset_path, MenuItem, MenuResult, TreeResult};
 use crate::widgets::{self, menu_panel};
+use desigma_doc::find::MatchCriteria;
 use desigma_doc::NodeKind;
 use egui::{Align2, Context, Id, Key, Modifiers, Pos2, Rect, Sense, Vec2};
 
@@ -22,6 +23,15 @@ pub enum Action {
     Undo,
     Redo,
     SelectAll,
+    SelectInverse,
+    SelectChildren,
+    SelectParent,
+    /// Select matching layers (same type and visual properties).
+    SelectMatching,
+    /// Select all with the same fill / stroke / effect / font / instance.
+    SelectSame(MatchCriteria),
+    /// Opens the Find and replace panel.
+    Find,
     Delete,
     Duplicate,
     Group,
@@ -81,10 +91,13 @@ pub fn run(app: &mut App, ctx: &Context, a: Action) {
         Action::Export => app.export_selection(),
         Action::Undo => app.undo(),
         Action::Redo => app.redo(),
-        Action::SelectAll => {
-            let kids = app.doc.get(app.page).map(|p| p.children.clone()).unwrap_or_default();
-            app.selection = kids.into_iter().filter(|c| app.doc.get(*c).map(|n| !n.locked && n.visible).unwrap_or(false)).collect();
-        }
+        Action::SelectAll => app.select_all_layers(),
+        Action::SelectInverse => app.select_inverse(),
+        Action::SelectChildren => app.select_children(),
+        Action::SelectParent => app.select_parent(),
+        Action::SelectMatching => app.select_matching(MatchCriteria::Properties),
+        Action::SelectSame(c) => app.select_matching(c),
+        Action::Find => app.open_find(),
         Action::Delete => app.delete_selection(),
         Action::Duplicate => app.duplicate_selection(),
         Action::Group => app.group_selection(false),
@@ -239,6 +252,20 @@ fn stub_sub(label: &str) -> Node {
     submenu(label, vec![leaf("Not available", "", Action::About).off(true)]).off(true)
 }
 
+/// "Select all with same ..." entries (the Edit menu's submenu; the palette lists them flat).
+fn same_nodes(enabled: bool) -> Vec<Node> {
+    [
+        ("Select all with same fill", MatchCriteria::Fill),
+        ("Select all with same stroke", MatchCriteria::Stroke),
+        ("Select all with same effect", MatchCriteria::Effect),
+        ("Select all with same font", MatchCriteria::Font),
+        ("Select all with same instance", MatchCriteria::Instance),
+    ]
+    .into_iter()
+    .map(|(label, c)| leaf(label, "", Action::SelectSame(c)).off(!enabled))
+    .collect()
+}
+
 /// The logo menu: sections separated by lines, every submenu wired to real commands.
 fn main_nodes(app: &App) -> Vec<Node> {
     let has_sel = !app.selection.is_empty();
@@ -261,6 +288,12 @@ fn main_nodes(app: &App) -> Vec<Node> {
         leaf("Duplicate", "Ctrl+D", Action::Duplicate).off(!has_sel),
         leaf("Delete", "Del", Action::Delete).off(!has_sel).sep(),
         leaf("Select all", "Ctrl+A", Action::SelectAll),
+        leaf("Select inverse", "Ctrl+Shift+A", Action::SelectInverse),
+        leaf("Select children", "Enter", Action::SelectChildren).off(!has_sel),
+        leaf("Select parent", "Shift+Enter", Action::SelectParent).off(!has_sel),
+        leaf("Select matching layers", "Ctrl+Alt+A", Action::SelectMatching).off(!has_sel),
+        submenu("Select all with same", same_nodes(has_sel)).off(!has_sel).sep(),
+        leaf("Find and replace…", "Ctrl+F", Action::Find),
     ];
     let view = vec![
         leaf("Zoom in", "Ctrl+=", Action::ZoomIn),
@@ -649,6 +682,13 @@ fn palette(app: &mut App, ctx: &Context) {
         app.ui.menu = None;
         run(app, ctx, act);
     }
+}
+
+/// Palette rows (label, shortcut) matching `query`, for tests.
+#[cfg(test)]
+pub fn palette_entries(app: &App, query: &str) -> Vec<(String, String)> {
+    let q = query.to_lowercase();
+    commands(app).into_iter().filter(|c| matches_query(&c.label, &q)).map(|c| (c.label, c.shortcut)).collect()
 }
 
 #[cfg(test)]

@@ -5,6 +5,7 @@ mod clipboard;
 mod comp_ops;
 mod demo;
 mod edit;
+mod find;
 mod fonts;
 mod home;
 mod icons;

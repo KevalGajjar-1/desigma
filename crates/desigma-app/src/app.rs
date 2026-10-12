@@ -127,6 +127,8 @@ pub struct App {
     /// Shared libraries (publishing, enabled libraries, updates).
     pub libs: crate::libraries::LibrariesState,
     pub proto: crate::proto::ProtoState,
+    /// Find and replace panel state (Ctrl+F).
+    pub find: crate::find::FindState,
     pub ui: UiState,
     pub clip: Option<Clip>,
     pub paste_count: u32,
@@ -174,6 +176,7 @@ impl App {
             assets: Default::default(),
             libs: Default::default(),
             proto: Default::default(),
+            find: Default::default(),
             ui: UiState { pixel_grid: true, ..UiState::default() },
             clip: None,
             paste_count: 0,
