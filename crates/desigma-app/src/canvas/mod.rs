@@ -3,6 +3,7 @@
 
 pub mod create;
 pub mod draw;
+pub mod gpu;
 pub mod grids;
 pub mod handles;
 pub mod hit;
@@ -110,6 +111,8 @@ pub struct CanvasState {
     pub dirty: bool,
     /// Tile cache and per-tile textures.
     pub tiles: tiles::TileView,
+    /// GPU canvas renderer state (preference, availability, caches).
+    pub gpu: gpu::GpuView,
     pub inter: Interaction,
     pub guides: Vec<snap::Guide>,
     pub measures: Vec<snap::Measure>,
