@@ -46,7 +46,7 @@ pub fn label_rects(app: &App, rect: ERect) -> Vec<(NodeId, ERect)> {
         let tl = app.view.to_screen(rect.min, v2(bb.x, bb.y));
         let w_px = bb.w * app.view.zoom;
         let icon_w = if matches!(n.kind, NodeKind::Component(_) | NodeKind::ComponentSet(_)) { 18.0 } else { 0.0 };
-        let text_w = n.name.chars().count() as f32 * theme::FONT_SIZE_LABEL_CANVAS * 0.66 + icon_w;
+        let text_w = n.name.chars().count() as f32 * theme::FONT_SIZE_LABEL_CANVAS * 0.66 + icon_w + 8.0;
         let w = text_w.min(w_px.max(24.0));
         let h = theme::FONT_SIZE_LABEL_CANVAS + 3.0;
         let r = ERect::from_min_size(Pos2::new(tl.x, tl.y - theme::CANVAS_LABEL_GAP - h), EV::new(w, h));
