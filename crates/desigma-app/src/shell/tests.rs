@@ -935,6 +935,7 @@ mod history;
 mod home;
 mod menus;
 mod proto;
+mod proto_vars;
 mod svg;
 mod typography;
 mod variables;

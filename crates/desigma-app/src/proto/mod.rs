@@ -87,7 +87,19 @@ impl App {
 // ------------------------------------------------------------------ labels
 
 pub const TRIGGERS: &[&str] =
-    &["On click", "On drag", "While hovering", "While pressing", "Mouse enter", "Mouse leave", "Mouse down", "Mouse up", "After delay", "Key/Gamepad"];
+    &["On click", "On drag", "While hovering", "While pressing", "Mouse enter", "Mouse leave", "Mouse down", "Mouse up", "After delay", "Key", "Gamepad"];
+
+/// Controllers a gamepad trigger can be bound to, in menu order.
+pub const GAMEPAD_DEVICES: &[(&str, GamepadDevice)] = &[
+    ("Any controller", GamepadDevice::Generic),
+    ("Xbox", GamepadDevice::Xbox),
+    ("PlayStation", GamepadDevice::PlayStation),
+    ("Switch Pro", GamepadDevice::SwitchPro),
+];
+
+pub fn gamepad_device_index(d: GamepadDevice) -> usize {
+    GAMEPAD_DEVICES.iter().position(|(_, x)| *x == d).unwrap_or(0)
+}
 
 pub fn trigger_index(t: &Trigger) -> usize {
     match t {
@@ -101,6 +113,7 @@ pub fn trigger_index(t: &Trigger) -> usize {
         Trigger::MouseUp { .. } => 7,
         Trigger::AfterDelay { .. } => 8,
         Trigger::KeyPress { .. } => 9,
+        Trigger::GamepadPress { .. } => 10,
     }
 }
 
@@ -120,7 +133,11 @@ pub fn trigger_of_index(i: usize, prev: &Trigger) -> Trigger {
         6 => Trigger::MouseDown { delay_ms: d },
         7 => Trigger::MouseUp { delay_ms: d },
         8 => Trigger::AfterDelay { delay_ms: d },
-        _ => Trigger::KeyPress { keys: if let Trigger::KeyPress { keys } = prev { keys.clone() } else { "Space".into() } },
+        9 => Trigger::KeyPress { keys: if let Trigger::KeyPress { keys } = prev { keys.clone() } else { "Space".into() } },
+        _ => match prev {
+            Trigger::GamepadPress { .. } => prev.clone(),
+            _ => Trigger::GamepadPress { device: GamepadDevice::Generic, buttons: "A".into() },
+        },
     }
 }
 
@@ -149,12 +166,26 @@ pub fn with_delay(t: &Trigger, ms: u32) -> Trigger {
 pub fn trigger_label(t: &Trigger) -> String {
     match t {
         Trigger::KeyPress { keys } if !keys.is_empty() => format!("Key {keys}"),
+        Trigger::GamepadPress { buttons, .. } if !buttons.is_empty() => format!("Gamepad {buttons}"),
         Trigger::AfterDelay { delay_ms } => format!("After delay {delay_ms}ms"),
         other => TRIGGERS[trigger_index(other)].to_string(),
     }
 }
 
-pub const ACTIONS: &[&str] = &["Navigate to", "Back", "Open overlay", "Swap overlay", "Close overlay", "Scroll to", "Open link", "Change to"];
+pub const ACTIONS: &[&str] = &[
+    "Navigate to",
+    "Back",
+    "Open overlay",
+    "Swap overlay",
+    "Close overlay",
+    "Scroll to",
+    "Open link",
+    "Change to",
+    "Set variable",
+    "Set variable mode",
+    "Conditional",
+    "Control video",
+];
 
 pub fn action_index(a: &Action) -> usize {
     match a {
@@ -166,6 +197,10 @@ pub fn action_index(a: &Action) -> usize {
         Action::ScrollTo { .. } => 5,
         Action::OpenUrl { .. } => 6,
         Action::ChangeTo { .. } => 7,
+        Action::SetVariable { .. } => 8,
+        Action::SetVariableMode { .. } => 9,
+        Action::Conditional { .. } => 10,
+        Action::MediaControl { .. } => 11,
     }
 }
 
@@ -175,13 +210,15 @@ pub fn action_dest(a: &Action) -> Option<NodeId> {
         | Action::OpenOverlay { dest, .. }
         | Action::SwapOverlay { dest }
         | Action::ScrollTo { dest, .. }
-        | Action::ChangeTo { dest } => Some(*dest),
+        | Action::ChangeTo { dest }
+        | Action::MediaControl { dest, .. } => Some(*dest),
         _ => None,
     }
 }
 
 /// A new action of the i-th kind, keeping the destination of `prev` when it has one.
-pub fn action_of_index(i: usize, prev: &Action, fallback_dest: NodeId) -> Action {
+/// `doc` supplies the first variable / collection / video for the variable and media actions.
+pub fn action_of_index(doc: &Document, i: usize, prev: &Action, fallback_dest: NodeId) -> Action {
     let dest = action_dest(prev).unwrap_or(fallback_dest);
     match i {
         0 => Action::Navigate { dest, preserve_scroll: false },
@@ -191,13 +228,107 @@ pub fn action_of_index(i: usize, prev: &Action, fallback_dest: NodeId) -> Action
         4 => Action::CloseOverlay,
         5 => Action::ScrollTo { dest, offset: Vec2::ZERO },
         6 => Action::OpenUrl { url: "https://".into(), new_tab: true },
-        _ => Action::ChangeTo { dest },
+        7 => Action::ChangeTo { dest },
+        8 => default_set_variable(doc),
+        9 => {
+            let coll = doc.variable_collections.values().next();
+            Action::SetVariableMode {
+                collection: coll.map(|c| c.id.clone()).unwrap_or_default(),
+                mode: coll.map(|c| c.default_mode.clone()).unwrap_or_default(),
+            }
+        }
+        10 => Action::Conditional { branches: vec![(Expression::boolean(true), vec![Action::Back])], otherwise: Vec::new() },
+        _ => Action::MediaControl { dest: video_layers(doc).first().copied().unwrap_or(dest), op: MediaOp::TogglePlay },
+    }
+}
+
+/// "Set variable" on the first variable, with a value that suits its type.
+pub fn default_set_variable(doc: &Document) -> Action {
+    let first = doc.variable_collections.values().flat_map(|c| c.variables.iter()).find_map(|id| doc.variables.get(id));
+    match first {
+        Some(v) => Action::SetVariable { variable: v.id.clone(), value: default_value_for(v.kind, v, doc) },
+        None => Action::SetVariable { variable: String::new(), value: Expression::number(0.0) },
+    }
+}
+
+/// A starting expression for `kind`: "<variable> + 1" for numbers, a plain literal otherwise.
+pub fn default_value_for(kind: VariableKind, v: &Variable, _doc: &Document) -> Expression {
+    match kind {
+        VariableKind::Number => Expression::binary(BinaryOp::Add, Expression::var(v.id.clone()), Expression::number(1.0)),
+        VariableKind::String => Expression::text(""),
+        VariableKind::Boolean => Expression::logical_not(Expression::var(v.id.clone())),
+        VariableKind::Color => Expression::Literal(ExprValue::Color(Color::BLACK)),
+    }
+}
+
+/// Layers with a video fill, in document order.
+pub fn video_layers(doc: &Document) -> Vec<NodeId> {
+    doc.nodes.values().filter(|n| !n.prototype.videos.is_empty()).map(|n| n.id).collect()
+}
+
+pub const MEDIA_OPS: &[&str] = &["Play", "Pause", "Toggle play/pause", "Mute", "Unmute", "Toggle mute", "Skip by", "Skip to time", "Loop", "Don't loop"];
+
+pub fn media_op_index(op: &MediaOp) -> usize {
+    match op {
+        MediaOp::Play => 0,
+        MediaOp::Pause => 1,
+        MediaOp::TogglePlay => 2,
+        MediaOp::Mute => 3,
+        MediaOp::Unmute => 4,
+        MediaOp::ToggleMute => 5,
+        MediaOp::SkipBy(_) => 6,
+        MediaOp::SeekTo(_) => 7,
+        MediaOp::SetLoop(true) => 8,
+        MediaOp::SetLoop(false) => 9,
+    }
+}
+
+pub fn media_op_of_index(i: usize, prev: &MediaOp) -> MediaOp {
+    let secs = match prev {
+        MediaOp::SkipBy(s) | MediaOp::SeekTo(s) => *s,
+        _ => 5.0,
+    };
+    match i {
+        0 => MediaOp::Play,
+        1 => MediaOp::Pause,
+        2 => MediaOp::TogglePlay,
+        3 => MediaOp::Mute,
+        4 => MediaOp::Unmute,
+        5 => MediaOp::ToggleMute,
+        6 => MediaOp::SkipBy(secs),
+        7 => MediaOp::SeekTo(secs.max(0.0)),
+        8 => MediaOp::SetLoop(true),
+        _ => MediaOp::SetLoop(false),
     }
 }
 
 /// Whether the action plays an animation (so the editor shows the transition).
 pub fn action_animates(a: &Action) -> bool {
-    !matches!(a, Action::Back | Action::CloseOverlay | Action::OpenUrl { .. })
+    match a {
+        Action::Conditional { branches, otherwise } => {
+            branches.iter().any(|(_, acts)| acts.iter().any(action_animates)) || otherwise.iter().any(action_animates)
+        }
+        Action::Back
+        | Action::CloseOverlay
+        | Action::OpenUrl { .. }
+        | Action::SetVariable { .. }
+        | Action::SetVariableMode { .. }
+        | Action::MediaControl { .. } => false,
+        _ => true,
+    }
+}
+
+/// Calls `f` on every action, descending into conditional branches.
+pub fn walk_actions<'a>(actions: &'a [Action], f: &mut impl FnMut(&'a Action)) {
+    for a in actions {
+        f(a);
+        if let Action::Conditional { branches, otherwise } = a {
+            for (_, acts) in branches {
+                walk_actions(acts, f);
+            }
+            walk_actions(otherwise, f);
+        }
+    }
 }
 
 pub fn action_label(doc: &Document, a: &Action) -> String {
@@ -211,7 +342,70 @@ pub fn action_label(doc: &Document, a: &Action) -> String {
         Action::ScrollTo { dest, .. } => format!("Scroll to {}", name(dest)),
         Action::OpenUrl { url, .. } => format!("Open link {url}"),
         Action::ChangeTo { dest } => format!("Change to {}", name(dest)),
+        Action::SetVariable { variable, value } => format!("Set {} = {}", variable_name(doc, variable), expression_text(doc, value)),
+        Action::SetVariableMode { collection, mode } => {
+            let c = doc.variable_collections.get(collection);
+            let m = c.and_then(|c| c.modes.iter().find(|m| &m.id == mode)).map(|m| m.name.clone()).unwrap_or_else(|| "(missing)".into());
+            format!("Set mode {}: {m}", c.map(|c| c.name.as_str()).unwrap_or("(missing)"))
+        }
+        Action::Conditional { branches, otherwise } => {
+            let first = branches.first().map(|(c, _)| expression_text(doc, c)).unwrap_or_default();
+            let tail = if otherwise.is_empty() { "" } else { ", else" };
+            format!("If {first}{tail}")
+        }
+        Action::MediaControl { dest, op } => format!("{} {}", MEDIA_OPS[media_op_index(op)], name(dest)),
     }
+}
+
+// ------------------------------------------------------------- expressions
+
+pub fn variable_name(doc: &Document, id: &str) -> String {
+    doc.variables.get(id).map(|v| v.name.clone()).unwrap_or_else(|| if id.is_empty() { "(none)".into() } else { "(missing)".into() })
+}
+
+/// Text form of an expression, with variable names.
+pub fn expression_text(doc: &Document, e: &Expression) -> String {
+    e.to_source(&|id| doc.variables.get(id).map(|v| v.name.clone()))
+}
+
+/// Finds a variable id from a name as typed in an expression: exact name or id, else a unique
+/// case-insensitive name, else a unique last segment of a grouped name ("Cart/count" for count).
+pub fn find_variable(doc: &Document, name: &str) -> Option<String> {
+    if doc.variables.contains_key(name) {
+        return Some(name.to_string());
+    }
+    let by = |pred: &dyn Fn(&Variable) -> bool| {
+        let hits: Vec<&Variable> = doc.variables.values().filter(|v| pred(v)).collect();
+        (hits.len() == 1).then(|| hits[0].id.clone())
+    };
+    if let Some(id) = doc.variables.values().find(|v| v.name == name).map(|v| v.id.clone()) {
+        return Some(id);
+    }
+    by(&|v| v.name.eq_ignore_ascii_case(name)).or_else(|| by(&|v| v.name.rsplit('/').next().is_some_and(|last| last.eq_ignore_ascii_case(name))))
+}
+
+/// Parses and type-checks expression text typed in the editor. `expected` is the type the value
+/// must have (the variable's type for Set variable, boolean for conditions).
+pub fn parse_expression_text(doc: &Document, text: &str, expected: Option<VariableKind>) -> Result<Expression, String> {
+    let e = parse_expression(text, &|n| find_variable(doc, n)).map_err(|e| e.to_string())?;
+    let ty = e.type_of(&|id| doc.variables.get(id).map(|v| v.kind))?;
+    match expected {
+        // Anything can be stored in a text variable (numbers and booleans are written out).
+        Some(VariableKind::String) | None => {}
+        Some(k) if ExprType::from(k) != ty => return Err(format!("Expected a {} value, not {}", ExprType::from(k).name(), ty.name())),
+        Some(_) => {}
+    }
+    Ok(e)
+}
+
+/// Same as [`parse_expression_text`] for a condition.
+pub fn parse_condition_text(doc: &Document, text: &str) -> Result<Expression, String> {
+    let e = parse_expression_text(doc, text, None)?;
+    let ty = e.type_of(&|id| doc.variables.get(id).map(|v| v.kind))?;
+    if ty != ExprType::Boolean {
+        return Err(format!("A condition must be true or false, not {}", ty.name()));
+    }
+    Ok(e)
 }
 
 pub const ANIMATIONS: &[&str] = &["Instant", "Dissolve", "Smart animate", "Move in", "Move out", "Push", "Slide in", "Slide out"];
@@ -316,7 +510,7 @@ pub fn connections(doc: &Document, id: NodeId) -> Vec<NodeId> {
     let Some(n) = doc.get(id) else { return Vec::new() };
     let mut out = Vec::new();
     for r in &n.prototype.reactions {
-        for a in &r.actions {
+        walk_actions(&r.actions, &mut |a| {
             if let Action::Navigate { dest, .. } | Action::OpenOverlay { dest, .. } | Action::SwapOverlay { dest } = a {
                 if let Some(f) = top_frame(doc, *dest) {
                     if doc.page_of(f) == doc.page_of(id) && !out.contains(&f) {
@@ -324,7 +518,7 @@ pub fn connections(doc: &Document, id: NodeId) -> Vec<NodeId> {
                     }
                 }
             }
-        }
+        });
     }
     out
 }
@@ -447,11 +641,12 @@ mod tests {
     #[test]
     fn action_round_trips_and_keeps_destination() {
         let prev = Action::Navigate { dest: NodeId(7), preserve_scroll: true };
+        let doc = Document::new("t");
         for i in 0..ACTIONS.len() {
-            assert_eq!(action_index(&action_of_index(i, &prev, NodeId(1))), i);
+            assert_eq!(action_index(&action_of_index(&doc, i, &prev, NodeId(1))), i);
         }
-        assert_eq!(action_dest(&action_of_index(2, &prev, NodeId(1))), Some(NodeId(7)));
-        assert_eq!(action_dest(&action_of_index(0, &Action::Back, NodeId(1))), Some(NodeId(1)));
+        assert_eq!(action_dest(&action_of_index(&doc, 2, &prev, NodeId(1))), Some(NodeId(7)));
+        assert_eq!(action_dest(&action_of_index(&doc, 0, &Action::Back, NodeId(1))), Some(NodeId(1)));
         assert!(!action_animates(&Action::Back) && action_animates(&prev));
     }
 
@@ -491,6 +686,110 @@ mod tests {
         assert_eq!(connections(&d, btn), vec![b, c]);
         assert!(has_interactions(&d, btn));
         assert!(connections(&d, b).is_empty());
+    }
+
+    fn vars_doc() -> Document {
+        let mut d = Document::new("t");
+        d.add_page("p");
+        let mut s = VariableStore::default();
+        let c = s.add_collection("Cart");
+        s.add_variable(&c, "Counter/total", VariableKind::Number).unwrap();
+        s.add_variable(&c, "name", VariableKind::String).unwrap();
+        s.add_variable(&c, "ready", VariableKind::Boolean).unwrap();
+        let _ = s.command().apply(&mut d);
+        d
+    }
+
+    #[test]
+    fn expression_text_resolves_names_ids_and_unique_short_names() {
+        let d = vars_doc();
+        let total = d.variables.values().find(|v| v.name == "Counter/total").unwrap().id.clone();
+        assert_eq!(find_variable(&d, "Counter/total"), Some(total.clone()));
+        assert_eq!(find_variable(&d, &total), Some(total.clone()), "ids work too");
+        assert_eq!(find_variable(&d, "total"), Some(total.clone()), "last segment of a grouped name");
+        assert_eq!(find_variable(&d, "NAME").as_deref(), d.variables.values().find(|v| v.name == "name").map(|v| v.id.as_str()));
+        assert_eq!(find_variable(&d, "nope"), None);
+        let e = parse_expression_text(&d, "{Counter/total} + $total * 2", None).unwrap();
+        assert_eq!(expression_text(&d, &e), "{Counter/total} + {Counter/total} * 2");
+        assert_eq!(variable_name(&d, &total), "Counter/total");
+        assert_eq!(variable_name(&d, "x"), "(missing)");
+        assert_eq!(variable_name(&d, ""), "(none)");
+    }
+
+    #[test]
+    fn expression_text_is_checked_against_the_variable_type() {
+        let d = vars_doc();
+        let ok = |t: &str, k| parse_expression_text(&d, t, k).map(|_| ());
+        assert!(ok("$total + 1", Some(VariableKind::Number)).is_ok());
+        assert!(ok("\"x\"", Some(VariableKind::Number)).unwrap_err().contains("Expected a number"));
+        assert!(ok("$ready", Some(VariableKind::Number)).is_err());
+        assert!(ok("$total + 1", Some(VariableKind::String)).is_ok(), "numbers are written out into text variables");
+        assert!(ok("true", Some(VariableKind::Boolean)).is_ok());
+        assert!(ok("1 +", None).unwrap_err().contains("end of expression"));
+        assert!(ok("$nope", None).unwrap_err().contains("Unknown variable"));
+        assert!(parse_condition_text(&d, "$total > 3 && $ready").is_ok());
+        assert!(parse_condition_text(&d, "$total + 3").unwrap_err().contains("true or false"));
+    }
+
+    #[test]
+    fn new_actions_have_labels_and_defaults() {
+        let d = vars_doc();
+        let total = d.variables.values().find(|v| v.name == "Counter/total").unwrap().id.clone();
+        let set = action_of_index(&d, 8, &Action::Back, NodeId(1));
+        assert_eq!(action_label(&d, &set), "Set Counter/total = {Counter/total} + 1");
+        let mode = action_of_index(&d, 9, &Action::Back, NodeId(1));
+        assert!(action_label(&d, &mode).starts_with("Set mode Cart: "));
+        let cond = action_of_index(&d, 10, &Action::Back, NodeId(1));
+        assert_eq!(action_label(&d, &cond), "If true");
+        let cond = Action::Conditional { branches: vec![(Expression::var(total), vec![])], otherwise: vec![Action::Back] };
+        assert_eq!(action_label(&d, &cond), "If {Counter/total}, else");
+        let media = action_of_index(&d, 11, &Action::Back, NodeId(5));
+        assert_eq!(action_label(&d, &media), "Toggle play/pause (missing)");
+        // nothing animates for variable and media actions; a conditional animates when a branch does
+        assert!(!action_animates(&set) && !action_animates(&mode) && !action_animates(&media));
+        let nav = Action::Navigate { dest: NodeId(1), preserve_scroll: false };
+        let c2 = Action::Conditional { branches: vec![(Expression::boolean(true), vec![nav])], otherwise: vec![] };
+        assert!(action_animates(&c2));
+        // an empty document gives harmless placeholders
+        let empty = Document::new("e");
+        assert!(matches!(action_of_index(&empty, 8, &Action::Back, NodeId(1)), Action::SetVariable { variable, .. } if variable.is_empty()));
+        assert!(matches!(action_of_index(&empty, 9, &Action::Back, NodeId(1)), Action::SetVariableMode { collection, .. } if collection.is_empty()));
+    }
+
+    #[test]
+    fn media_ops_round_trip_through_the_menu_and_keep_seconds() {
+        for i in 0..MEDIA_OPS.len() {
+            assert_eq!(media_op_index(&media_op_of_index(i, &MediaOp::Play)), i);
+        }
+        assert_eq!(media_op_of_index(7, &MediaOp::SkipBy(12.0)), MediaOp::SeekTo(12.0));
+        assert_eq!(media_op_of_index(6, &MediaOp::SeekTo(3.0)), MediaOp::SkipBy(3.0));
+        assert_eq!(media_op_of_index(7, &MediaOp::SkipBy(-4.0)), MediaOp::SeekTo(0.0), "a time is never negative");
+    }
+
+    #[test]
+    fn noodles_follow_navigation_inside_conditionals() {
+        let (mut d, _a, b, c, btn) = doc3();
+        let nav = |dest| Action::Navigate { dest, preserve_scroll: false };
+        d.get_mut(btn).unwrap().prototype.reactions = vec![Reaction {
+            trigger: Trigger::OnClick,
+            actions: vec![Action::Conditional { branches: vec![(Expression::boolean(true), vec![nav(b)])], otherwise: vec![nav(c)] }],
+            transition: None,
+        }];
+        assert_eq!(connections(&d, btn), vec![b, c]);
+        let mut seen = 0;
+        walk_actions(&d.get(btn).unwrap().prototype.reactions[0].actions, &mut |_| seen += 1);
+        assert_eq!(seen, 3, "the conditional and both nested navigations");
+    }
+
+    #[test]
+    fn gamepad_trigger_indexes_and_labels() {
+        let t = trigger_of_index(10, &Trigger::OnClick);
+        assert_eq!(t, Trigger::GamepadPress { device: GamepadDevice::Generic, buttons: "A".into() });
+        assert_eq!(trigger_index(&t), 10);
+        assert_eq!(trigger_label(&t), "Gamepad A");
+        let keep = Trigger::GamepadPress { device: GamepadDevice::Xbox, buttons: "LB".into() };
+        assert_eq!(trigger_of_index(10, &keep), keep);
+        assert_eq!(gamepad_device_index(GamepadDevice::SwitchPro), 3);
     }
 
     #[test]

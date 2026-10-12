@@ -13,9 +13,14 @@ path = "src/main.rs"
 default = ["open-url"]
 # Opens Present links in the system browser (after a confirmation).
 open-url = ["dep:open"]
+# Plays H.264 video fills in Present through Cisco's OpenH264 (C++ sources compiled by the
+# `openh264` crate, so it needs a C++ compiler). Off by default: the default build stays pure Rust
+# and still plays Motion JPEG; other codecs show their poster with an "Unsupported codec" badge.
+video = ["dep:openh264"]
 
 [dependencies]
 open = { version = "5", optional = true }
+openh264 = { version = "0.9", optional = true }
 desigma-doc.workspace = true
 desigma-render.workspace = true
 desigma-fig.workspace = true

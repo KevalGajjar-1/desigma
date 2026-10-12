@@ -863,12 +863,17 @@ pub fn prepare_image(bytes: Vec<u8>) -> Result<(Vec<u8>, u32, u32), String> {
 }
 
 fn place_image(app: &mut App, page: DV) {
-    let Some(path) = rfd::FileDialog::new().add_filter("Images", &IMAGE_EXTENSIONS).pick_file() else { return };
+    let exts: Vec<&str> = IMAGE_EXTENSIONS.iter().chain(crate::video::VIDEO_EXTENSIONS.iter()).copied().collect();
+    let Some(path) = rfd::FileDialog::new().add_filter("Images and video", &exts).pick_file() else { return };
     let Ok(bytes) = std::fs::read(&path) else {
-        app.show_toast("Cannot read image", true);
+        app.show_toast("Cannot read file", true);
         return;
     };
     let name = path.file_stem().and_then(|s| s.to_str()).unwrap_or("Image").to_string();
+    if path.extension().and_then(|e| e.to_str()).is_some_and(crate::video::is_video_extension) {
+        place_video_bytes(app, page, &name, bytes);
+        return;
+    }
     if path.extension().is_some_and(|e| e.eq_ignore_ascii_case("svg")) {
         // Vector layers, centered on the click.
         let parent = create::container_at(&app.doc, app.page, page, &[]);
@@ -885,6 +890,49 @@ fn place_image(app: &mut App, page: DV) {
         return;
     }
     place_image_bytes(app, page, &name, bytes);
+}
+
+/// Embeds a video file and inserts a rectangle showing its poster frame at `page`. The poster is
+/// a normal image fill; a [`desigma_doc::VideoFill`] on the layer's prototype settings makes it a
+/// video in Present (see `crate::video`).
+pub fn place_video_bytes(app: &mut App, page: DV, name: &str, bytes: Vec<u8>) -> Option<NodeId> {
+    if desigma_doc::VideoContainer::sniff(&bytes).is_none() {
+        app.show_toast("Not a supported video file (MP4, MOV or WebM)", true);
+        return None;
+    }
+    let Some((poster, iw, ih)) = crate::video::poster_png(&bytes) else {
+        app.show_toast("Cannot make a poster for this video", true);
+        return None;
+    };
+    let mut n = app.doc.images.len() + 1;
+    while app.doc.images.contains_key(&format!("img-{n}")) || app.doc.images.contains_key(&format!("video-{n}")) {
+        n += 1;
+    }
+    let (poster_key, video_key) = (format!("img-{n}"), format!("video-{n}"));
+    app.doc.images.insert(poster_key.clone(), poster);
+    app.doc.images.insert(video_key.clone(), bytes);
+    let parent = create::container_at(&app.doc, app.page, page, &[]);
+    let inv = app.doc.world_transform(parent).invert()?;
+    let o = inv.apply(page);
+    let id = app.doc.alloc_id();
+    let (w, h) = (iw as f32, ih as f32);
+    let scale = (480.0f32 / w.max(h)).min(1.0);
+    let mut node = desigma_doc::Node::rectangle(id, Rect::new(o.x, o.y, w * scale, h * scale));
+    node.name = name.to_string();
+    node.fills = vec![desigma_doc::Paint {
+        kind: desigma_doc::PaintKind::Image { image_ref: poster_key, scale_mode: desigma_doc::ImageScaleMode::Fill },
+        opacity: 1.0,
+        visible: true,
+        blend: desigma_doc::BlendMode::Normal,
+    }];
+    node.prototype.videos = vec![desigma_doc::VideoFill { paint: 0, source: video_key, autoplay: true, looping: false, muted: true }];
+    let mut tx = Tx::new();
+    let index = app.doc.get(parent).map(|p| p.children.len()).unwrap_or(0);
+    tx.cmd(&mut app.doc, Command::Insert { parent, index, nodes: vec![node] }).ok()?;
+    app.run_tx(tx);
+    app.selection = vec![id];
+    app.tool = Tool::Move;
+    Some(id)
 }
 
 /// Embeds `bytes` and inserts a rectangle filled with the image at `page`.
@@ -1137,5 +1185,40 @@ mod tests {
         assert!((n.size.x / n.size.y - 2.0).abs() < 1e-3);
         app.undo();
         assert_eq!(app.doc.nodes.len(), n0);
+    }
+
+    #[test]
+    fn place_video_makes_a_poster_layer_with_a_video_sidecar() {
+        let (mut app, _a, _b) = app_with_two();
+        let jpeg = |c: u8| {
+            let mut out = Vec::new();
+            let img = image::RgbImage::from_pixel(32, 16, image::Rgb([c, 0, 0]));
+            image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, 95).encode_image(&img).unwrap();
+            out
+        };
+        let mp4 = crate::video::build_mjpeg_mp4(&[jpeg(250), jpeg(10)], 32, 16, 10);
+        let n0 = app.doc.nodes.len();
+        let id = place_video_bytes(&mut app, v2(500.0, 500.0), "clip", mp4.clone()).unwrap();
+        let n = app.doc.get(id).unwrap();
+        assert_eq!(n.name, "clip");
+        assert!((n.size.x / n.size.y - 2.0).abs() < 1e-3);
+        // the paint is a plain image (the poster = first frame), the sidecar points at the video bytes
+        let desigma_doc::PaintKind::Image { image_ref, .. } = &n.fills[0].kind else { panic!() };
+        let poster = image::load_from_memory(&app.doc.images[image_ref]).unwrap().to_rgba8();
+        assert!(poster.get_pixel(4, 4)[0] > 200, "first frame is the poster");
+        let v = &n.prototype.videos[0];
+        assert_eq!((v.paint, v.autoplay, v.looping, v.muted), (0, true, false, true));
+        assert_eq!(app.doc.images[&v.source], mp4);
+        app.undo();
+        assert_eq!(app.doc.nodes.len(), n0);
+        // not a video: refused with a message, nothing inserted
+        assert!(place_video_bytes(&mut app, v2(0.0, 0.0), "x", b"definitely not a video".to_vec()).is_none());
+        assert_eq!(app.doc.nodes.len(), n0);
+        // an unsupported codec still places, with the placeholder poster
+        let mut h264 = mp4;
+        let at = h264.windows(4).position(|w| w == b"jpeg").unwrap();
+        h264[at..at + 4].copy_from_slice(b"avc1");
+        let id = place_video_bytes(&mut app, v2(0.0, 0.0), "h264", h264).unwrap();
+        assert_eq!(app.doc.get(id).unwrap().prototype.videos.len(), 1);
     }
 }

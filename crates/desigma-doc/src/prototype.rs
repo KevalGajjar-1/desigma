@@ -4,6 +4,22 @@
 use crate::{NodeId, Vec2};
 use serde::{Deserialize, Serialize};
 
+// The variable expression language (parser, evaluator, limits) lives in its own file.
+#[path = "prototype_expr.rs"]
+mod expr;
+pub use expr::*;
+
+/// Input device of a key/gamepad trigger (Figma's `device`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum GamepadDevice {
+    Xbox,
+    PlayStation,
+    SwitchPro,
+    /// Any other controller (standard mapping).
+    #[default]
+    Generic,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Trigger {
     OnClick,
@@ -25,9 +41,14 @@ pub enum Trigger {
     AfterDelay {
         delay_ms: u32,
     },
-    /// Key or gamepad press, e.g. "Space", "Ctrl+K".
+    /// Keyboard press, e.g. "Space", "Ctrl+K" (modifiers joined with `+`, any order).
     KeyPress {
         keys: String,
+    },
+    /// Gamepad button press: `buttons` joined with `+` ("A", "DPadUp", "LB+A").
+    GamepadPress {
+        device: GamepadDevice,
+        buttons: String,
     },
 }
 
@@ -122,6 +143,44 @@ pub enum Action {
     ChangeTo {
         dest: NodeId,
     },
+    /// Set a variable (by id) to the value of an expression. Present only:
+    /// the document is never changed.
+    SetVariable {
+        variable: String,
+        value: Expression,
+    },
+    /// Switch a variable collection (by id) to one of its modes (by id) for the
+    /// rest of the Present session.
+    SetVariableMode {
+        collection: String,
+        mode: String,
+    },
+    /// Run the actions of the first branch whose condition holds, else the
+    /// `otherwise` actions ("If / Else if / Else").
+    Conditional {
+        branches: Vec<(Expression, Vec<Action>)>,
+        otherwise: Vec<Action>,
+    },
+    /// Control video playback on `dest` (a layer with a [`VideoFill`]).
+    MediaControl {
+        dest: NodeId,
+        op: MediaOp,
+    },
+}
+
+/// Playback control of a video layer (Figma's media actions plus loop).
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub enum MediaOp {
+    Play,
+    Pause,
+    TogglePlay,
+    Mute,
+    Unmute,
+    ToggleMute,
+    /// Skip forward (positive) or backward (negative) by seconds.
+    SkipBy(f32),
+    SeekTo(f32),
+    SetLoop(bool),
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -150,6 +209,47 @@ pub enum Overflow {
     Both,
 }
 
+/// A video fill, stored as a sidecar of an ordinary image paint.
+///
+/// Decision: no new `PaintKind` variant. Adding one would touch every renderer
+/// (CPU, GPU, SVG/CSS export, .fig export), and a video only plays in Present.
+/// Instead the node keeps a normal `PaintKind::Image` paint at `paint` whose
+/// image is the poster frame (so every renderer and exporter shows it), and
+/// this record says that paint is really a video. The video bytes live in
+/// `Document::images` under `source` (the images map is persisted, copied by
+/// clipboard/library and embedded in files like any other blob).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct VideoFill {
+    /// Index into the node's `fills` of the poster image paint.
+    pub paint: usize,
+    /// Key of the video file bytes in `Document::images`.
+    pub source: String,
+    pub autoplay: bool,
+    #[serde(rename = "loop")]
+    pub looping: bool,
+    pub muted: bool,
+}
+
+/// Container of video bytes by magic number, without decoding anything.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VideoContainer {
+    Mp4,
+    WebM,
+}
+
+impl VideoContainer {
+    /// Sniffs MP4 (`ftyp` box) and WebM/Matroska (EBML header).
+    pub fn sniff(bytes: &[u8]) -> Option<Self> {
+        if bytes.len() >= 12 && &bytes[4..8] == b"ftyp" {
+            Some(VideoContainer::Mp4)
+        } else if bytes.starts_with(&[0x1A, 0x45, 0xDF, 0xA3]) {
+            Some(VideoContainer::WebM)
+        } else {
+            None
+        }
+    }
+}
+
 /// Prototype settings for a frame.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct PrototypeProps {
@@ -158,10 +258,13 @@ pub struct PrototypeProps {
     pub overflow: Overflow,
     /// Children that stay fixed while the frame scrolls.
     pub fixed_children: Vec<NodeId>,
+    /// Video fills of this layer (prototype-only playback).
+    #[serde(default)]
+    pub videos: Vec<VideoFill>,
 }
 
 impl PrototypeProps {
     pub fn is_empty(&self) -> bool {
-        self.reactions.is_empty() && self.overflow == Overflow::None && self.fixed_children.is_empty()
+        self.reactions.is_empty() && self.overflow == Overflow::None && self.fixed_children.is_empty() && self.videos.is_empty()
     }
 }

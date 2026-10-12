@@ -9,6 +9,7 @@ pub mod layoutguide;
 pub mod left;
 pub mod menus;
 pub mod properties;
+pub mod proto_actions;
 pub mod prototype;
 pub mod rail;
 pub mod right;

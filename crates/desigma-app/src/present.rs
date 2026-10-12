@@ -62,6 +62,12 @@ pub struct PresentState {
     pub device_screen: Option<(ERect, f32)>,
     pub pending_url: Option<(String, bool)>,
     pub close: bool,
+    /// The live variables panel (a debugging aid; Figma has none) is open.
+    pub show_vars: bool,
+    /// Screen rect of the variables panel in the last painted frame (clicks on it do not reach the stage).
+    pub vars_rect: ERect,
+    /// Decoded video layers (see `crate::video`).
+    pub videos: crate::video::VideoRuntime,
 }
 
 impl PresentState {
@@ -79,6 +85,9 @@ impl PresentState {
             device_screen: None,
             pending_url: None,
             close: false,
+            show_vars: false,
+            vars_rect: ERect::NOTHING,
+            videos: Default::default(),
         }
     }
 
@@ -88,6 +97,7 @@ impl PresentState {
         self.drag = None;
         self.smart = None;
         self.pending_url = None;
+        self.videos = Default::default();
     }
 
     /// Screen position of the center of `node` in the current frame (for tests).
@@ -269,6 +279,30 @@ fn key_name(key: egui::Key, m: egui::Modifiers) -> String {
     parts.join("+")
 }
 
+/// Keyboard stand-in for a game controller (there is no pure-Rust controller backend in the
+/// build): Alt+Shift with Z X C V = A B X Y, Q E = LB RB, arrows = D-pad, Enter = Start,
+/// Backspace = Back. Keeps gamepad triggers testable without hardware and clear of key triggers.
+pub fn gamepad_button_for_key(key: egui::Key, m: egui::Modifiers) -> Option<&'static str> {
+    if !(m.alt && m.shift) {
+        return None;
+    }
+    Some(match key {
+        egui::Key::Z => "A",
+        egui::Key::X => "B",
+        egui::Key::C => "X",
+        egui::Key::V => "Y",
+        egui::Key::Q => "LB",
+        egui::Key::E => "RB",
+        egui::Key::ArrowUp => "DPadUp",
+        egui::Key::ArrowDown => "DPadDown",
+        egui::Key::ArrowLeft => "DPadLeft",
+        egui::Key::ArrowRight => "DPadRight",
+        egui::Key::Enter => "Start",
+        egui::Key::Backspace => "Back",
+        _ => return None,
+    })
+}
+
 /// Whether a link may be opened (web and mail links only).
 pub fn url_allowed(url: &str) -> bool {
     let u = url.trim().to_ascii_lowercase();
@@ -338,6 +372,17 @@ pub fn show(app: &mut App, ui: &mut Ui) {
         let s = st.start;
         st.restart(&app.doc, s);
     }
+    // Variables: a small toggle for the live values panel (hidden when the file has no variables).
+    if !app.doc.variables.is_empty() {
+        let vb = ERect::from_min_size(Pos2::new(rb.right() + 8.0, rb.top()), EV::new(76.0, 24.0));
+        record(ui, "present-vars-toggle", vb);
+        let vr = ui.interact(vb, ui.id().with("present-vars"), Sense::click());
+        widgets::button_bg(&p, vb, &vr, st.show_vars, theme::cr(theme::RADIUS_MEDIUM));
+        p.text(vb.center(), Align2::CENTER_CENTER, "Variables", theme::font_body(), if st.show_vars { theme::TEXT } else { theme::TEXT_SECONDARY });
+        if vr.on_hover_text("Show live variable values").clicked() {
+            st.show_vars = !st.show_vars;
+        }
+    }
     let cb = ERect::from_min_size(Pos2::new(bar.right() - 40.0, bar.top() + 8.0), EV::splat(32.0));
     record(ui, "present-close", cb);
     let cr = ui.interact(cb, ui.id().with("present-close"), Sense::click());
@@ -372,7 +417,7 @@ pub fn show(app: &mut App, ui: &mut Ui) {
     let over_widget = widgets::pointer_over_popup(&ctx);
     let (pos, pressed, down, wheel, events) =
         ctx.input(|i| (i.pointer.latest_pos(), i.pointer.primary_pressed(), i.pointer.primary_down(), i.smooth_scroll_delta, i.events.clone()));
-    let in_area = pos.filter(|q| area.contains(*q) && !over_widget);
+    let in_area = pos.filter(|q| area.contains(*q) && !over_widget && !(st.show_vars && st.vars_rect.contains(*q)));
     let target = in_area.and_then(|q| target_at(&st, q, now));
     st.player.pointer_move(target);
     if let Some(q) = in_area {
@@ -388,10 +433,15 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                 d.moved = true;
                 d.scrolling = !st.player.drag(d.target);
             }
-            if d.moved && d.scrolling {
-                let frame = d.target.and_then(|t| st.player.top_frame_of(t)).unwrap_or(st.player.current);
+            if d.moved {
                 let delta = (d.last - q) / scale;
-                st.player.scroll_by(frame, Vec2::new(delta.x, delta.y));
+                if d.scrolling {
+                    let frame = d.target.and_then(|t| st.player.top_frame_of(t)).unwrap_or(st.player.current);
+                    st.player.scroll_by(frame, Vec2::new(delta.x, delta.y));
+                } else {
+                    // On drag: a dragged overlay follows the pointer, Scroll to follows it too
+                    st.player.drag_by(Vec2::new(delta.x, delta.y));
+                }
             }
             d.last = q;
             st.drag = Some(d);
@@ -416,7 +466,10 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                     st.close = true;
                 }
             } else if st.pending_url.is_none() {
-                st.player.key(&key_name(key, modifiers));
+                match gamepad_button_for_key(key, modifiers) {
+                    Some(button) => st.player.gamepad(GamepadDevice::Generic, button),
+                    None => st.player.key(&key_name(key, modifiers)),
+                }
             }
         }
     }
@@ -430,7 +483,14 @@ pub fn show(app: &mut App, ui: &mut Ui) {
     }
 
     // ---- paint
+    st.videos.update(&mut st.player, now);
     paint_stage(&mut st, &ctx, &p, stage, px, scale, now, app);
+    paint_video_badges(&st, &p.with_clip_rect(stage));
+    if st.show_vars {
+        st.vars_rect = paint_vars_panel(ui, &st.player, area);
+    } else {
+        st.vars_rect = ERect::NOTHING;
+    }
     if let Some((url, _)) = st.pending_url.clone() {
         let (open, cancel) = confirm_bar(ui, full, &url);
         if cancel {
@@ -479,7 +539,7 @@ fn target_at(st: &PresentState, pos: Pos2, now: f64) -> Option<NodeId> {
     for o in pl.overlays.iter().rev().filter(|o| !o.closing()) {
         let sz = pl.size_of(o.frame);
         let poseoff = o.transition.map(|t| geom::overlay_pose(t.kind, o.shown(now), sz).offset).unwrap_or(Vec2::ZERO);
-        let origin = st.stage.min + EV::new((o.origin.x + poseoff.x) * st.scale, (o.origin.y + poseoff.y) * st.scale);
+        let origin = st.stage.min + EV::new((o.origin.x + o.drag.x + poseoff.x) * st.scale, (o.origin.y + o.drag.y + poseoff.y) * st.scale);
         let local = Vec2::new((pos.x - origin.x) / st.scale, (pos.y - origin.y) / st.scale);
         if let Some(h) = hit_layer(&pl.doc, o.frame, local, pl.scroll_of(o.frame)) {
             return Some(h);
@@ -563,13 +623,107 @@ fn paint_stage(st: &mut PresentState, ctx: &Context, p: &egui::Painter, stage: E
         let sz = st.player.size_of(o.frame);
         let pose = geom::overlay_pose(o.transition.map(|t| t.kind).unwrap_or(TransitionKind::Dissolve), shown, sz);
         let rect = ERect::from_min_size(
-            stage.min + EV::new((o.origin.x + pose.offset.x) * scale, (o.origin.y + pose.offset.y) * scale),
+            stage.min + EV::new((o.origin.x + o.drag.x + pose.offset.x) * scale, (o.origin.y + o.drag.y + pose.offset.y) * scale),
             EV::new(sz.x * scale, sz.y * scale),
         );
         if let Some(l) = st.layers(ctx, None, 0, o.frame, px) {
             draw_layers(&pc, &l, rect, scroll_of(st, o.frame), pose.alpha);
         }
     }
+}
+
+/// "Unsupported codec" pill over the poster of every video this build cannot play.
+fn paint_video_badges(st: &PresentState, p: &egui::Painter) {
+    let pl = &st.player;
+    for (node, reason) in st.videos.unsupported_nodes() {
+        let Some(frame) = pl.top_frame_of(node).filter(|f| *f == pl.current) else { continue };
+        let r = crate::proto::player::rect_in_frame(&pl.doc, node, frame);
+        let s = pl.scroll_of(frame);
+        let min = st.stage.min + EV::new((r.x - s.x) * st.scale, (r.y - s.y) * st.scale);
+        let rect = ERect::from_min_size(min, EV::new(r.w * st.scale, r.h * st.scale));
+        let font = theme::font_body();
+        let w = widgets::text_width(p, &reason, &font) + 24.0;
+        let pill = ERect::from_center_size(rect.center(), EV::new(w.min(rect.width().max(40.0)), 26.0));
+        p.rect_filled(pill, theme::cr(13), Color32::from_black_alpha(190));
+        let shown = widgets::elide(p, &reason, &font, pill.width() - 16.0);
+        p.text(pill.center(), Align2::CENTER_CENTER, shown, font, Color32::WHITE);
+    }
+}
+
+/// Width of the variables panel.
+const VARS_W: f32 = 264.0;
+const VARS_ROW_H: f32 = 22.0;
+
+/// The live variables panel: every variable with the value it has right now (changed ones in
+/// brand blue), the mode of each collection and the last action errors. Read only; the document
+/// is never touched. Returns its screen rect.
+fn paint_vars_panel(ui: &mut Ui, player: &Player, area: ERect) -> ERect {
+    let rows = player.variable_rows();
+    let mut h = 44.0 + 8.0;
+    let mut last_coll: Option<&str> = None;
+    for r in &rows {
+        if last_coll != Some(r.collection.as_str()) {
+            h += 26.0;
+            last_coll = Some(&r.collection);
+        }
+        h += VARS_ROW_H;
+    }
+    if rows.is_empty() {
+        h += VARS_ROW_H;
+    }
+    if !player.errors.is_empty() {
+        h += 12.0 + player.errors.len().min(4) as f32 * 16.0;
+    }
+    let h = h.min(area.height() - 16.0).max(60.0);
+    let rect = ERect::from_min_size(Pos2::new(area.right() - VARS_W - 12.0, area.top() + 8.0), EV::new(VARS_W, h));
+    record(ui, "present-vars-panel", rect);
+    let p = ui.painter().clone();
+    widgets::elevation_shadow(&p, rect, theme::MENU_RADIUS);
+    p.rect_filled(rect, theme::cr(theme::MENU_RADIUS), theme::BG_MENU);
+    p.rect_stroke(rect, theme::cr(theme::MENU_RADIUS), egui::Stroke::new(1.0, theme::BORDER_MENU), egui::StrokeKind::Inside);
+    let pc = p.with_clip_rect(rect);
+    pc.text(Pos2::new(rect.left() + 16.0, rect.top() + 22.0), Align2::LEFT_CENTER, "Variables", theme::font_body_strong(), theme::TEXT);
+    pc.text(Pos2::new(rect.right() - 16.0, rect.top() + 22.0), Align2::RIGHT_CENTER, "live, not saved", theme::font_small(), theme::TEXT_TERTIARY);
+    widgets::hline(&pc, rect.left(), rect.right(), rect.top() + 43.0, theme::BORDER_MENU);
+    let mut y = rect.top() + 44.0 + 4.0;
+    let mut last_coll: Option<&str> = None;
+    if rows.is_empty() {
+        pc.text(
+            Pos2::new(rect.left() + 16.0, y + VARS_ROW_H / 2.0),
+            Align2::LEFT_CENTER,
+            "No variables in this file",
+            theme::font_body(),
+            theme::TEXT_TERTIARY,
+        );
+        y += VARS_ROW_H;
+    }
+    for r in &rows {
+        if last_coll != Some(r.collection.as_str()) {
+            last_coll = Some(&r.collection);
+            let label = widgets::elide(&pc, &r.collection, &theme::font_small_medium(), VARS_W - 120.0);
+            pc.text(Pos2::new(rect.left() + 16.0, y + 15.0), Align2::LEFT_CENTER, label, theme::font_small_medium(), theme::TEXT_SECONDARY);
+            pc.text(Pos2::new(rect.right() - 16.0, y + 15.0), Align2::RIGHT_CENTER, &r.mode, theme::font_small(), theme::TEXT_TERTIARY);
+            y += 26.0;
+        }
+        let name = widgets::elide(&pc, &r.name, &theme::font_body(), VARS_W - 32.0 - 96.0);
+        pc.text(Pos2::new(rect.left() + 16.0, y + VARS_ROW_H / 2.0), Align2::LEFT_CENTER, name, theme::font_body(), theme::TEXT);
+        let col = if r.changed { theme::BG_BRAND } else { theme::TEXT_SECONDARY };
+        let val = widgets::elide(&pc, &r.value, &theme::font_body(), 92.0);
+        pc.text(Pos2::new(rect.right() - 16.0, y + VARS_ROW_H / 2.0), Align2::RIGHT_CENTER, val, theme::font_body(), col);
+        y += VARS_ROW_H;
+    }
+    if !player.errors.is_empty() {
+        y += 6.0;
+        widgets::hline(&pc, rect.left(), rect.right(), y, theme::BORDER_MENU);
+        y += 6.0;
+        let skip = player.errors.len().saturating_sub(4);
+        for e in player.errors.iter().skip(skip) {
+            let t = widgets::elide(&pc, e, &theme::font_small(), VARS_W - 32.0);
+            pc.text(Pos2::new(rect.left() + 16.0, y + 8.0), Align2::LEFT_CENTER, t, theme::font_small(), theme::DANGER);
+            y += 16.0;
+        }
+    }
+    rect
 }
 
 /// Paints a Smart Animate frame; false when the frames share no layers.
@@ -646,6 +800,16 @@ mod tests {
         // tiny frames do not blow up past the maximum scale
         let (_, s) = stage_layout(avail, Vec2::new(10.0, 10.0), 32.0);
         assert_eq!(s, theme::PRESENT_MAX_SCALE);
+    }
+
+    #[test]
+    fn keyboard_stands_in_for_a_controller_only_with_alt_shift() {
+        let both = egui::Modifiers { alt: true, shift: true, ..Default::default() };
+        assert_eq!(gamepad_button_for_key(egui::Key::Z, both), Some("A"));
+        assert_eq!(gamepad_button_for_key(egui::Key::ArrowUp, both), Some("DPadUp"));
+        assert_eq!(gamepad_button_for_key(egui::Key::Z, egui::Modifiers::NONE), None);
+        assert_eq!(gamepad_button_for_key(egui::Key::Z, egui::Modifiers::SHIFT), None);
+        assert_eq!(gamepad_button_for_key(egui::Key::K, both), None);
     }
 
     #[test]

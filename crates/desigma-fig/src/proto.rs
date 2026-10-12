@@ -7,6 +7,16 @@
 //! `.fig` files store the same data under `prototypeInteractions`;
 //! [`convert_fig`] rewrites it into the REST shape (tolerantly) so a single
 //! importer handles both.
+//!
+//! Variable-driven interactions map too: `SET_VARIABLE` (`variableId`,
+//! `variableValue`), `SET_VARIABLE_MODE` (`variableCollectionId`,
+//! `variableModeId`) and `CONDITIONAL` (`conditionalBlocks`, also read as
+//! `conditionalActions`; a block without a condition is the else branch).
+//! `variableValue` is Figma's `VariableData`: literals, `VARIABLE_ALIAS`
+//! references and `EXPRESSION`s (`expressionFunction` + `expressionArguments`).
+//! Variable and mode ids are kept exactly as Figma writes them. Triggers
+//! `ON_KEY_DOWN` / `KEY_DOWN` carry `keyCodes` (modifiers included) and a
+//! `device`; a non-keyboard device becomes a gamepad trigger.
 
 use crate::kiwi::clean_f32;
 use desigma_doc::*;
@@ -67,6 +77,106 @@ pub fn key_code(name: &str) -> Option<u32> {
     }
 }
 
+const GAMEPAD_BUTTONS: &[&str] =
+    &["A", "B", "X", "Y", "LB", "RB", "LT", "RT", "Back", "Start", "L3", "R3", "DPadUp", "DPadDown", "DPadLeft", "DPadRight", "Home"];
+
+/// Name of a standard-mapping gamepad button index ("A", "DPadUp", "#40" otherwise).
+pub fn gamepad_button_name(code: u32) -> String {
+    GAMEPAD_BUTTONS.get(code as usize).map(|n| (*n).to_string()).unwrap_or_else(|| format!("#{code}"))
+}
+
+/// Inverse of [`gamepad_button_name`].
+pub fn gamepad_button_code(name: &str) -> Option<u32> {
+    if let Some(i) = GAMEPAD_BUTTONS.iter().position(|n| n.eq_ignore_ascii_case(name)) {
+        return Some(i as u32);
+    }
+    name.strip_prefix('#')?.parse().ok()
+}
+
+fn device_of(name: Option<&str>) -> Option<GamepadDevice> {
+    Some(match name? {
+        "KEYBOARD" => return None,
+        "XBOX_ONE" => GamepadDevice::Xbox,
+        "PS4" => GamepadDevice::PlayStation,
+        "SWITCH_PRO" => GamepadDevice::SwitchPro,
+        _ => GamepadDevice::Generic,
+    })
+}
+
+fn device_name(d: GamepadDevice) -> &'static str {
+    match d {
+        GamepadDevice::Xbox => "XBOX_ONE",
+        GamepadDevice::PlayStation => "PS4",
+        GamepadDevice::SwitchPro => "SWITCH_PRO",
+        GamepadDevice::Generic => "UNKNOWN_CONTROLLER",
+    }
+}
+
+// ------------------------------------------------------------- expressions
+
+/// Figma `VariableData` -> [`Expression`]. Depth-limited; `None` for anything
+/// unsupported (the whole action is then dropped, like other unknown actions).
+fn expression(v: &Value, depth: usize) -> Option<Expression> {
+    if depth > MAX_DEPTH {
+        return None;
+    }
+    let lit = |v: &Value| -> Option<ExprValue> {
+        Some(match v {
+            Value::Bool(b) => ExprValue::Boolean(*b),
+            Value::Number(n) => ExprValue::Number(n.as_f64()?),
+            Value::String(s) => ExprValue::String(s.clone()),
+            Value::Object(_) => ExprValue::Color(crate::rest_import::color(v)?),
+            _ => return None,
+        })
+    };
+    let e = match v {
+        Value::Object(_) => match s(v, "type")? {
+            "VARIABLE_ALIAS" => Expression::Variable(s(v, "id")?.to_string()),
+            "EXPRESSION" => expression_call(v.get("value")?, depth)?,
+            "BOOLEAN" | "FLOAT" | "STRING" | "COLOR" => Expression::Literal(lit(v.get("value")?)?),
+            _ => return None,
+        },
+        other => Expression::Literal(lit(other)?),
+    };
+    e.within_limits().then_some(e)
+}
+
+fn expression_call(v: &Value, depth: usize) -> Option<Expression> {
+    let args: Vec<Expression> = v.get("expressionArguments")?.as_array()?.iter().map(|a| expression(a, depth + 1)).collect::<Option<_>>()?;
+    let op = match s(v, "expressionFunction")? {
+        "ADDITION" => BinaryOp::Add,
+        "SUBTRACTION" => BinaryOp::Sub,
+        "MULTIPLICATION" => BinaryOp::Mul,
+        "DIVISION" => BinaryOp::Div,
+        "MODULO" => BinaryOp::Rem,
+        "EQUALS" => BinaryOp::Eq,
+        "NOT_EQUAL" => BinaryOp::Ne,
+        "LESS_THAN" => BinaryOp::Lt,
+        "LESS_THAN_OR_EQUAL" => BinaryOp::Le,
+        "GREATER_THAN" => BinaryOp::Gt,
+        "GREATER_THAN_OR_EQUAL" => BinaryOp::Ge,
+        "AND" => BinaryOp::And,
+        "OR" => BinaryOp::Or,
+        "NOT" => {
+            let [a] = <[Expression; 1]>::try_from(args).ok()?;
+            return Some(Expression::logical_not(a));
+        }
+        "NEGATE" => {
+            let [a] = <[Expression; 1]>::try_from(args).ok()?;
+            return Some(Expression::Unary { op: UnaryOp::Neg, arg: Box::new(a) });
+        }
+        "TERNARY" => {
+            let [c, t, e] = <[Expression; 3]>::try_from(args).ok()?;
+            return Some(Expression::Ternary { cond: Box::new(c), then: Box::new(t), otherwise: Box::new(e) });
+        }
+        _ => return None,
+    };
+    let mut it = args.into_iter();
+    let first = it.next()?;
+    // n-ary calls fold to the left: a + b + c
+    Some(it.fold(first, |acc, x| Expression::binary(op, acc, x)))
+}
+
 // ------------------------------------------------------------------- import
 
 /// Subset of a node's JSON that carries prototype data (None if there is none).
@@ -118,12 +228,14 @@ fn trigger(t: &Value) -> Option<Trigger> {
         "MOUSE_LEAVE" => Trigger::MouseLeave { delay_ms: delay() },
         "MOUSE_DOWN" => Trigger::MouseDown { delay_ms: delay() },
         "MOUSE_UP" => Trigger::MouseUp { delay_ms: delay() },
-        "ON_KEY_DOWN" => {
-            let mut keys: Vec<String> = t
-                .get("keyCodes")
-                .and_then(Value::as_array)
-                .map(|a| a.iter().filter_map(Value::as_u64).map(|c| key_name(c as u32)).collect())
-                .unwrap_or_default();
+        "ON_KEY_DOWN" | "KEY_DOWN" => {
+            let codes: Vec<u32> =
+                t.get("keyCodes").and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_u64).map(|c| c as u32).collect()).unwrap_or_default();
+            if let Some(device) = device_of(s(t, "device")) {
+                let buttons: Vec<String> = codes.iter().map(|c| gamepad_button_name(*c)).collect();
+                return Some(Trigger::GamepadPress { device, buttons: buttons.join("+") });
+            }
+            let mut keys: Vec<String> = codes.iter().map(|c| key_name(*c)).collect();
             if keys.is_empty() {
                 if let Some(k) = s(t, "keys") {
                     keys.push(k.into());
@@ -203,6 +315,15 @@ fn overlay_position(name: Option<&str>) -> OverlayPosition {
     }
 }
 
+/// The transition of an action, or of the first action inside its conditional blocks.
+fn first_transition(a: &Value) -> Option<Transition> {
+    if let Some(t) = a.get("transition").and_then(transition) {
+        return Some(t);
+    }
+    let blocks = a.get("conditionalBlocks").or_else(|| a.get("conditionalActions"))?.as_array()?;
+    blocks.iter().filter_map(|b| b.get("actions")?.as_array()).flatten().find_map(first_transition)
+}
+
 /// Maps source ids to ids, looks up destination presentation.
 pub(crate) struct Resolver<'a> {
     pub ids: &'a BTreeMap<String, NodeId>,
@@ -255,8 +376,51 @@ impl Resolver<'_> {
             "BACK" => Some(Action::Back),
             "CLOSE" => Some(Action::CloseOverlay),
             "URL" => Some(Action::OpenUrl { url: s(a, "url")?.to_string(), new_tab: b(a, "openInNewTab").unwrap_or(true) }),
+            "SET_VARIABLE" => Some(Action::SetVariable { variable: s(a, "variableId")?.to_string(), value: expression(a.get("variableValue")?, 0)? }),
+            "SET_VARIABLE_MODE" => {
+                Some(Action::SetVariableMode { collection: s(a, "variableCollectionId")?.to_string(), mode: s(a, "variableModeId")?.to_string() })
+            }
+            "CONDITIONAL" => self.conditional(a),
+            "UPDATE_MEDIA_RUNTIME" => {
+                let (dest, _) = self.dest(a)?;
+                let secs = |k: &str| f(a, k).unwrap_or(0.0) as f32;
+                let op = match s(a, "mediaAction")? {
+                    "PLAY" => MediaOp::Play,
+                    "PAUSE" => MediaOp::Pause,
+                    "TOGGLE_PLAY_PAUSE" => MediaOp::TogglePlay,
+                    "MUTE" => MediaOp::Mute,
+                    "UNMUTE" => MediaOp::Unmute,
+                    "TOGGLE_MUTE_UNMUTE" => MediaOp::ToggleMute,
+                    "SKIP_FORWARD" => MediaOp::SkipBy(secs("amountToSkip")),
+                    "SKIP_BACKWARD" => MediaOp::SkipBy(-secs("amountToSkip")),
+                    "SKIP_TO" => MediaOp::SeekTo(secs("newTimestamp")),
+                    "SET_LOOP" => MediaOp::SetLoop(b(a, "loop").unwrap_or(true)),
+                    _ => return None,
+                };
+                Some(Action::MediaControl { dest, op })
+            }
             _ => None,
         }
+    }
+
+    fn actions(&self, list: Option<&Value>) -> Vec<Action> {
+        list.and_then(Value::as_array).map(|l| l.iter().filter_map(|a| self.action(a)).collect()).unwrap_or_default()
+    }
+
+    /// `CONDITIONAL`: blocks with a condition are the if / else-if branches, a
+    /// block without one is the else.
+    fn conditional(&self, a: &Value) -> Option<Action> {
+        let blocks = a.get("conditionalBlocks").or_else(|| a.get("conditionalActions"))?.as_array()?;
+        let mut branches = Vec::new();
+        let mut otherwise = Vec::new();
+        for blk in blocks {
+            let acts = self.actions(blk.get("actions"));
+            match blk.get("condition").filter(|c| !c.is_null()) {
+                Some(c) => branches.push((expression(c, 0)?, acts)),
+                None => otherwise = acts,
+            }
+        }
+        (!branches.is_empty() || !otherwise.is_empty()).then_some(Action::Conditional { branches, otherwise })
     }
 
     fn reaction(&self, r: &Value) -> Option<Reaction> {
@@ -270,7 +434,7 @@ impl Resolver<'_> {
         for a in list {
             let Some(act) = self.action(a) else { continue };
             if tr.is_none() {
-                tr = a.get("transition").and_then(transition);
+                tr = first_transition(a);
             }
             actions.push(act);
         }
@@ -333,6 +497,10 @@ fn trigger_json(t: &Trigger) -> Value {
         Trigger::KeyPress { keys } => {
             let codes: Vec<u32> = keys.split('+').filter_map(|k| key_code(k.trim())).collect();
             json!({"type": "ON_KEY_DOWN", "device": "KEYBOARD", "keyCodes": codes})
+        }
+        Trigger::GamepadPress { device, buttons } => {
+            let codes: Vec<u32> = buttons.split('+').filter_map(|k| gamepad_button_code(k.trim())).collect();
+            json!({"type": "ON_KEY_DOWN", "device": device_name(*device), "keyCodes": codes})
         }
     }
 }
@@ -437,8 +605,103 @@ fn action_json(doc: &Document, a: &Action, tr: Option<&Transition>) -> Value {
             m.insert("url".into(), url.clone().into());
             m.insert("openInNewTab".into(), (*new_tab).into());
         }
+        Action::SetVariable { variable, value } => {
+            m.insert("type".into(), "SET_VARIABLE".into());
+            m.insert("variableId".into(), variable.clone().into());
+            m.insert("variableValue".into(), expression_json(doc, value));
+        }
+        Action::SetVariableMode { collection, mode } => {
+            m.insert("type".into(), "SET_VARIABLE_MODE".into());
+            m.insert("variableCollectionId".into(), collection.clone().into());
+            m.insert("variableModeId".into(), mode.clone().into());
+        }
+        Action::Conditional { branches, otherwise } => {
+            m.insert("type".into(), "CONDITIONAL".into());
+            let list = |acts: &[Action]| Value::Array(acts.iter().map(|x| action_json(doc, x, tr)).collect());
+            let mut blocks: Vec<Value> = branches.iter().map(|(c, acts)| json!({"condition": expression_json(doc, c), "actions": list(acts)})).collect();
+            if !otherwise.is_empty() {
+                blocks.push(json!({"actions": list(otherwise)}));
+            }
+            m.insert("conditionalBlocks".into(), Value::Array(blocks));
+        }
+        Action::MediaControl { dest, op } => {
+            m.insert("type".into(), "UPDATE_MEDIA_RUNTIME".into());
+            m.insert("destinationId".into(), id(dest).into());
+            let name = match op {
+                MediaOp::Play => "PLAY",
+                MediaOp::Pause => "PAUSE",
+                MediaOp::TogglePlay => "TOGGLE_PLAY_PAUSE",
+                MediaOp::Mute => "MUTE",
+                MediaOp::Unmute => "UNMUTE",
+                MediaOp::ToggleMute => "TOGGLE_MUTE_UNMUTE",
+                MediaOp::SkipBy(x) if *x >= 0.0 => "SKIP_FORWARD",
+                MediaOp::SkipBy(_) => "SKIP_BACKWARD",
+                MediaOp::SeekTo(_) => "SKIP_TO",
+                MediaOp::SetLoop(_) => "SET_LOOP",
+            };
+            m.insert("mediaAction".into(), name.into());
+            match op {
+                MediaOp::SkipBy(x) => {
+                    m.insert("amountToSkip".into(), num(x.abs()));
+                }
+                MediaOp::SeekTo(x) => {
+                    m.insert("newTimestamp".into(), num(*x));
+                }
+                MediaOp::SetLoop(l) => {
+                    m.insert("loop".into(), (*l).into());
+                }
+                _ => {}
+            }
+        }
     }
     Value::Object(m)
+}
+
+fn resolved_type(t: ExprType) -> &'static str {
+    match t {
+        ExprType::Number => "FLOAT",
+        ExprType::String => "STRING",
+        ExprType::Boolean => "BOOLEAN",
+        ExprType::Color => "COLOR",
+    }
+}
+
+/// [`Expression`] -> Figma `VariableData`.
+fn expression_json(doc: &Document, e: &Expression) -> Value {
+    let rt = e.type_of(&|id| doc.variables.get(id).map(|v| v.kind)).map(resolved_type).unwrap_or("FLOAT");
+    let call =
+        |func: &str, args: Vec<Value>| json!({"type": "EXPRESSION", "resolvedType": rt, "value": {"expressionFunction": func, "expressionArguments": args}});
+    match e {
+        Expression::Literal(ExprValue::Number(n)) => json!({"type": "FLOAT", "resolvedType": "FLOAT", "value": n}),
+        Expression::Literal(ExprValue::String(t)) => json!({"type": "STRING", "resolvedType": "STRING", "value": t}),
+        Expression::Literal(ExprValue::Boolean(x)) => json!({"type": "BOOLEAN", "resolvedType": "BOOLEAN", "value": x}),
+        Expression::Literal(ExprValue::Color(c)) => {
+            json!({"type": "COLOR", "resolvedType": "COLOR", "value": {"r": num(c.r), "g": num(c.g), "b": num(c.b), "a": num(c.a)}})
+        }
+        Expression::Variable(id) => json!({"type": "VARIABLE_ALIAS", "resolvedType": rt, "id": id}),
+        Expression::Unary { op, arg } => call(if *op == UnaryOp::Not { "NOT" } else { "NEGATE" }, vec![expression_json(doc, arg)]),
+        Expression::Binary { op, lhs, rhs } => {
+            let func = match op {
+                BinaryOp::Add => "ADDITION",
+                BinaryOp::Sub => "SUBTRACTION",
+                BinaryOp::Mul => "MULTIPLICATION",
+                BinaryOp::Div => "DIVISION",
+                BinaryOp::Rem => "MODULO",
+                BinaryOp::Eq => "EQUALS",
+                BinaryOp::Ne => "NOT_EQUAL",
+                BinaryOp::Lt => "LESS_THAN",
+                BinaryOp::Le => "LESS_THAN_OR_EQUAL",
+                BinaryOp::Gt => "GREATER_THAN",
+                BinaryOp::Ge => "GREATER_THAN_OR_EQUAL",
+                BinaryOp::And => "AND",
+                BinaryOp::Or => "OR",
+            };
+            call(func, vec![expression_json(doc, lhs), expression_json(doc, rhs)])
+        }
+        Expression::Ternary { cond, then, otherwise } => {
+            call("TERNARY", vec![expression_json(doc, cond), expression_json(doc, then), expression_json(doc, otherwise)])
+        }
+    }
 }
 
 fn bg_json(c: &Color) -> Value {
@@ -535,6 +798,9 @@ fn fig_trigger(event: &Value) -> Option<Value> {
     m.insert("delay".into(), ms.into());
     if let Some(codes) = event.get("keyTrigger").and_then(|k| k.get("keyCodes")).and_then(Value::as_array) {
         m.insert("keyCodes".into(), Value::Array(codes.clone()));
+    }
+    if let Some(d) = event.get("keyTrigger").and_then(|k| s(k, "device")) {
+        m.insert("device".into(), d.into());
     }
     Some(Value::Object(m))
 }
