@@ -8,6 +8,7 @@
 //! projects/<project-id>/thumbs/<file-id>.png
 //! trash/<file-id>/...                       restorable until emptied by the user
 //! versions/<file-id>/<n>.desigma, index.json  version history (`versions.rs`)
+//! settings.json                             app settings kept by the editor (the author name for comments)
 //! libraries/<library-id>/<version>.json     published library snapshots (`publish.rs`)
 //! ```
 //!
