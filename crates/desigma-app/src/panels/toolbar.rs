@@ -12,6 +12,7 @@ pub fn tool_icon(t: Tool) -> Icon {
         Tool::Move => Icon::Move,
         Tool::Hand => Icon::Hand,
         Tool::Scale => Icon::Scale,
+        Tool::ShapeBuilder => Icon::Boolean,
         Tool::Frame => Icon::Frame,
         Tool::Section => Icon::Section,
         Tool::Slice => Icon::Slice,

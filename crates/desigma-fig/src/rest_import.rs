@@ -578,7 +578,12 @@ impl Ctx {
                 count: v.get("pointCount").and_then(Value::as_u64).unwrap_or(5).clamp(3, 1000) as u32,
                 inner_ratio: fnum(v, "starInnerRadius").unwrap_or(0.382),
             },
-            "VECTOR" => NodeKind::Vector { paths: fill_geo.clone().unwrap_or_default() },
+            "VECTOR" => {
+                // an editable network when the file carries one; Figma's own outline stays the rendered geometry
+                let network = v.get("vectorNetwork").and_then(crate::vecnet::network_from_json).filter(|n| !n.vertices.is_empty());
+                let paths = fill_geo.clone().or_else(|| network.as_ref().map(|n| n.to_paths())).unwrap_or_default();
+                NodeKind::Vector { paths, network }
+            }
             "TEXT" => NodeKind::Text(text_props(v)),
             "BOOLEAN_OPERATION" => NodeKind::BooleanOp(match fstr(v, "booleanOperation") {
                 Some("SUBTRACT") => BooleanOp::Subtract,
@@ -1076,8 +1081,10 @@ impl Ctx {
         }
         if has("fillGeometry") {
             let g = parse_geometry(farr(set, "fillGeometry"));
-            if let NodeKind::Vector { paths } = &mut n.kind {
+            if let NodeKind::Vector { paths, network } = &mut n.kind {
                 *paths = g.clone();
+                // the new outline replaces what the network described
+                *network = None;
             }
             n.fill_geometry = Some(g).filter(|g| !g.is_empty());
         }

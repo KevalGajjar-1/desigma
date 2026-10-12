@@ -91,7 +91,7 @@ fn shapes_become_rectangles_and_ellipses_with_radius() {
     assert_eq!((k[2].size.x, k[2].size.y), (40.0, 16.0));
     // elliptical corners can't be a Rectangle
     assert!(matches!(k[3].kind, NodeKind::Vector { .. }));
-    let NodeKind::Vector { paths } = &k[4].kind else { panic!("vector expected") };
+    let NodeKind::Vector { paths, .. } = &k[4].kind else { panic!("vector expected") };
     assert!(matches!(paths[0].cmds.last(), Some(PathCmd::Close)));
 }
 
@@ -124,7 +124,7 @@ fn stroke_properties_map_over() {
     assert!(matches!(a.stroke.paints[0].kind, PaintKind::Solid(c) if c.r == 0.0 && c.a == 1.0));
     let b = &k[1];
     assert_eq!((b.stroke.cap, b.stroke.join), (StrokeCap::Square, StrokeJoin::Bevel));
-    let NodeKind::Vector { paths } = &b.kind else { panic!() };
+    let NodeKind::Vector { paths, .. } = &b.kind else { panic!() };
     assert!(paths[0].cmds.iter().any(|c| matches!(c, PathCmd::LineTo(_))));
 }
 
@@ -134,7 +134,7 @@ fn curves_and_even_odd_survive() {
         r##"<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40"><path fill-rule="evenodd" fill="#000" d="M0 0 C10 0 10 10 0 10 Q-5 5 0 0 Z M2 2 L4 2 L4 4 Z"/></svg>"##,
     );
     let n = kids(&doc, id)[0];
-    let NodeKind::Vector { paths } = &n.kind else { panic!() };
+    let NodeKind::Vector { paths, .. } = &n.kind else { panic!() };
     assert_eq!(paths[0].fill_rule, FillRule::EvenOdd);
     assert!(paths[0].cmds.iter().any(|c| matches!(c, PathCmd::CubicTo(..))));
     assert!(paths[0].cmds.iter().any(|c| matches!(c, PathCmd::QuadTo(..))));

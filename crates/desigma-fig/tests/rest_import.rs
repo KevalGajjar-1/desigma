@@ -119,7 +119,7 @@ fn shapes_and_vectors() {
     assert!(matches!(find(&doc, "Hexagon").kind, NodeKind::Polygon { count: 6 }));
     assert!(matches!(find(&doc, "Star").kind, NodeKind::Star { count: 5, .. }));
     match &find(&doc, "Heart").kind {
-        NodeKind::Vector { paths } => {
+        NodeKind::Vector { paths, .. } => {
             assert_eq!(paths.len(), 2);
             assert_eq!(paths[0].fill_rule, FillRule::NonZero);
             assert_eq!(paths[1].fill_rule, FillRule::EvenOdd);

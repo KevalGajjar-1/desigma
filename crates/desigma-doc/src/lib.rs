@@ -19,6 +19,8 @@ mod textmodel;
 mod variables;
 mod variables_apply;
 mod variables_edit;
+pub mod vector;
+mod vector_fit;
 
 pub use comments::*;
 pub use components::*;
@@ -34,6 +36,8 @@ pub use textmodel::*;
 pub use variables::*;
 pub use variables_apply::*;
 pub use variables_edit::*;
+pub use vector::{HandleMirror, VectorNetwork};
+pub use vector_fit::{fit_polyline, Anchor};
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;

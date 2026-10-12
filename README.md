@@ -126,7 +126,7 @@ Every screenshot here is the real app, captured offscreen with its own <code>--s
   <tr>
     <td width="33%" valign="top">
       <h4>🧰 Tools</h4>
-      Move · Hand · Frame · Section · Slice · Rectangle · Line · Arrow · Ellipse · Polygon · Star · Image · Pen · Pencil · Text, with snapping, smart guides and distance labels, multi-select, rotate, alt-drag duplicate and vector point editing.
+      Move · Hand · Frame · Section · Slice · Rectangle · Line · Arrow · Ellipse · Polygon · Star · Image · Pen · Pencil · Text, with snapping, smart guides and distance labels, multi-select, rotate, alt-drag duplicate and vector networks: point editing with bend, paint bucket, marquee and lasso selection, per-vertex corner radius, caps and handle mirroring, plus the shape builder, outline stroke, flatten, simplify, join and split.
     </td>
     <td width="33%" valign="top">
       <h4>📐 Layout</h4>

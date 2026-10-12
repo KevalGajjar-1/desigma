@@ -21,6 +21,7 @@ mod shadow;
 mod shadow_tests;
 mod text;
 mod tiles;
+pub mod vectorops;
 
 use desigma_doc::{resolve_node, Document, Effect, Node, NodeId, NodeKind, Vec2};
 use geom::{node_shape, to_sk_transform, transformed_bounds, Shape};
@@ -430,7 +431,7 @@ impl Renderer<'_> {
         } else if let Some(sh) = &shape {
             if sh.fillable {
                 for p in self.visible_fills(n) {
-                    fill_paths(&self.env, target, &sh.paths, ts, n.size, p, alpha, clip);
+                    fill_paths(&self.env, target, sh.fill_paths(), ts, n.size, p, alpha, clip);
                 }
             }
         }
@@ -501,7 +502,7 @@ impl Renderer<'_> {
         if let Some(sh) = shape {
             if (sh.fillable && !fills.is_empty()) || !strokes.is_empty() || (opaque && sh.fillable) {
                 if sh.fillable && opaque && fills.is_empty() {
-                    for (path, rule) in &sh.paths {
+                    for (path, rule) in sh.fill_paths() {
                         pm.fill_path(path, &black_paint(1.0), *rule, ts2, None);
                     }
                 } else if sh.fillable {
@@ -516,7 +517,7 @@ impl Renderer<'_> {
                             base * p.opacity
                         };
                         let paint = black_paint(a);
-                        for (path, rule) in &sh.paths {
+                        for (path, rule) in sh.fill_paths() {
                             pm.fill_path(path, &paint, *rule, ts2, None);
                         }
                     }
@@ -576,10 +577,12 @@ impl Renderer<'_> {
 
     fn make_stroke(&self, n: &Node, width: f32) -> sk::Stroke {
         let s = &n.stroke;
+        // per-vertex caps are drawn as decorations over a butt-capped stroke
+        let cap = if vectorops::vertex_caps(n).is_some() { desigma_doc::StrokeCap::None } else { s.cap };
         let mut st = sk::Stroke {
             width,
             miter_limit: s.miter_limit.max(1.0),
-            line_cap: match s.cap {
+            line_cap: match cap {
                 desigma_doc::StrokeCap::None => sk::LineCap::Butt,
                 desigma_doc::StrokeCap::Round => sk::LineCap::Round,
                 desigma_doc::StrokeCap::Square => sk::LineCap::Square,
@@ -647,7 +650,7 @@ impl Renderer<'_> {
                 let rounded = n.corner_radii.iter().any(|v| *v > 0.0);
                 let paths = [(path, sk::FillRule::Winding)];
                 let mask = if rounded && align == desigma_doc::StrokeAlign::Inside {
-                    shape_mask(tw, th, &sh.paths, ts).map(|mut m| {
+                    shape_mask(tw, th, sh.fill_paths(), ts).map(|mut m| {
                         if let Some(c) = clip {
                             mask_mul(&mut m, c);
                         }
@@ -668,6 +671,12 @@ impl Renderer<'_> {
         if w <= 0.0 {
             return;
         }
+        if let Some(caps) = vectorops::vertex_caps(n) {
+            let caps = geom::vector_paths(&caps).paths;
+            for p in &paints {
+                fill_paths(&self.env, target, &caps, ts, n.size, p, alpha, clip);
+            }
+        }
         match align {
             desigma_doc::StrokeAlign::Center => {
                 let st = self.make_stroke(n, w);
@@ -676,7 +685,7 @@ impl Renderer<'_> {
                 }
             }
             a => {
-                let Some(mut m) = shape_mask(tw, th, &sh.paths, ts) else { return };
+                let Some(mut m) = shape_mask(tw, th, sh.fill_paths(), ts) else { return };
                 if a == desigma_doc::StrokeAlign::Outside {
                     m.invert();
                 }

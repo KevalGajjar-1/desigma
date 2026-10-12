@@ -65,7 +65,7 @@ fn check(doc: &Document) {
     assert_eq!(tp.runs[0].style.font_size, 16.0);
 
     // Vector geometry from the blob.
-    let NodeKind::Vector { paths } = &find(doc, "Tri").kind else { panic!() };
+    let NodeKind::Vector { paths, .. } = &find(doc, "Tri").kind else { panic!() };
     assert_eq!(
         paths[0].cmds,
         vec![PathCmd::MoveTo(Vec2::new(0.0, 0.0)), PathCmd::LineTo(Vec2::new(10.0, 0.0)), PathCmd::LineTo(Vec2::new(5.0, 8.0)), PathCmd::Close]

@@ -379,6 +379,12 @@ fn convert_node(nc: &Value, id: &str, blobs: &[&[u8]]) -> Option<Map<String, Val
         "TEXT" => convert_text(&mut m, nc),
         _ => {}
     }
+    // Vector networks: vertices, segments and regions of editable vectors.
+    if ty == "VECTOR" {
+        if let Some(net) = convert_vector_network(nc, blobs) {
+            m.insert("vectorNetwork".into(), net);
+        }
+    }
     // Precomputed outlines (text keeps none: the renderer lays glyphs out itself).
     if ty != "TEXT" {
         for k in ["fillGeometry", "strokeGeometry"] {
@@ -388,6 +394,24 @@ fn convert_node(nc: &Value, id: &str, blobs: &[&[u8]]) -> Option<Map<String, Val
         }
     }
     Some(m)
+}
+
+/// REST-shaped `vectorNetwork` from the `vectorData` blob of a `.fig` vector.
+/// The blob is stored in the normalised size; vertices and tangents are
+/// scaled to the node's size.
+fn convert_vector_network(nc: &Value, blobs: &[&[u8]]) -> Option<Value> {
+    let vd = nc.get("vectorData")?;
+    let blob = blobs.get(vd.get("vectorNetworkBlob")?.as_u64()? as usize)?;
+    let size = |v: Option<&Value>| v.and_then(|s| Some((fnum(s, "x")?, fnum(s, "y")?)));
+    let scale = match (size(nc.get("size")), size(vd.get("normalizedSize"))) {
+        (Some((w, h)), Some((nw, nh))) if nw > 0.0 && nh > 0.0 => (w / nw, h / nh),
+        _ => (1.0, 1.0),
+    };
+    let (mut net, styles) = crate::vecnet::network_from_blob(blob, scale)?;
+    if let Some(table) = vd.get("styleOverrideTable").and_then(Value::as_array) {
+        crate::vecnet::apply_style_table(&mut net, &styles, table);
+    }
+    Some(crate::vecnet::network_to_json(&net))
 }
 
 fn matrix_json(t: &Value) -> Value {

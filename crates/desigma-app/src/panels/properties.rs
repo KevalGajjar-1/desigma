@@ -563,6 +563,10 @@ fn selection_ui(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[NodeId]) {
     if !multi {
         super::components::sections(app, ui, pane, sel[0]);
     }
+    // ---- Vertex: shown while the vector is in point editing mode
+    if !multi && app.canvas.vedit.as_ref().is_some_and(|v| v.id == sel[0]) {
+        super::vertex::section(app, ui, pane);
+    }
 
     // ---- Position
     title(ui, pane, "Position", None, false);

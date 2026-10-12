@@ -70,6 +70,18 @@ pub enum Action {
     Align(Align),
     Distribute,
     Flatten,
+    /// Ctrl+Alt+O: turn the stroke into filled geometry.
+    OutlineStroke,
+    /// Wrap the selection in a boolean group.
+    Boolean(desigma_doc::BooleanOp),
+    /// Enter vertex editing of the selected shape.
+    EditVertices,
+    /// Join the two selected vertices.
+    VectorJoin,
+    /// Cut the path at the selected vertices or point.
+    VectorSplit,
+    /// Reduce the nodes of the selected vectors.
+    VectorSimplify,
     OpenPalette,
     About,
     /// Home screen (file browser).
@@ -153,7 +165,25 @@ pub fn run(app: &mut App, ctx: &Context, a: Action) {
         Action::Distribute => {
             app.distribute_selection();
         }
-        Action::Flatten => app.show_toast("Flatten is not available yet", false),
+        Action::Flatten => app.flatten_selection(),
+        Action::OutlineStroke => app.outline_stroke_selection(),
+        Action::Boolean(op) => app.boolean_selection(op),
+        Action::EditVertices => {
+            if let Some(id) = app.selection.first().copied().filter(|_| app.selection.len() == 1) {
+                crate::canvas::vector::enter(app, id);
+            }
+        }
+        Action::VectorJoin => {
+            if !crate::canvas::vector::join_selected(app) {
+                app.show_toast("Select two vertices to join", false);
+            }
+        }
+        Action::VectorSplit => {
+            if !crate::canvas::vector::split_selected(app) {
+                app.show_toast("Select a vertex or click a segment to split the path", false);
+            }
+        }
+        Action::VectorSimplify => app.simplify_selection(),
         Action::OpenPalette => {
             app.ui.palette_query.clear();
             app.ui.palette_sel = 0;
@@ -354,7 +384,26 @@ fn main_nodes(app: &App) -> Vec<Node> {
             leaf("Distribute spacing", "", Action::Distribute).off(!multi),
         ],
     )];
-    let vector = vec![leaf("Flatten", "Ctrl+E", Action::Flatten).off(!has_sel)];
+    let editing = app.canvas.vedit.is_some();
+    let has_vec = app.selection.iter().any(|id| crate::canvas::vector::is_vector(app, *id));
+    let vector = vec![
+        leaf("Outline stroke", "Ctrl+Alt+O", Action::OutlineStroke).off(!has_sel),
+        leaf("Flatten", "Ctrl+E", Action::Flatten).off(!has_sel).sep(),
+        submenu(
+            "Boolean groups",
+            vec![
+                leaf("Union selection", "", Action::Boolean(desigma_doc::BooleanOp::Union)).off(!multi),
+                leaf("Subtract selection", "", Action::Boolean(desigma_doc::BooleanOp::Subtract)).off(!multi),
+                leaf("Intersect selection", "", Action::Boolean(desigma_doc::BooleanOp::Intersect)).off(!multi),
+                leaf("Exclude selection", "", Action::Boolean(desigma_doc::BooleanOp::Exclude)).off(!multi),
+            ],
+        ),
+        leaf("Shape builder", "Shift+M", Action::Tool(Tool::ShapeBuilder)).off(!multi).sep(),
+        leaf("Edit vertices", "Enter", Action::EditVertices).off(app.selection.len() != 1 || !has_vec || editing),
+        leaf("Simplify path", "", Action::VectorSimplify).off(!has_vec),
+        leaf("Join", "Ctrl+J", Action::VectorJoin).off(!editing),
+        leaf("Split", "Ctrl+Shift+J", Action::VectorSplit).off(!editing),
+    ];
     let help = vec![
         leaf("Command palette", "Ctrl+K", Action::OpenPalette),
         leaf("Keyboard shortcuts", "", Action::Shortcuts).sep(),

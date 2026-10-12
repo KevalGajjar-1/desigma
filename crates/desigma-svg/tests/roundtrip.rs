@@ -58,7 +58,7 @@ fn sample() -> (Document, NodeId) {
     add(&mut d, root, badge, "Badge");
 
     let id = d.alloc_id();
-    let mut star = Node::new(id, NodeKind::Vector { paths: vec![] });
+    let mut star = Node::new(id, NodeKind::Vector { paths: vec![], network: None });
     let pts: Vec<Vec2> = (0..10)
         .map(|i| {
             let a = -TAU / 4.0 + i as f32 * TAU / 10.0;
@@ -73,7 +73,7 @@ fn sample() -> (Document, NodeId) {
     let mut cmds = vec![PathCmd::MoveTo(pts[0])];
     cmds.extend(pts[1..].iter().map(|p| PathCmd::LineTo(*p)));
     cmds.push(PathCmd::Close);
-    star.kind = NodeKind::Vector { paths: vec![Path { cmds, fill_rule: FillRule::NonZero }] };
+    star.kind = NodeKind::Vector { paths: vec![Path { cmds, fill_rule: FillRule::NonZero }], network: None };
     star.transform = Affine::translate(20.0, 76.0);
     star.size = Vec2::new(x1 - x0, y1 - y0);
     star.fills = vec![solid(34, 197, 94)];

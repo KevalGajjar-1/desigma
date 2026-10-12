@@ -23,6 +23,7 @@ pub mod svgpath;
 pub mod testkit;
 mod textfmt;
 mod variables;
+mod vecnet;
 
 pub use desigma_doc::Document;
 pub use export::export_rest_json;

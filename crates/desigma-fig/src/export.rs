@@ -494,9 +494,12 @@ fn export_node(doc: &Document, id: NodeId, parent_abs: Option<&Affine>, depth: u
             m.insert("pointCount".into(), (*count).into());
             m.insert("starInnerRadius".into(), n(*inner_ratio));
         }
-        NodeKind::Vector { paths } => {
+        NodeKind::Vector { paths, network } => {
             if node.fill_geometry.is_none() {
                 m.insert("fillGeometry".into(), geometry(paths));
+            }
+            if let Some(net) = network {
+                m.insert("vectorNetwork".into(), crate::vecnet::network_to_json(net));
             }
         }
         NodeKind::BooleanOp(op) => {

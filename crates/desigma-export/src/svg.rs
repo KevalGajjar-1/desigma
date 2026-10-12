@@ -1179,6 +1179,7 @@ mod tests {
                         ],
                         fill_rule: FillRule::EvenOdd,
                     }],
+                    network: None,
                 },
             );
             n.size = Vec2::new(8.0, 8.0);

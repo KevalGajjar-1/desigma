@@ -104,8 +104,8 @@ pub fn overlays(app: &App, ui: &Ui, rect: ERect) {
         }
     }
 
-    // Selection.
-    if !app.selection.is_empty() {
+    // Selection (the shape builder paints its own regions instead).
+    if !app.selection.is_empty() && app.canvas.builder.is_none() {
         let multi = app.selection.len() > 1;
         for id in &app.selection {
             if app.doc.get(*id).is_some() {
@@ -152,6 +152,7 @@ pub fn overlays(app: &App, ui: &Ui, rect: ERect) {
     }
 
     vector::overlay(app, &p, rect);
+    super::builder::overlay(app, &p, rect);
 
     // Snap guides & measurements.
     let gcol = theme::GUIDE_COLOR;

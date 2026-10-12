@@ -28,6 +28,8 @@ mod textmeasure;
 mod theme;
 mod util;
 mod variables;
+mod vecfixture;
+mod vecops;
 mod widgets;
 
 use std::sync::atomic::Ordering;
