@@ -668,7 +668,9 @@ impl<'a> FrameRun<'a> {
                         intensity: 0.0,
                         refraction: 0.0,
                         dispersion: 0.0,
-                        pad: 0.0,
+                        out_w: w as f32,
+                        out_h: h as f32,
+                        pad: [0.0; 2],
                     };
                     let ub = self.r.ring.alloc(&self.r.dev, &self.r.queue, &params);
                     let bg = uniform_bg(
@@ -1211,7 +1213,9 @@ impl<'a> FrameRun<'a> {
                     intensity: gp.intensity,
                     refraction: gp.refraction,
                     dispersion: gp.dispersion,
-                    pad: 0.0,
+                    out_w: sc.w() as f32,
+                    out_h: sc.h() as f32,
+                    pad: [0.0; 2],
                 };
                 let ub = self.r.ring.alloc(&self.r.dev, &self.r.queue, &params);
                 let bgf = uniform_bg(

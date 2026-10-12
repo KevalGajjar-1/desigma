@@ -16,7 +16,12 @@ struct P {
     intensity: f32,
     refraction: f32,
     dispersion: f32,
-    p0: f32,
+    // Size of the pass's viewport in pixels: fragments derive top-left pixel
+    // coordinates from `uv`, because `@builtin(position)` runs bottom-up on GL.
+    out_w: f32,
+    out_h: f32,
+    p1: f32,
+    p2: f32,
     // tex2 origin/size for soft mask share mask_origin/size
 };
 
@@ -27,6 +32,7 @@ struct P {
 
 struct FsIn {
     @builtin(position) pos: vec4<f32>,
+    @location(0) uv: vec2<f32>,
 };
 
 @vertex
@@ -35,6 +41,7 @@ fn vs_full(@builtin(vertex_index) vi: u32) -> FsIn {
     let x = f32((vi << 1u) & 2u);
     let y = f32(vi & 2u);
     o.pos = vec4<f32>(x * 2.0 - 1.0, 1.0 - y * 2.0, 0.0, 1.0);
+    o.uv = vec2<f32>(x, y);
     return o;
 }
 
@@ -115,7 +122,7 @@ fn bilinear(t: texture_2d<f32>, pt: vec2<f32>, size: vec2<i32>, clamp_edges: boo
 // tex1: the layer; tex2: optional clip-to-shape mask (root-aligned by mask_origin)
 @fragment
 fn fs_displace(f: FsIn) -> @location(0) vec4<f32> {
-    let px = vec2<i32>(f.pos.xy);
+    let px = vec2<i32>(floor(f.uv * vec2<f32>(p.out_w, p.out_h)));
     let root = vec2<i32>(floor(vec2<f32>(px + p.origin) / p.ss)) + p.grid;
     let u = f32(root.x) / p.cell;
     let v = f32(root.y) / p.cell;
@@ -138,7 +145,7 @@ fn fs_displace(f: FsIn) -> @location(0) vec4<f32> {
 // covers the replaced region (origin = `origin`).
 @fragment
 fn fs_glass(f: FsIn) -> @location(0) vec4<f32> {
-    let px = vec2<i32>(f.pos.xy);
+    let px = vec2<i32>(floor(f.uv * vec2<f32>(p.out_w, p.out_h)));
     let m = px + p.origin - p.mask_origin;
     let cov = texel(tex2, m, p.mask_size).a;
     if (cov <= 0.0) {

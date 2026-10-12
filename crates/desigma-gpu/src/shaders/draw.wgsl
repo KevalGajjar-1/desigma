@@ -225,12 +225,16 @@ fn fs_main(i: VOut) -> @location(0) vec4<f32> {
 @fragment
 fn fs_image(i: VOut) -> @location(0) vec4<f32> {
     let uv = vec2<f32>(i.c1.x * i.local.x + i.c1.z * i.local.y + i.c2.x, i.c1.y * i.local.x + i.c1.w * i.local.y + i.c2.y);
-    let sc = textureSample(img, samp_clamp, uv);
-    let sr = textureSample(img, samp_repeat, uv);
-    var c = sc;
+    // One texture may only be paired with one sampler on the GL backend, so tile
+    // mode wraps the coordinates here instead of using a second, repeating sampler.
+    // Derivatives come from the unwrapped uv so mip selection has no seams at tile edges.
+    let dx = dpdx(uv);
+    let dy = dpdy(uv);
+    var suv = uv;
     if (i.q.z == 2u) {
-        c = sr;
+        suv = fract(uv);
     }
+    var c = textureSampleGrad(img, samp_clamp, suv, dx, dy);
     if (i.q.z == 1u && (uv.x < 0.0 || uv.y < 0.0 || uv.x > 1.0 || uv.y > 1.0)) {
         c = vec4<f32>(0.0);
     }

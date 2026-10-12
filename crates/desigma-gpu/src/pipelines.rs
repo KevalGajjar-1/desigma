@@ -78,7 +78,10 @@ pub struct FxParams {
     pub intensity: f32,
     pub refraction: f32,
     pub dispersion: f32,
-    pub pad: f32,
+    /// Viewport size of the pass (see `fx.wgsl`).
+    pub out_w: f32,
+    pub out_h: f32,
+    pub pad: [f32; 2],
 }
 
 pub struct Layouts {
