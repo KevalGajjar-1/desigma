@@ -85,7 +85,7 @@ fn check(doc: &Document) {
     let pie = find(doc, "Pie");
     assert!(matches!(pie.kind, NodeKind::Ellipse(a) if a.end == 3.0 && a.inner_radius == 0.5));
     assert!(matches!(find(doc, "Star").kind, NodeKind::Star { count: 6, inner_ratio } if (inner_ratio - 0.5).abs() < 1e-6));
-    assert!(matches!(&find(doc, "Note").kind, NodeKind::Unknown { type_name } if type_name == "STICKY"));
+    assert!(matches!(&find(doc, "Note").kind, NodeKind::Sticky(_)), "FigJam stickies map to the board kind");
 }
 
 #[test]

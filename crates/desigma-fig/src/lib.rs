@@ -10,6 +10,7 @@
 //! - `rest` (cargo feature `net`): blocking REST client; the access token is
 //!   always supplied by the caller at runtime and never stored or logged.
 
+mod board;
 pub mod container;
 mod export;
 mod fig;
