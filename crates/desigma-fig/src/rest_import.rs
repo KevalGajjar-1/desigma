@@ -114,6 +114,41 @@ fn parse_effect(v: &Value) -> Option<Effect> {
         "INNER_SHADOW" => Effect::InnerShadow { color: col, offset, radius, spread, visible },
         "LAYER_BLUR" => Effect::LayerBlur { radius, visible },
         "BACKGROUND_BLUR" => Effect::BackgroundBlur { radius, visible },
+        // Noise / texture / glass: every field is optional; missing ones fall back to the
+        // editor defaults. Names match what `export.rs` writes.
+        "NOISE" => {
+            let primary = v.get("color").and_then(color).unwrap_or(Color::BLACK);
+            let mode = match fstr(v, "noiseType").map(str::to_ascii_uppercase).as_deref() {
+                Some("DUOTONE") => NoiseMode::Duo { color: primary, secondary: v.get("secondaryColor").and_then(color).unwrap_or(Color::WHITE) },
+                Some("MULTITONE") => NoiseMode::Multi,
+                _ => NoiseMode::Mono { color: primary },
+            };
+            Effect::Noise(NoiseEffect {
+                mode,
+                size: fnum(v, "noiseSize").unwrap_or(1.0),
+                density: fnum(v, "density").unwrap_or(0.5).clamp(0.0, 1.0),
+                opacity: fnum(v, "opacity").unwrap_or(0.25).clamp(0.0, 1.0),
+                blend: fstr(v, "blendMode").map(blend).unwrap_or(BlendMode::Normal),
+                seed: fnum(v, "seed").unwrap_or(1.0).max(0.0) as u32,
+                visible,
+            })
+        }
+        "TEXTURE" => Effect::Texture(TextureEffect {
+            size: fnum(v, "noiseSize").unwrap_or(2.0),
+            radius: fnum(v, "radius").unwrap_or(2.0),
+            clip_to_shape: fbool(v, "clipToShape").unwrap_or(true),
+            seed: fnum(v, "seed").unwrap_or(1.0).max(0.0) as u32,
+            visible,
+        }),
+        "GLASS" => Effect::Glass(GlassEffect {
+            light_angle: fnum(v, "lightAngle").unwrap_or(315.0),
+            light_intensity: fnum(v, "lightIntensity").unwrap_or(0.5).clamp(0.0, 1.0),
+            refraction: fnum(v, "refraction").unwrap_or(0.5).clamp(0.0, 1.0),
+            depth: fnum(v, "depth").unwrap_or(10.0),
+            dispersion: fnum(v, "dispersion").unwrap_or(0.25).clamp(0.0, 1.0),
+            frost: fnum(v, "radius").unwrap_or(4.0),
+            visible,
+        }),
         _ => return None,
     })
 }

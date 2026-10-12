@@ -11,6 +11,7 @@
 mod blur;
 mod boolean;
 mod effects;
+mod fx;
 mod geom;
 mod index;
 mod paint;
@@ -267,7 +268,7 @@ impl Renderer<'_> {
         if !n.visible {
             return false;
         }
-        n.effects.iter().any(|e| matches!(e, Effect::BackgroundBlur { visible: true, radius } if *radius > 0.0))
+        n.effects.iter().any(|e| matches!(e, Effect::BackgroundBlur { visible: true, radius } if *radius > 0.0) || matches!(e, Effect::Glass(g) if g.visible))
             || (Self::draws_children(n) && n.children.iter().any(|c| self.doc.get(*c).is_some_and(|c| self.has_bg_blur(c))))
     }
 
@@ -298,7 +299,11 @@ impl Renderer<'_> {
         let paints = self.visible_fills(n).len() + self.visible_strokes(n).len();
         let has_effects = n.effects.iter().any(|e| {
             matches!(e, Effect::DropShadow { visible: true, .. } | Effect::InnerShadow { visible: true, .. } | Effect::BackgroundBlur { visible: true, .. })
+                || matches!(e, Effect::Glass(g) if g.visible)
+                || matches!(e, Effect::Noise(n) if n.visible)
         });
+        // Texture warps the node's own pixels, so it needs them in an isolated layer.
+        let textured = n.effects.iter().any(|e| matches!(e, Effect::Texture(t) if t.visible && t.radius > 0.0));
         let layer_blur = n
             .effects
             .iter()
@@ -312,7 +317,7 @@ impl Renderer<'_> {
         if opacity <= 0.0 && !special_blend {
             return;
         }
-        let need_layer = special_blend || layer_blur > 0.0 || (opacity < 1.0 && (has_kids || paints > 1 || has_effects));
+        let need_layer = special_blend || layer_blur > 0.0 || textured || (opacity < 1.0 && (has_kids || paints > 1 || has_effects));
         if !need_layer {
             self.draw_body(n, ts, target, clip, opacity, back);
             return;
@@ -361,6 +366,26 @@ impl Renderer<'_> {
     }
 
     fn draw_body(&self, n: &Node, ts: sk::Transform, target: &mut sk::Pixmap, clip: Option<&sk::Mask>, alpha: f32, back: Back) {
+        self.draw_body_inner(n, ts, target, clip, alpha, back);
+        for e in &n.effects {
+            let Effect::Texture(t) = e else { continue };
+            if !t.visible || t.radius <= 0.0 {
+                continue;
+            }
+            let scale = ts_scale(&ts);
+            let shape = node_shape(self.doc, n, 0.15 / scale);
+            let text_layout = match &n.kind {
+                NodeKind::Text(tp) => Some(text::layout(tp, n.size)),
+                _ => None,
+            };
+            let sil = |pm: &mut sk::Pixmap, dx: f32, dy: f32, grow: f32, opaque: bool| {
+                self.draw_silhouette(n, ts, shape.as_ref(), text_layout.as_deref(), pm, dx, dy, grow, opaque);
+            };
+            fx::texture(target, self.bbox(n, &ts), scale, t, &sil);
+        }
+    }
+
+    fn draw_body_inner(&self, n: &Node, ts: sk::Transform, target: &mut sk::Pixmap, clip: Option<&sk::Mask>, alpha: f32, back: Back) {
         let scale = ts_scale(&ts);
         let shape = node_shape(self.doc, n, 0.15 / scale);
         let text_layout = match &n.kind {
@@ -388,6 +413,7 @@ impl Renderer<'_> {
                 Effect::BackgroundBlur { radius, visible: true } if *radius > 0.0 => {
                     effects::background_blur(target, back, clip, inner_bb, scale, *radius, &sil)
                 }
+                Effect::Glass(g) if g.visible => fx::glass(target, back, clip, inner_bb, scale, g, &sil),
                 _ => {}
             }
         }
@@ -407,6 +433,15 @@ impl Renderer<'_> {
         for e in &n.effects {
             if let Effect::InnerShadow { color, offset, radius, spread, visible: true } = e {
                 effects::inner_shadow(target, clip, bb, scale, color, *offset, *radius, *spread, alpha, &sil);
+            }
+        }
+
+        // 3b. noise grain over the fill
+        for e in &n.effects {
+            if let Effect::Noise(nz) = e {
+                if nz.visible {
+                    fx::noise(target, clip, bb, scale, nz, alpha, &sil);
+                }
             }
         }
 

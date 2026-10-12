@@ -267,8 +267,14 @@ impl Svg<'_> {
 
     fn body(&mut self, n: &Node, as_mask: bool) {
         let doc = self.doc;
-        let has_shadow =
-            !as_mask && n.effects.iter().any(|e| matches!(e, Effect::DropShadow { visible: true, .. } | Effect::InnerShadow { visible: true, .. }));
+        // Drop/inner shadows, noise and texture are all SVG filter primitives on the node.
+        // Glass has no SVG equivalent (it needs the backdrop), so it is skipped.
+        let has_shadow = !as_mask
+            && n.effects.iter().any(|e| {
+                matches!(e, Effect::DropShadow { visible: true, .. } | Effect::InnerShadow { visible: true, .. })
+                    || matches!(e, Effect::Noise(x) if x.visible)
+                    || matches!(e, Effect::Texture(x) if x.visible && x.radius > 0.0)
+            });
         let filter = if has_shadow { Some(self.shadow_filter(n)) } else { None };
         let geo = match &n.kind {
             NodeKind::BooleanOp(op) => self.bool_geo(n, *op),
@@ -732,6 +738,62 @@ impl Svg<'_> {
                 current = format!("withInner{i}");
             }
         }
+        // Texture: displace the result with fractal noise (feTurbulence + feDisplacementMap).
+        for (i, e) in n.effects.iter().enumerate() {
+            let Effect::Texture(tx) = e else { continue };
+            if !tx.visible || tx.radius <= 0.0 {
+                continue;
+            }
+            let freq = 1.0 / tx.size.max(0.5);
+            self.def(&format!(
+                "  <feTurbulence type=\"fractalNoise\" baseFrequency=\"{}\" numOctaves=\"2\" seed=\"{}\" result=\"texNoise{i}\"/>",
+                num(freq),
+                tx.seed
+            ));
+            self.def(&format!(
+                "  <feDisplacementMap in=\"{current}\" in2=\"texNoise{i}\" scale=\"{}\" xChannelSelector=\"R\" yChannelSelector=\"G\" result=\"textured{i}\"/>",
+                num(tx.radius * 2.0)
+            ));
+            current = format!("textured{i}");
+            if tx.clip_to_shape {
+                self.def(&format!("  <feComposite in=\"{current}\" in2=\"hardAlpha\" operator=\"in\" result=\"texClip{i}\"/>"));
+                current = format!("texClip{i}");
+            }
+        }
+        // Noise: thresholded turbulence tinted with the colour, kept inside the shape and drawn over.
+        // Duotone is approximated with its first colour.
+        for (i, e) in n.effects.iter().enumerate() {
+            let Effect::Noise(nz) = e else { continue };
+            if !nz.visible {
+                continue;
+            }
+            let freq = 1.0 / nz.size.max(0.5);
+            let k = 40.0;
+            let off = -k * (1.0 - nz.density.clamp(0.0, 1.0));
+            self.def(&format!(
+                "  <feTurbulence type=\"fractalNoise\" baseFrequency=\"{}\" numOctaves=\"1\" seed=\"{}\" result=\"grain{i}\"/>",
+                num(freq),
+                nz.seed
+            ));
+            let matrix = match &nz.mode {
+                NoiseMode::Mono { color } | NoiseMode::Duo { color, .. } => {
+                    format!("0 0 0 0 {} 0 0 0 0 {} 0 0 0 0 {} {} 0 0 0 {}", num(color.r), num(color.g), num(color.b), num(k), num(off))
+                }
+                NoiseMode::Multi => format!("1 0 0 0 0 0 1 0 0 0 0 0 1 0 0 {} 0 0 0 {}", num(k), num(off)),
+            };
+            self.def(&format!("  <feColorMatrix in=\"grain{i}\" type=\"matrix\" values=\"{matrix}\" result=\"grainTint{i}\"/>"));
+            self.def(&format!(
+                "  <feComponentTransfer in=\"grainTint{i}\" result=\"grainFade{i}\"><feFuncA type=\"linear\" slope=\"{}\"/></feComponentTransfer>",
+                num(nz.opacity.clamp(0.0, 1.0))
+            ));
+            self.def(&format!("  <feComposite in=\"grainFade{i}\" in2=\"hardAlpha\" operator=\"in\" result=\"grainClip{i}\"/>"));
+            self.def(&format!(
+                "  <feBlend mode=\"{}\" in=\"grainClip{i}\" in2=\"{current}\" result=\"withGrain{i}\"/>",
+                blend_css(nz.blend).unwrap_or("normal")
+            ));
+            current = format!("withGrain{i}");
+        }
+        let _ = current;
         self.def("</filter>");
         fid
     }
@@ -1037,6 +1099,33 @@ mod tests {
         assert!(s.contains("<feComposite in=\"blur0\" in2=\"hardAlpha\" operator=\"out\""), "{s}");
         assert!(s.contains("operator=\"arithmetic\" k2=\"1\" k3=\"-1\""), "{s}");
         assert!(s.contains("<g filter=\"url(#shadow1)\">"), "{s}");
+    }
+
+    #[test]
+    fn noise_and_texture_become_filter_primitives_and_glass_is_skipped() {
+        let (d, id) = doc1(|d, page| {
+            let i = d.alloc_id();
+            let mut n = Node::rectangle(i, Rect::new(0.0, 0.0, 40.0, 40.0));
+            n.effects = vec![
+                Effect::Noise(NoiseEffect {
+                    mode: NoiseMode::Mono { color: Color::BLACK },
+                    size: 2.0,
+                    density: 0.5,
+                    opacity: 0.25,
+                    blend: BlendMode::Normal,
+                    seed: 3,
+                    visible: true,
+                }),
+                Effect::Texture(TextureEffect { size: 4.0, radius: 3.0, clip_to_shape: true, seed: 5, visible: true }),
+                Effect::Glass(GlassEffect { light_angle: 0.0, light_intensity: 0.5, refraction: 0.5, depth: 8.0, dispersion: 0.0, frost: 4.0, visible: true }),
+            ];
+            d.insert(page, n).unwrap();
+        });
+        let s = svg(&d, id);
+        assert!(s.contains("<feTurbulence type=\"fractalNoise\" baseFrequency=\"0.5\" numOctaves=\"1\" seed=\"3\" result=\"grain0\"/>"), "{s}");
+        assert!(s.contains("<feDisplacementMap in=\"SourceGraphic\" in2=\"texNoise1\" scale=\"6\""), "{s}");
+        assert!(s.contains("operator=\"in\" result=\"texClip1\""), "{s}");
+        assert!(!s.to_lowercase().contains("glass"), "{s}");
     }
 
     #[test]

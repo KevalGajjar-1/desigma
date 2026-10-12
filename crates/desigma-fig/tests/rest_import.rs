@@ -233,3 +233,56 @@ fn tolerates_minimal_and_odd_input() {
     let deep = format!("{}1{}", "[".repeat(5000), "]".repeat(5000));
     assert!(import_rest_json(&deep).is_err());
 }
+
+fn doc_with_effects(effects: Vec<Effect>) -> Document {
+    let mut doc = Document::new("fx");
+    let page = doc.add_page("p");
+    let id = doc.alloc_id();
+    let mut n = Node::rectangle(id, Rect::new(0.0, 0.0, 10.0, 10.0));
+    n.effects = effects;
+    doc.insert(page, n).unwrap();
+    doc
+}
+
+#[test]
+fn noise_texture_and_glass_effects_roundtrip() {
+    let effects = vec![
+        Effect::Noise(NoiseEffect {
+            mode: NoiseMode::Duo { color: Color::rgb(255, 0, 0), secondary: Color::rgb(0, 0, 255) },
+            size: 2.0,
+            density: 0.4,
+            opacity: 0.3,
+            blend: BlendMode::Multiply,
+            seed: 9,
+            visible: true,
+        }),
+        Effect::Texture(TextureEffect { size: 3.0, radius: 5.0, clip_to_shape: false, seed: 2, visible: false }),
+        Effect::Glass(GlassEffect { light_angle: 120.0, light_intensity: 0.6, refraction: 0.7, depth: 14.0, dispersion: 0.2, frost: 6.0, visible: true }),
+    ];
+    let doc = doc_with_effects(effects.clone());
+    let json = serde_json::to_string(&export_rest_json(&doc)).unwrap();
+    let back = import_rest_json(&json).unwrap();
+    let n = back.nodes.values().find(|n| matches!(n.kind, NodeKind::Rectangle)).unwrap();
+    assert_eq!(n.effects.len(), 3);
+    for (a, b) in n.effects.iter().zip(&effects) {
+        assert_eq!(std::mem::discriminant(a), std::mem::discriminant(b));
+    }
+    let Effect::Noise(nz) = &n.effects[0] else { panic!() };
+    assert!(matches!(nz.mode, NoiseMode::Duo { .. }) && nz.seed == 9 && approx(nz.density, 0.4) && nz.blend == BlendMode::Multiply);
+    let Effect::Texture(t) = &n.effects[1] else { panic!() };
+    assert!(!t.clip_to_shape && !t.visible && approx(t.radius, 5.0));
+    let Effect::Glass(g) = &n.effects[2] else { panic!() };
+    assert!(approx(g.light_angle, 120.0) && approx(g.frost, 6.0) && approx(g.depth, 14.0));
+}
+
+#[test]
+fn new_effects_tolerate_missing_fields() {
+    let json = r#"{"name":"f","document":{"id":"0:0","type":"DOCUMENT","children":[{"id":"0:1","type":"CANVAS","name":"p","children":[
+        {"id":"1:1","type":"RECTANGLE","name":"r","size":{"x":10,"y":10},
+         "effects":[{"type":"NOISE"},{"type":"TEXTURE"},{"type":"GLASS"}]}]}]}}"#;
+    let doc = import_rest_json(json).unwrap();
+    let r = find(&doc, "r");
+    assert!(matches!(r.effects[0], Effect::Noise(_)));
+    assert!(matches!(r.effects[1], Effect::Texture(_)));
+    assert!(matches!(r.effects[2], Effect::Glass(_)));
+}

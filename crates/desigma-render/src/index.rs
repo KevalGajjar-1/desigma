@@ -70,6 +70,7 @@ pub(crate) fn node_margin(n: &Node) -> f32 {
                 m = m.max(offset.x.abs().max(offset.y.abs()) + spread.max(0.0) + radius * 1.6 + 2.0)
             }
             Effect::LayerBlur { radius, visible: true } => m = m.max(radius * 1.6 + 2.0),
+            Effect::Texture(t) if t.visible => m = m.max(t.radius.max(0.0) + 2.0),
             _ => {}
         }
     }
@@ -93,6 +94,8 @@ fn blur_reach(n: &Node) -> f32 {
                 r = r.max(offset.x.abs().max(offset.y.abs()) + spread.abs() + radius * 1.6 + 2.0)
             }
             Effect::LayerBlur { radius, visible: true } | Effect::BackgroundBlur { radius, visible: true } if *radius > 0.0 => r = r.max(radius * 1.6 + 2.0),
+            Effect::Texture(t) if t.visible => r = r.max(t.radius.max(0.0) + 2.0),
+            Effect::Glass(g) if g.visible => r = r.max(g.frost.max(0.0) * 1.6 + g.depth.max(0.0) * 2.0 + 6.0),
             _ => {}
         }
     }
@@ -212,7 +215,10 @@ impl SceneIndex {
                 let sc = (ts.sx * ts.sy - ts.kx * ts.ky).abs().sqrt().max(1e-6);
                 self.blurry.push((sub, reach * sc));
             }
-            if n.effects.iter().any(|e| matches!(e, Effect::BackgroundBlur { visible: true, radius } if *radius > 0.0)) {
+            if n.effects
+                .iter()
+                .any(|e| matches!(e, Effect::BackgroundBlur { visible: true, radius } if *radius > 0.0) || matches!(e, Effect::Glass(g) if g.visible))
+            {
                 self.bg_blur.push(sub);
             }
         }
