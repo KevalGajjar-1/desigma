@@ -168,7 +168,9 @@ pub fn find_with(doc: &Document, scope: &Scope, matcher: &Matcher) -> Vec<Match>
     let mut out = Vec::new();
     for id in scope_nodes(doc, scope) {
         let Some(n) = doc.get(id) else { continue };
-        if let NodeKind::Text(t) = &n.kind {
+        // text layers, and the text of stickies, shapes and connector labels
+        let own_text = n.kind.any_text();
+        if let Some(t) = own_text {
             for (range, groups) in matcher.find_all(&t.content) {
                 out.push(Match { node: id, field: MatchField::Text, range, groups });
             }
@@ -256,7 +258,7 @@ pub fn replace(doc: &Document, matches: &[Match], replacement: &str) -> Command 
             };
             match m.field {
                 MatchField::Text => {
-                    let NodeKind::Text(t) = &mut node.kind else { continue };
+                    let Some(t) = node.kind.any_text_mut() else { continue };
                     if m.range.end > floor_text || !valid_range(&t.content, &m.range) {
                         continue;
                     }

@@ -1,4 +1,4 @@
-use desigma_doc::{Document, NodeKind, TextStyle};
+use desigma_doc::{Document, TextStyle};
 use std::collections::BTreeSet;
 
 /// One font face a document needs.
@@ -24,7 +24,7 @@ impl FontRequest {
 pub fn requests_for(doc: &Document) -> BTreeSet<FontRequest> {
     let mut out = BTreeSet::new();
     for node in doc.nodes.values() {
-        if let NodeKind::Text(t) = &node.kind {
+        if let Some(t) = node.kind.any_text() {
             out.insert(FontRequest::of(&t.style));
             for run in &t.runs {
                 out.insert(FontRequest::of(&run.style));

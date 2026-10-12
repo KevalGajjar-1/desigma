@@ -246,6 +246,16 @@ pub enum NodeKind {
         component: Option<NodeId>,
         component_key: Option<String>,
     },
+    /// Board sticky note.
+    Sticky(StickyProps),
+    /// Board connector between two nodes (or free points); see [`ConnectorProps`].
+    Connector(ConnectorProps),
+    /// Board shape that carries centered text.
+    ShapeWithText(ShapeWithTextProps),
+    /// Board stamp: a small badge drawn from vector artwork (`kind` names the design).
+    Stamp {
+        kind: String,
+    },
     /// Anything the importer could not map, kept so nothing is silently lost.
     Unknown {
         type_name: String,
@@ -265,6 +275,45 @@ impl NodeKind {
                 | NodeKind::ComponentSet(_)
                 | NodeKind::Instance { .. }
         )
+    }
+
+    /// Board items that are drawn by lowering to ordinary shapes and text.
+    pub fn is_board_item(&self) -> bool {
+        matches!(self, NodeKind::Sticky(_) | NodeKind::Connector(_) | NodeKind::ShapeWithText(_) | NodeKind::Stamp { .. })
+    }
+
+    /// The text of a board item that has its own text (sticky, shape with text), if any.
+    pub fn board_text(&self) -> Option<&TextProps> {
+        match self {
+            NodeKind::Sticky(s) => Some(&s.text),
+            NodeKind::ShapeWithText(s) => Some(&s.text),
+            NodeKind::Connector(c) => c.label.as_ref(),
+            _ => None,
+        }
+    }
+
+    /// The editable text of a text layer or of a board item that carries text.
+    pub fn any_text(&self) -> Option<&TextProps> {
+        match self {
+            NodeKind::Text(t) => Some(t),
+            k => k.board_text(),
+        }
+    }
+
+    pub fn any_text_mut(&mut self) -> Option<&mut TextProps> {
+        match self {
+            NodeKind::Text(t) => Some(t),
+            k => k.board_text_mut(),
+        }
+    }
+
+    pub fn board_text_mut(&mut self) -> Option<&mut TextProps> {
+        match self {
+            NodeKind::Sticky(s) => Some(&mut s.text),
+            NodeKind::ShapeWithText(s) => Some(&mut s.text),
+            NodeKind::Connector(c) => c.label.as_mut(),
+            _ => None,
+        }
     }
 
     pub fn frame_props(&self) -> Option<&FrameProps> {
@@ -300,6 +349,10 @@ impl NodeKind {
             NodeKind::Component(_) => "Component",
             NodeKind::ComponentSet(_) => "Component set",
             NodeKind::Instance { .. } => "Instance",
+            NodeKind::Sticky(_) => "Sticky note",
+            NodeKind::Connector(_) => "Connector",
+            NodeKind::ShapeWithText(_) => "Shape",
+            NodeKind::Stamp { .. } => "Stamp",
             NodeKind::Unknown { .. } => "Layer",
         }
     }
