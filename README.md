@@ -73,7 +73,7 @@ Every screenshot here is the real app, captured offscreen with its own <code>--s
       <h3>Prototype what you draw</h3>
       Drag from a layer's hotspot to a frame to wire it up, then refine the interaction: triggers, actions, overlays and transitions with easing curves and springs.
       <br><br>
-      <b>Present</b> plays it back with Navigate, Back, overlays, Change to (variants), Scroll to and Smart Animate, which pairs layers by name and interpolates them.
+      <b>Present</b> plays it back with Navigate, Back, overlays, Change to (variants), Scroll to and Smart Animate, which pairs layers by name and interpolates them. **Variables drive it**: Set variable (with a small safe expression language), Set variable mode and Conditional (If / Else if / Else) re-render bound text, colors and visibility live, without ever changing the file. Key, gamepad and drag triggers, interactive components (hover and press states with automatic revert) and video fills (Motion JPEG plays; other codecs show their poster) are included.
     </td>
   </tr>
   <tr>
@@ -203,6 +203,8 @@ desigma --screenshot out.png --size 1600x1000 --select Card   # render one frame
 desigma --select Welcome --rulers --layout-grid columns --zoom 120 --screenshot out.png   # rulers + column grid
 desigma --edit-text "Welcome back" --select-text 0-7 --screenshot out.png                 # mid-edit with a selection
 desigma --tab prototype --present                              # open straight into Present
+desigma --fixture proto-vars --select Add --tab prototype --panel interaction --screenshot i.png   # the interaction editor with a Conditional
+desigma --fixture proto-vars --present --panel present-variables --screenshot p.png                # Present with the live Variables panel
 desigma --home --library ./my-library --screenshot home.png    # the projects home screen on a library directory
 desigma --fixture variables --panel variables --screenshot v.png  # the Variables view
 desigma-diff compare reference.png actual.png --out diff.png   # pixel-compare two images
