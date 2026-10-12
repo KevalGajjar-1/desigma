@@ -82,6 +82,8 @@ struct Lk<'a> {
     style_by_key: HashMap<&'a str, String>,
     /// Style key -> its node (for paints the style supplies).
     style_nodes: HashMap<&'a str, &'a Value>,
+    /// Style node id (`s:l`) -> node, for styles defined in this file.
+    style_by_id: HashMap<&'a str, &'a Value>,
     /// Property definition id (including the `parentPropDefId` aliases that
     /// variants carry) -> (`Name#s:l`, REST type).
     prop_defs: HashMap<String, (String, &'static str)>,
@@ -95,12 +97,16 @@ impl<'a> Lk<'a> {
             set_by_key: HashMap::new(),
             style_by_key: HashMap::new(),
             style_nodes: HashMap::new(),
+            style_by_id: HashMap::new(),
             prop_defs: HashMap::new(),
         };
         let mut aliases: Vec<(String, String)> = Vec::new();
         for e in entries {
             let j = &e.json;
             let key = fstr(j, "key").filter(|k| !k.is_empty());
+            if fstr(j, "styleType").is_some() {
+                lk.style_by_id.insert(e.id.as_str(), j);
+            }
             match (fstr(j, "type"), key) {
                 (Some("VARIABLE"), Some(k)) => {
                     lk.var_by_key.insert(k, format!("VariableID:{}", e.id));
@@ -167,6 +173,14 @@ impl<'a> Lk<'a> {
         r.get("guid").and_then(guid_str)
     }
 
+    /// The style node a `styleIdFor*` reference points at.
+    fn style_node(&self, r: &Value) -> Option<&'a Value> {
+        match asset_key(r) {
+            Some(k) => self.style_nodes.get(k).copied(),
+            None => self.style_by_id.get(r.get("guid").and_then(guid_str)?.as_str()).copied(),
+        }
+    }
+
     fn prop_def(&self, r: &Value) -> Option<&(String, &'static str)> {
         self.prop_defs.get(&r.get("defID").and_then(guid_str)?)
     }
@@ -179,10 +193,22 @@ pub(crate) fn message_to_rest(msg: &KiwiValue, name: &str) -> Value {
         .and_then(KiwiValue::as_array)
         .map(|a| a.iter().map(|b| b.get("bytes").and_then(KiwiValue::as_bytes).unwrap_or(&[])).collect())
         .unwrap_or_default();
+    let changes: Vec<Value> = msg.get("nodeChanges").and_then(KiwiValue::as_array).unwrap_or(&[]).iter().map(kiwi::to_json).collect();
+    nodes_to_rest(changes, &blobs, name)
+}
 
+/// Imports node changes given as kiwi-shaped JSON (`[{guid, parentIndex, type, ...}]`,
+/// enums by name), as `fig2json` prints them. For synthetic test fixtures.
+#[doc(hidden)]
+pub fn import_fig_node_changes(changes: &Value, name: &str) -> Result<Document, FigError> {
+    let list = changes.as_array().cloned().unwrap_or_default();
+    let rest = nodes_to_rest(list, &[], name);
+    rest_import::import_rest_value(&rest, true)
+}
+
+fn nodes_to_rest(changes: Vec<Value>, blobs: &[&[u8]], name: &str) -> Value {
     let mut entries: Vec<Entry> = Vec::new();
-    for nc in msg.get("nodeChanges").and_then(KiwiValue::as_array).unwrap_or(&[]) {
-        let j = kiwi::to_json(nc);
+    for j in changes {
         if fstr(&j, "phase") == Some("REMOVED") {
             continue;
         }
@@ -211,7 +237,7 @@ pub(crate) fn message_to_rest(msg: &KiwiValue, name: &str) -> Value {
         None => roots.iter().copied().filter(|&i| fstr(&entries[i].json, "type") == Some("CANVAS")).collect(),
     };
 
-    let lk = Lk::new(&entries, &blobs);
+    let lk = Lk::new(&entries, blobs);
     let mut visited: HashSet<usize> = HashSet::new();
     let is_internal = |i: usize| entries[i].json.get("internalOnly").and_then(Value::as_bool) == Some(true);
     let pages: Vec<Value> = canvases
@@ -379,9 +405,16 @@ fn convert_node(nc: &Value, id: &str, lk: &Lk) -> Option<Map<String, Value>> {
     crate::proto::convert_fig(&mut m, nc);
 
     // Paint.
-    let paints = |k: &str| -> Value { Value::Array(rest_import::farr(nc, k).iter().filter_map(convert_paint).collect()) };
-    m.insert("fills".into(), paints("fillPaints"));
-    m.insert("strokes".into(), paints("strokePaints"));
+    // A style the file defines wins over the node's own (possibly stale) copy of its values,
+    // unless a variable is bound to one of the paints.
+    let paints = |k: &str, style_key: &str| -> Value {
+        let own = rest_import::farr(nc, k);
+        let from_style = nc.get(style_key).and_then(|r| lk.style_node(r)).filter(|_| !own.iter().any(|p| p.get("colorVar").is_some()));
+        let list = from_style.map(|s| rest_import::farr(s, "fillPaints")).unwrap_or(own);
+        Value::Array(list.iter().filter_map(convert_paint).collect())
+    };
+    m.insert("fills".into(), paints("fillPaints", "styleIdForFill"));
+    m.insert("strokes".into(), paints("strokePaints", "styleIdForStrokeFill"));
     copy(&mut m, nc, "strokeWeight", "strokeWeight");
     copy(&mut m, nc, "strokeAlign", "strokeAlign");
     enum_map(&mut m, nc, "strokeCap", "strokeCap", &[("ARROW_LINES", "NONE"), ("ARROW_EQUILATERAL", "NONE")]);
@@ -749,7 +782,7 @@ fn convert_override(o: &Value, lk: &Lk) -> Map<String, Value> {
     for (src, dst, style) in [("fillPaints", "fills", "styleIdForFill"), ("strokePaints", "strokes", "styleIdForStrokeFill")] {
         if o.get(src).is_some() {
             m.insert(dst.into(), Value::Array(rest_import::farr(o, src).iter().filter_map(convert_paint).collect()));
-        } else if let Some(sn) = o.get(style).and_then(asset_key).and_then(|k| lk.style_nodes.get(k)) {
+        } else if let Some(sn) = o.get(style).and_then(|r| lk.style_node(r)) {
             // An override that only names a library style: the style supplies the paints.
             m.insert(dst.into(), Value::Array(rest_import::farr(sn, "fillPaints").iter().filter_map(convert_paint).collect()));
         }
@@ -839,7 +872,10 @@ fn convert_stack(m: &mut Map<String, Value>, nc: &Value) {
     m.insert("primaryAxisAlignItems".into(), align(fstr(nc, "stackPrimaryAlignItems")).into());
     m.insert("counterAxisAlignItems".into(), align(fstr(nc, "stackCounterAlignItems")).into());
     let sizing = |s: Option<&str>| if s.map(|s| s.starts_with("RESIZE_TO_FIT")).unwrap_or(false) { "AUTO" } else { "FIXED" };
-    m.insert("primaryAxisSizingMode".into(), sizing(fstr(nc, "stackPrimarySizing")).into());
+    // Real files only ever write `FIXED` for the primary axis (absent = hug) and
+    // `RESIZE_TO_FIT_WITH_IMPLICIT_SIZE` for the counter axis (absent = fixed).
+    let primary = if fstr(nc, "stackPrimarySizing") == Some("FIXED") { "FIXED" } else { "AUTO" };
+    m.insert("primaryAxisSizingMode".into(), primary.into());
     m.insert("counterAxisSizingMode".into(), sizing(fstr(nc, "stackCounterSizing")).into());
     if nc.get("stackWrap").and_then(Value::as_bool) == Some(true) {
         m.insert("layoutWrap".into(), "WRAP".into());
