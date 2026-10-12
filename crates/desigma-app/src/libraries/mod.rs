@@ -12,15 +12,16 @@
 //! * [`App::library_variables`] / [`App::library_styles`]: everything the enabled
 //!   libraries offer, with `local_id` / `local_key` set when it is already in the
 //!   file (then it is also listed in `doc.variables` / `doc.styles`).
-//! * [`App::use_library_variable`] / [`App::use_library_style`]: copies the asset
-//!   (with the variables it aliases) into the file as one undo step and returns
-//!   the local variable id / style key to bind or apply.
+//! * [`App::bind_library_variable`] / [`App::apply_library_style`] (and
+//!   [`App::use_library_style`]): copy the asset (with the variables it aliases)
+//!   into the file and bind / apply it in the same undo step.
 //!
 //! Imported variables and styles live under `"<library id>/<key>"`, so they
 //! never collide with local ones.
 //!
-//! The library directory defaults to [`default_root`]; the projects library
-//! points it at its own root with [`LibrariesState::set_root`].
+//! The library directory defaults to [`default_root`], the same root as the
+//! projects library; `App::attach_library` (and the `--library` flag) points it
+//! at the projects library's root with [`LibrariesState::set_root`].
 
 pub mod modal;
 pub mod review;
@@ -73,15 +74,15 @@ pub struct LibEntry {
 
 /// A variable offered by an enabled library.
 #[derive(Clone, Debug)]
-#[allow(dead_code)] // read by the variable binding picker
 pub struct LibraryVariable {
     pub library_id: String,
     pub library_name: String,
     /// Asset key inside the library; pass to [`App::use_library_variable`].
     pub key: String,
     pub name: String,
-    pub collection: String,
     pub kind: VariableKind,
+    /// Where the variable may be applied (empty: everywhere).
+    pub scopes: Vec<String>,
     /// Id in `doc.variables` when already used in this file.
     pub local_id: Option<String>,
 }
@@ -174,19 +175,10 @@ impl LibrariesState {
     }
 }
 
-/// Platform data directory for desigma: `$DESIGMA_LIBRARY_DIR`, else the
-/// per-user data directory.
+/// The library root shared with the projects library: `$DESIGMA_LIBRARY`
+/// (`$DESIGMA_LIBRARY_DIR` is a deprecated alias), else the per-user data directory.
 pub fn default_root() -> Option<PathBuf> {
-    if let Some(d) = std::env::var_os("DESIGMA_LIBRARY_DIR") {
-        return Some(PathBuf::from(d));
-    }
-    #[cfg(windows)]
-    let base = std::env::var_os("APPDATA").map(PathBuf::from);
-    #[cfg(target_os = "macos")]
-    let base = std::env::var_os("HOME").map(|h| PathBuf::from(h).join("Library/Application Support"));
-    #[cfg(all(not(windows), not(target_os = "macos")))]
-    let base = std::env::var_os("XDG_DATA_HOME").map(PathBuf::from).or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")));
-    base.map(|b| b.join("desigma"))
+    Some(Library::default_root())
 }
 
 fn is_noop(c: &Command) -> bool {
@@ -316,6 +308,9 @@ impl App {
             Ok(info) => {
                 if let Some(p) = &self.file_path {
                     let _ = lib.set_library_source(&info.library_id, Some(&p.to_string_lossy()));
+                }
+                if let Some(f) = &self.lib_file {
+                    let _ = lib.set_library_source_file(&info.library_id, Some(&f.id));
                 }
                 self.show_toast(format!("Published {} v{}", info.name, info.version), false);
                 self.doc.library.published = Some(info);
@@ -627,34 +622,25 @@ impl App {
     // ------------------------------------------- styles and variables API
 
     /// Variables offered by enabled libraries.
-    #[allow(dead_code)] // API for the variable binding picker
     pub fn library_variables(&mut self) -> Vec<LibraryVariable> {
         let mut out = Vec::new();
         for r in self.doc.library.enabled.clone().into_iter().filter(|r| !r.id.starts_with(REMOTE_LIBRARY_PREFIX)) {
             let Some(snap) = self.latest_snapshot(&r.id) else { continue };
             for a in snap.assets.iter().filter(|a| a.kind == LibraryAssetKind::Variable) {
                 let Some(v) = snap.variables.get(&a.key["var:".len()..]) else { continue };
-                let collection = snap.variable_collections.get(&v.collection).map(|c| c.name.clone()).unwrap_or_default();
                 let local_id = self.doc.library.external.get(&local_key(&r.id, &a.key)).and_then(|e| e.local_key.clone());
                 out.push(LibraryVariable {
                     library_id: r.id.clone(),
                     library_name: snap.name.clone(),
                     key: a.key.clone(),
                     name: a.name.clone(),
-                    collection,
                     kind: v.kind,
+                    scopes: v.scopes.clone(),
                     local_id,
                 });
             }
         }
         out
-    }
-
-    /// Copies a library variable (and the variables it aliases) into the file;
-    /// returns its id in `doc.variables`.
-    #[allow(dead_code)] // API for the variable binding picker
-    pub fn use_library_variable(&mut self, library_id: &str, key: &str) -> Option<String> {
-        self.use_library_asset(library_id, key)
     }
 
     /// Styles offered by enabled libraries.
@@ -686,17 +672,59 @@ impl App {
     }
 
     fn use_library_asset(&mut self, library_id: &str, key: &str) -> Option<String> {
+        let mut tx = Tx::new();
+        let local = self.import_asset_in(&mut tx, library_id, key);
+        self.run_tx(tx);
+        self.libs.invalidate();
+        local
+    }
+
+    /// Copies a library asset into the file as part of `tx` (so the caller can
+    /// bind or apply it in the same undo step); returns its local id / key.
+    pub fn import_asset_in(&mut self, tx: &mut Tx, library_id: &str, key: &str) -> Option<String> {
         let ekey = local_key(library_id, key);
         if let Some(l) = self.doc.library.external.get(&ekey).and_then(|e| e.local_key.clone()) {
             return Some(l);
         }
         let snap = self.latest_snapshot(library_id)?;
         let cmd = import_asset(&mut self.doc, &snap, key, None);
-        if !is_noop(&cmd) {
-            self.run_library_cmd(cmd);
+        if !is_noop(&cmd) && tx.cmd(&mut self.doc, cmd).is_err() {
+            return None;
+        }
+        self.doc.library.external.get(&ekey).and_then(|e| e.local_key.clone())
+    }
+
+    /// Binds `keys` of `nodes` to a library variable, copying it into the file
+    /// first. The copy and the binding are one undo step.
+    pub fn bind_library_variable(&mut self, nodes: &[NodeId], keys: &[&str], library_id: &str, key: &str) {
+        let mut tx = Tx::new();
+        match self.import_asset_in(&mut tx, library_id, key) {
+            Some(local) => {
+                self.bind_variable_in(&mut tx, nodes, keys, &local);
+                self.run_tx(tx);
+            }
+            None => {
+                tx.cancel(&mut self.doc);
+                self.show_toast("Library variable could not be loaded", true);
+            }
         }
         self.libs.invalidate();
-        self.doc.library.external.get(&ekey).and_then(|e| e.local_key.clone())
+    }
+
+    /// Applies a library style to `sel`, copying it into the file first, in
+    /// `tx` (which may already hold the caller's edits) as one undo step.
+    pub fn apply_library_style(&mut self, mut tx: Tx, sel: &[NodeId], library_id: &str, key: &str) {
+        match self.import_asset_in(&mut tx, library_id, key) {
+            Some(local) => {
+                self.apply_style_in(&mut tx, sel, &local);
+                self.run_tx(tx);
+            }
+            None => {
+                tx.cancel(&mut self.doc);
+                self.show_toast("Library style could not be loaded", true);
+            }
+        }
+        self.libs.invalidate();
     }
 
     // ---------------------------------------------------- go to main
@@ -710,16 +738,17 @@ impl App {
             return;
         };
         let name = self.doc.get(ext.node.unwrap_or(comp)).map(|n| n.name.clone()).unwrap_or_default();
-        let source = (!ext.library_id.starts_with(REMOTE_LIBRARY_PREFIX))
-            .then(|| self.library().and_then(|l| l.library_index(&ext.library_id).ok()))
-            .flatten()
-            .and_then(|i| i.source_path)
-            .map(PathBuf::from)
-            .filter(|p| p.exists());
+        let index = (!ext.library_id.starts_with(REMOTE_LIBRARY_PREFIX)).then(|| self.library().and_then(|l| l.library_index(&ext.library_id).ok())).flatten();
+        // Files of the projects library open through the home store; others by path.
+        let home_file = index.as_ref().and_then(|i| i.source_file.clone()).filter(|f| self.lib.as_ref().is_some_and(|l| l.file(f).is_ok()));
+        let source = index.and_then(|i| i.source_path).map(PathBuf::from).filter(|p| p.exists());
         let _ = ekey;
-        match source {
-            Some(path) => {
-                self.open_path(path);
+        match home_file.map(Ok).or(source.map(Err)) {
+            Some(opened) => {
+                match opened {
+                    Ok(file_id) => self.open_library_file(&file_id),
+                    Err(path) => self.open_path(path),
+                }
                 let found = self.doc.pages.iter().find_map(|p| {
                     let mut hit = None;
                     self.doc.walk(*p, |n, _| {

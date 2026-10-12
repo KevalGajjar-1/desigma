@@ -286,3 +286,189 @@ fn go_to_main_of_unavailable_library_shows_a_read_only_preview() {
     assert!(b.app().libs.preview.is_none());
     let _ = std::fs::remove_dir_all(root);
 }
+
+/// File "A" with a red color variable and a red color style, published.
+fn publish_red(root: &Path) -> (Sim, String) {
+    use desigma_doc::{Color, Paint, Style, StyleMeta, StyleProperty, VariableKind, VariableStore, VariableValue};
+    let mut a = sim(root);
+    a.shell.app.new_document();
+    let mut store = VariableStore::from_doc(&a.app().doc);
+    let coll = store.add_collection("Brand");
+    let mode = store.collections[&coll].default_mode.clone();
+    let id = store.add_variable(&coll, "Brand/Red", VariableKind::Color).unwrap();
+    store.set_value(&id, &mode, VariableValue::Color(Color::rgb(255, 0, 0)));
+    let n = store.add_variable(&coll, "Brand/Radius", VariableKind::Number).unwrap();
+    store.set_value(&n, &mode, VariableValue::Number(8.0));
+    assert!(a.shell.app.commit_store(store, &[], &[]));
+    a.shell.app.doc.styles.insert("Brand/Red".into(), Style::Fill(vec![Paint::solid(Color::rgb(255, 0, 0))]));
+    a.shell
+        .app
+        .doc
+        .style_meta
+        .insert("Brand/Red".into(), StyleMeta { name: "Brand/Red".into(), key: None, description: String::new(), property: StyleProperty::Fill });
+    assert!(a.shell.app.publish_file());
+    let lib_id = a.app().doc.library.published.clone().unwrap().library_id;
+    (a, lib_id)
+}
+
+/// A second document with one white 40x40 rectangle (selected) that uses the library.
+fn consumer_with_rect(root: &Path, lib_id: &str) -> (Sim, desigma_doc::NodeId) {
+    use desigma_doc::{Color, Node, Paint, Rect};
+    let mut b = sim(root);
+    b.shell.app.new_document();
+    let page = b.app().page;
+    let id = b.shell.app.doc.alloc_id();
+    let mut n = Node::rectangle(id, Rect::new(0.0, 0.0, 40.0, 40.0));
+    n.name = "Box".into();
+    n.fills = vec![Paint::solid(Color::rgb(255, 255, 255))];
+    b.shell.app.doc.insert(page, n).unwrap();
+    b.shell.app.set_library_enabled(lib_id, true);
+    b.shell.app.selection = vec![id];
+    b.shell.app.changed();
+    frames(&mut b, 3);
+    (b, id)
+}
+
+fn box_pixel(s: &Sim, id: desigma_doc::NodeId) -> [u8; 3] {
+    let pm = desigma_render::render_node(&s.app().doc, id, 1.0).unwrap();
+    let p = pm.pixel(20, 20).unwrap();
+    [p.red(), p.green(), p.blue()]
+}
+
+#[test]
+fn library_variables_bind_through_the_picker_in_one_undo_step() {
+    let root = tmp("varpick");
+    let (_a, lib_id) = publish_red(&root);
+    let (mut b, id) = consumer_with_rect(&root, &lib_id);
+    assert!(b.app().doc.variables.is_empty(), "nothing is copied before it is used");
+    assert_eq!(box_pixel(&b, id), [255, 255, 255]);
+
+    let sw = b.rect_of("sw:false:0");
+    b.mv(Pos2::new(sw.right() + 40.0, sw.center().y));
+    b.frame(vec![]);
+    b.click(b.rect_of("bind:fills/0").center());
+    b.frame(vec![]);
+    b.rect_of("pick:Brand/Red");
+    let radius = b.ctx.data(|d| d.get_temp::<egui::Rect>(egui::Id::new(("test-rect", "pick:Brand/Radius".to_string()))));
+    assert!(radius.is_none(), "number variables are filtered out of the color picker");
+    b.click(b.rect_of("pick:Brand/Red").center());
+
+    let local = b.app().doc.get(id).unwrap().variables.bindings.get("fills/0").cloned().expect("bound");
+    assert_eq!(b.app().doc.variables[&local].name, "Brand/Red");
+    assert!(b.app().doc.library.external.keys().any(|k| k.starts_with(&lib_id)), "copy registered");
+    assert_eq!(box_pixel(&b, id), [255, 0, 0], "the bound color renders");
+
+    // One undo removes the binding and the copy together.
+    b.cmd_key(Key::Z);
+    assert!(b.app().doc.get(id).unwrap().variables.bindings.is_empty());
+    assert!(b.app().doc.variables.is_empty() && b.app().doc.variable_collections.is_empty(), "the copy is gone too");
+    assert!(b.app().doc.library.external.is_empty());
+    assert_eq!(box_pixel(&b, id), [255, 255, 255]);
+    assert_eq!(b.app().doc.library.enabled.len(), 1, "the library stays enabled");
+    // and redo brings both back
+    b.mods = egui::Modifiers::COMMAND | egui::Modifiers::SHIFT;
+    b.key(Key::Z);
+    b.mods = egui::Modifiers::NONE;
+    assert_eq!(box_pixel(&b, id), [255, 0, 0]);
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn color_picker_libraries_tab_lists_library_styles_and_applies_one_undoably() {
+    let root = tmp("stylepick");
+    let (_a, lib_id) = publish_red(&root);
+    let (mut b, id) = consumer_with_rect(&root, &lib_id);
+    b.click(b.rect_of("sw:false:0").center());
+    b.frame(vec![]);
+    b.click(b.rect_of("picker-tab:Libraries").center());
+    b.frame(vec![]);
+    let row = b.rect_of("picker-style:Brand/Red");
+    b.click(row.center());
+    let n = b.app().doc.get(id).unwrap();
+    let key = n.style_refs.get("fill").cloned().expect("style applied");
+    assert!(key.starts_with(&lib_id), "{key}");
+    assert!(b.app().doc.styles.contains_key(&key));
+    assert_eq!(box_pixel(&b, id), [255, 0, 0]);
+    assert!(b.app().props.picker.is_none());
+
+    b.cmd_key(Key::Z);
+    assert!(b.app().doc.styles.is_empty() && b.app().doc.style_meta.is_empty(), "the imported style is undone");
+    assert!(b.app().doc.get(id).unwrap().style_refs.is_empty());
+    assert!(b.app().doc.library.external.is_empty());
+    assert_eq!(box_pixel(&b, id), [255, 255, 255]);
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn creating_a_style_from_the_picker_is_one_undo_step() {
+    let mut s = Sim::with(Options { select: Some("Hero".into()), ..Default::default() });
+    let hero = s.by_name("Hero");
+    let before = s.app().doc.styles.clone();
+    s.click(s.rect_of("sw:false:0").center());
+    s.frame(vec![]);
+    s.click(s.rect_of("picker-add-style").center());
+    s.frame(vec![]);
+    let key = s.app().doc.get(hero).unwrap().style_refs.get("fill").cloned().expect("linked to the new style");
+    assert!(s.app().doc.styles.contains_key(&key) && s.app().doc.style_meta.contains_key(&key));
+    s.cmd_key(Key::Z);
+    assert_eq!(format!("{:?}", s.app().doc.styles), format!("{before:?}"), "undo restores the previous styles");
+    assert!(!s.app().doc.style_meta.contains_key(&key));
+    assert!(s.app().doc.get(hero).unwrap().style_refs.is_empty(), "linking was part of the same step");
+}
+
+#[test]
+fn updating_a_library_style_is_undoable() {
+    use desigma_doc::{Color, Paint, Style};
+    let root = tmp("styleupd");
+    let (mut a, lib_id) = publish_red(&root);
+    let (mut b, id) = consumer_with_rect(&root, &lib_id);
+    let key = b.shell.app.library_styles().into_iter().find(|s| s.name == "Brand/Red").unwrap().key;
+    let local = b.shell.app.use_library_style(&lib_id, &key).expect("imported");
+    let red = Style::Fill(vec![Paint::solid(Color::rgb(255, 0, 0))]);
+    assert_eq!(format!("{:?}", b.app().doc.styles[&local]), format!("{red:?}"));
+    b.shell.app.apply_style(&[id], &local);
+
+    // A turns the style blue and republishes; B applies the update.
+    a.shell.app.doc.styles.insert("Brand/Red".into(), Style::Fill(vec![Paint::solid(Color::rgb(0, 0, 255))]));
+    assert!(a.shell.app.publish_file());
+    assert_eq!(a.app().doc.library.published.as_ref().unwrap().version, 2);
+    let n = b.shell.app.apply_library_updates(&lib_id, std::slice::from_ref(&key));
+    assert_eq!(n, 1);
+    assert_eq!(format!("{:?}", b.app().doc.styles[&local]), format!("{:?}", Style::Fill(vec![Paint::solid(Color::rgb(0, 0, 255))])));
+    assert_eq!(box_pixel(&b, id), [0, 0, 255]);
+    b.cmd_key(Key::Z);
+    assert_eq!(format!("{:?}", b.app().doc.styles[&local]), format!("{red:?}"), "undo restores the previous style");
+    assert_eq!(box_pixel(&b, id), [255, 0, 0]);
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn shared_libraries_follow_the_projects_library_root_and_open_its_files() {
+    let root = tmp("oneroot");
+    let mut s = Sim::with(Options { library: Some(root.clone()), ..Default::default() });
+    assert_eq!(s.app().libs.root.as_deref(), Some(root.as_path()), "attach_library points the shared libraries at the same root");
+    assert_eq!(s.shell.app.library().unwrap().root(), root.as_path());
+
+    // Publish a projects-library file: the library remembers the file id.
+    let home_file = s.app().lib.as_ref().unwrap().all_files()[0].id.clone();
+    s.shell.app.open_library_file(&home_file);
+    assert!(s.shell.app.publish_file());
+    let lib_id = s.app().doc.library.published.clone().unwrap().library_id;
+    let idx = desigma_library::Library::open(&root).unwrap().library_index(&lib_id).unwrap();
+    assert_eq!(idx.source_file.as_deref(), Some(home_file.as_str()));
+    s.shell.app.flush_autosave();
+
+    // Another file uses the library; "Go to main component" opens the first one through the home store.
+    s.shell.app.new_library_file(None);
+    assert_ne!(s.app().lib_file.as_ref().unwrap().id, home_file);
+    s.shell.app.set_library_enabled(&lib_id, true);
+    let key = {
+        let snap = s.shell.app.latest_snapshot(&lib_id).unwrap();
+        snap.assets.iter().find(|x| x.name == "Primary button").unwrap().key.clone()
+    };
+    let inst = s.shell.app.drop_library_asset(&lib_id, &key, desigma_doc::Vec2::new(40.0, 40.0)).unwrap();
+    s.shell.app.go_to_main(inst);
+    assert_eq!(s.app().lib_file.as_ref().unwrap().id, home_file);
+    assert!(!s.app().selection.is_empty(), "the main component is selected");
+    let _ = std::fs::remove_dir_all(root);
+}

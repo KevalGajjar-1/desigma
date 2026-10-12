@@ -420,9 +420,42 @@ impl State {
 }
 
 pub struct StyleItem {
+    /// Style key in the document, or the asset key for a library style.
     pub key: String,
     pub name: String,
     pub paint: Paint,
+    /// (library id, library name) for styles that still live in an enabled library.
+    pub library: Option<(String, String)>,
+}
+
+const STYLE_ROW: f32 = 32.0;
+const STYLE_HEAD: f32 = 24.0;
+const STYLE_MAX_H: f32 = 12.0 * STYLE_ROW;
+
+/// Rows of the Libraries tab: the document's own styles, then one section per library.
+enum StyleRow<'a> {
+    Head(&'a str),
+    Item(&'a StyleItem),
+}
+
+fn style_rows(items: &[StyleItem]) -> Vec<StyleRow<'_>> {
+    let mut rows: Vec<StyleRow> = items.iter().filter(|s| s.library.is_none()).map(StyleRow::Item).collect();
+    let mut seen: Vec<&str> = Vec::new();
+    for s in items {
+        let Some((id, name)) = &s.library else { continue };
+        if seen.contains(&id.as_str()) {
+            continue;
+        }
+        seen.push(id);
+        rows.push(StyleRow::Head(name));
+        rows.extend(items.iter().filter(|o| o.library.as_ref().is_some_and(|(i, _)| i == id)).map(StyleRow::Item));
+    }
+    rows
+}
+
+fn style_body_height(items: &[StyleItem]) -> f32 {
+    let h: f32 = style_rows(items).iter().map(|r| if matches!(r, StyleRow::Head(_)) { STYLE_HEAD } else { STYLE_ROW }).sum();
+    h.clamp(STYLE_ROW, STYLE_MAX_H)
 }
 
 pub struct Env<'a> {
@@ -445,14 +478,15 @@ pub struct Out {
     pub remove: bool,
     pub want_image: bool,
     pub apply_style: Option<String>,
+    /// (library id, asset key) of a library style to import and apply.
+    pub apply_library_style: Option<(String, String)>,
 }
 
 /// Total panel height for a layout.
 pub fn panel_height(env: &Env, mode: Mode, tab: Tab, source: usize) -> f32 {
     let mut y = HEADER_H;
     if tab == Tab::Libraries {
-        let rows = env.styles.len().clamp(1, 12);
-        return y + 8.0 + rows as f32 * 32.0 + 8.0;
+        return y + 8.0 + style_body_height(env.styles) + 8.0;
     }
     if env.paint_types {
         y += PAINT_ROW_H;
@@ -642,6 +676,7 @@ pub fn show(ui: &mut Ui, pos: Pos2, st: &mut State, paint: &mut Paint, env: &Env
         }
         let w = text_width(ui.painter(), label, &tab_font) + 16.0;
         let r = Rect::from_min_size(Pos2::new(tab_x, rect.top() + 8.0), Vec2::new(w, 24.0));
+        super::record(ui, &format!("picker-tab:{label}"), r);
         let resp = ui.interact(r, ui.id().with(("picker-tab", label)), Sense::click());
         // Without Libraries (page background, shadows) the header is a plain title.
         let plain = !env.paint_types;
@@ -675,6 +710,7 @@ pub fn show(ui: &mut Ui, pos: Pos2, st: &mut State, paint: &mut Paint, env: &Env
     }
     if env.can_add_style {
         let add_r = close_r.translate(Vec2::new(-28.0, 0.0));
+        super::record(ui, "picker-add-style", add_r);
         if icon_button(ui, add_r, "picker-add-style", Icon::Plus, false, "Create style").clicked() {
             out.add_style = true;
         }
@@ -953,28 +989,46 @@ pub fn show(ui: &mut Ui, pos: Pos2, st: &mut State, paint: &mut Paint, env: &Env
 
 fn libraries(ui: &mut Ui, rect: Rect, st: &mut State, env: &Env, out: &mut Out) {
     let _ = st;
-    let mut y = rect.top() + HEADER_H + 8.0;
+    let body = Rect::from_min_size(Pos2::new(rect.left(), rect.top() + HEADER_H + 8.0), Vec2::new(rect.width(), style_body_height(env.styles)));
     if env.styles.is_empty() {
-        let r = Rect::from_min_size(Pos2::new(rect.left() + PAD, y), Vec2::new(AREA, 32.0));
+        let r = Rect::from_min_size(Pos2::new(rect.left() + PAD, body.top()), Vec2::new(AREA, STYLE_ROW));
         text_on_baseline(ui.painter(), r.left(), centered_baseline(r, &theme::font_body()), "No color styles", theme::font_body(), theme::TEXT_TERTIARY);
         return;
     }
-    for (i, s) in env.styles.iter().take(12).enumerate() {
-        let r = Rect::from_min_size(Pos2::new(rect.left() + 8.0, y), Vec2::new(W - 16.0, 32.0));
-        let resp = ui.interact(r, ui.id().with(("picker-style", i)), Sense::click());
-        if resp.hovered() {
-            ui.painter().rect_filled(r, theme::cr(theme::RADIUS_MEDIUM), theme::BG_HOVER);
+    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(body));
+    egui::ScrollArea::vertical().id_salt("picker-styles").auto_shrink([false, false]).show(&mut child, |ui| {
+        ui.spacing_mut().item_spacing = Vec2::ZERO;
+        for (i, row) in style_rows(env.styles).into_iter().enumerate() {
+            match row {
+                StyleRow::Head(name) => {
+                    let (r, _) = ui.allocate_exact_size(Vec2::new(body.width(), STYLE_HEAD), Sense::hover());
+                    let font = theme::font_small();
+                    let name = elide(ui.painter(), name, &font, r.width() - 24.0);
+                    text_on_baseline(ui.painter(), r.left() + 16.0, centered_baseline(r, &font), &name, font, theme::TEXT_TERTIARY);
+                }
+                StyleRow::Item(s) => {
+                    let (full, _) = ui.allocate_exact_size(Vec2::new(body.width(), STYLE_ROW), Sense::hover());
+                    let r = full.shrink2(Vec2::new(8.0, 0.0));
+                    let resp = ui.interact(r, ui.id().with(("picker-style", i)), Sense::click());
+                    if resp.hovered() {
+                        ui.painter().rect_filled(r, theme::cr(theme::RADIUS_MEDIUM), theme::BG_HOVER);
+                    }
+                    let c = Pos2::new(r.left() + theme::STYLE_SWATCH_CX, r.center().y);
+                    swatch_circle(ui.painter(), c, theme::STYLE_SWATCH / 2.0, &[preview_color(&s.paint)]);
+                    let font = theme::font_body_strong();
+                    let name = elide(ui.painter(), &s.name, &font, r.width() - 36.0);
+                    text_on_baseline(ui.painter(), r.left() + theme::STYLE_LABEL_X, centered_baseline(r, &font), &name, font, theme::TEXT);
+                    crate::widgets::record(ui, &format!("picker-style:{}", s.name), r);
+                    if resp.clicked() {
+                        match &s.library {
+                            Some((lib, _)) => out.apply_library_style = Some((lib.clone(), s.key.clone())),
+                            None => out.apply_style = Some(s.key.clone()),
+                        }
+                    }
+                }
+            }
         }
-        let c = Pos2::new(r.left() + theme::STYLE_SWATCH_CX, r.center().y);
-        swatch_circle(ui.painter(), c, theme::STYLE_SWATCH / 2.0, &[preview_color(&s.paint)]);
-        let font = theme::font_body_strong();
-        let name = elide(ui.painter(), &s.name, &font, r.width() - 36.0);
-        text_on_baseline(ui.painter(), r.left() + theme::STYLE_LABEL_X, centered_baseline(r, &font), &name, font, theme::TEXT);
-        if resp.clicked() {
-            out.apply_style = Some(s.key.clone());
-        }
-        y += 32.0;
-    }
+    });
 }
 
 /// 24px dropdown button with the picker's look (bg + 1px border). Returns the picked index.

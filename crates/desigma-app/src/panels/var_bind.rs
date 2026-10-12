@@ -13,6 +13,10 @@ use crate::widgets::{self};
 use desigma_doc::*;
 use egui::{Align2, Context, Id, Pos2, Rect, Sense, Ui, Vec2};
 
+/// Picker ids of library variables: `LIB_PREFIX <library id> LIB_SEP <asset key>`.
+const LIB_PREFIX: &str = "lib\u{1f}";
+const LIB_SEP: char = '\u{1e}';
+
 /// The variable bound to `key` on `node`, if any.
 pub fn bound_var<'a>(app: &'a App, node: NodeId, key: &str) -> Option<&'a Variable> {
     let id = app.doc.get(node)?.variables.bindings.get(key)?;
@@ -44,7 +48,7 @@ pub fn pill_field(app: &mut App, ui: &mut Ui, rect: Rect, sel: &[NodeId], keys: 
 
 /// Small hexagon button shown on hover that opens the variable picker.
 pub fn hover_button(app: &mut App, ui: &mut Ui, rect: Rect, sel: &[NodeId], keys: &[&str], kind: VariableKind) {
-    if app.doc.variables.is_empty()
+    if app.doc.variables.is_empty() && app.doc.library.enabled.is_empty()
         || !ui.rect_contains_pointer(rect) && app.vars.bind_picker.as_ref().is_none_or(|b| b.keys.first().map(String::as_str) != Some(keys[0]))
     {
         return;
@@ -89,8 +93,16 @@ pub fn bind_picker(app: &mut App, ctx: &Context) {
             }
         }
     }
-    // shared libraries: hook until `App::library_variables()` exists
-    items.extend(app.library_variables_hook().into_iter().filter(|i| i.kind == bp.kind));
+    // Variables of enabled libraries, one section per library; copied into the file when picked.
+    for lv in app.library_variables().into_iter().filter(|v| v.kind == bp.kind && v.local_id.is_none() && scope_allows(&v.scopes, &key0, &kind_node)) {
+        let Some(render) = app.library_render_doc(&lv.library_id) else { continue };
+        let Some(v) = render.variables.get(lv.key.strip_prefix("var:").unwrap_or(&lv.key)) else { continue };
+        let mut item = pick_item(&render, v);
+        item.id = format!("{LIB_PREFIX}{}{LIB_SEP}{}", lv.library_id, lv.key);
+        item.group = lv.library_name.clone();
+        item.name = lv.name.clone();
+        items.push(item);
+    }
     let title = match bp.kind {
         VariableKind::Color => "Colors",
         VariableKind::Number => "Numbers",
@@ -104,7 +116,10 @@ pub fn bind_picker(app: &mut App, ctx: &Context) {
     match picker(ctx, Id::new("bind-picker"), pos, Some(bp.anchor), title, &mut bp.query, &items, current.as_deref(), current.is_some()) {
         PickResult::Open => app.vars.bind_picker = Some(bp),
         PickResult::Closed => {}
-        PickResult::Picked(id) => app.bind_variable(&bp.nodes, &key_refs, &id),
+        PickResult::Picked(id) => match id.strip_prefix(LIB_PREFIX).and_then(|r| r.split_once(LIB_SEP)) {
+            Some((lib, key)) => app.bind_library_variable(&bp.nodes, &key_refs, lib, key),
+            None => app.bind_variable(&bp.nodes, &key_refs, &id),
+        },
         PickResult::Detach => app.detach_variable(&bp.nodes, &key_refs),
     }
 }
