@@ -249,6 +249,9 @@ fn max_error(pts: &[Vec2], c: &Cubic, u: &[f32]) -> (f32, usize) {
     worst
 }
 
+/// cos of the largest turn (start to end tangent) one fitted curve may make: 100 degrees.
+const MAX_TURN_COS: f32 = -0.173_648_2;
+
 fn fit_cubic(pts: &[Vec2], t1: Vec2, t2: Vec2, err: f32, out: &mut Vec<Cubic>) {
     if pts.len() == 2 {
         let d = dist(pts[0], pts[1]) / 3.0;
@@ -258,11 +261,17 @@ fn fit_cubic(pts: &[Vec2], t1: Vec2, t2: Vec2, err: f32, out: &mut Vec<Cubic>) {
     let mut u = chord_params(pts);
     let mut c = generate(pts, &u, t1, t2);
     let (mut e, mut split) = max_error(pts, &c, &u);
-    if e < err {
+    // a curve that turns too far reads as a blob however well it fits: a full circle takes four
+    let turns_too_far = pts.len() >= 5 && dot(t1, mul(t2, -1.0)) < MAX_TURN_COS;
+    if e < err && !turns_too_far {
         out.push(c);
         return;
     }
-    if e < err * 16.0 {
+    if turns_too_far {
+        e = e.max(err);
+        split = pts.len() / 2;
+    }
+    if e < err * 16.0 && !turns_too_far {
         for _ in 0..6 {
             u = pts.iter().zip(&u).map(|(p, &t)| newton(&c, *p, t)).collect();
             c = generate(pts, &u, t1, t2);
@@ -551,7 +560,7 @@ mod tests {
     }
 
     #[test]
-    fn open_arc_is_one_curve_within_tolerance() {
+    fn open_arc_is_few_curves_within_tolerance() {
         let pts: Vec<Vec2> = (0..=40)
             .map(|i| {
                 let a = std::f32::consts::PI * i as f32 / 40.0;
