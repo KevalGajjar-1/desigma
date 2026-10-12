@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-desigma">
+    <comment>desigma document</comment>
+    <glob pattern="*.desigma"/>
+  </mime-type>
+  <mime-type type="application/x-figma-design">
+    <comment>Figma design file</comment>
+    <glob pattern="*.fig"/>
+  </mime-type>
+</mime-info>

@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=desigma
+GenericName=Design editor
+Comment=Free, open-source Figma-style design editor
+Exec=desigma %F
+Icon=desigma
+Terminal=false
+Categories=Graphics;VectorGraphics;Design;
+MimeType=application/x-desigma;application/x-figma-design;
+Keywords=design;vector;figma;prototype;
+StartupWMClass=desigma
