@@ -10,6 +10,7 @@ members = [
     "crates/desigma-diff",
     "crates/desigma-export",
     "crates/desigma-svg",
+    "crates/desigma-gpu",
 ]
 
 [workspace.package]
@@ -26,6 +27,7 @@ desigma-library = { path = "crates/desigma-library" }
 desigma-fonts = { path = "crates/desigma-fonts" }
 desigma-export = { path = "crates/desigma-export" }
 desigma-svg = { path = "crates/desigma-svg" }
+desigma-gpu = { path = "crates/desigma-gpu" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"

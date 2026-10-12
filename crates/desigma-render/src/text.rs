@@ -500,8 +500,8 @@ fn compute_layout(fonts: &mut Fonts, props: &TextProps, size: Vec2) -> TextLayou
 // ------------------------------------------------------------------ outlines (SVG export)
 /// A run of glyphs of one style on one line, as outlines (and the text they show).
 #[derive(Clone, Debug)]
-pub struct OutlineSpan {
-    /// Index into [`TextOutlines::styles`].
+pub struct GlyphRun {
+    /// Index into [`TextRuns::styles`].
     pub style: usize,
     /// Left edge of the run, node-local px.
     pub x: f32,
@@ -512,17 +512,17 @@ pub struct OutlineSpan {
 }
 
 #[derive(Clone, Debug)]
-pub struct OutlineLine {
+pub struct RunLine {
     pub baseline: f32,
-    pub spans: Vec<OutlineSpan>,
+    pub spans: Vec<GlyphRun>,
 }
 
 /// The laid out text of a node as per-line spans of vector outlines, for exporters.
 #[derive(Clone, Debug)]
-pub struct TextOutlines {
+pub struct TextRuns {
     /// 0 = base style, i + 1 = `runs[i].style`.
     pub styles: Vec<d::TextStyle>,
-    pub lines: Vec<OutlineLine>,
+    pub lines: Vec<RunLine>,
 }
 
 fn path_cmds(path: &sk::Path, out: &mut Vec<d::PathCmd>) {
@@ -541,16 +541,16 @@ fn path_cmds(path: &sk::Path, out: &mut Vec<d::PathCmd>) {
 /// Lays out `props` in a box of `size` exactly as [`layout`] does, but keeps the glyph runs per
 /// line with their outlines as path commands. Right-to-left runs list their text in shaping
 /// order (right to left); the outlines are exact either way.
-pub fn text_outlines(props: &TextProps, size: Vec2) -> TextOutlines {
-    with_fonts(|f| compute_outlines(f, props, size))
+pub fn text_runs(props: &TextProps, size: Vec2) -> TextRuns {
+    with_fonts(|f| compute_runs(f, props, size))
 }
 
-fn compute_outlines(fonts: &mut Fonts, props: &TextProps, size: Vec2) -> TextOutlines {
+fn compute_runs(fonts: &mut Fonts, props: &TextProps, size: Vec2) -> TextRuns {
     let (shaper, paras, fl) = laid_out(fonts, props, size);
     let mut lines = Vec::new();
     for (li, line) in fl.lines.iter().enumerate() {
         let para: &Para = &paras[line.para];
-        let mut spans: Vec<OutlineSpan> = Vec::new();
+        let mut spans: Vec<GlyphRun> = Vec::new();
         for m in fl.markers.iter().filter(|m| m.line == li) {
             let mut pb = sk::PathBuilder::new();
             marker_outline(fonts, &mut pb, m, line.baseline);
@@ -565,7 +565,7 @@ fn compute_outlines(fonts: &mut Fonts, props: &TextProps, size: Vec2) -> TextOut
                 (None, Some(mk)) => mk.label().unwrap_or_default(),
                 (None, None) => String::new(),
             };
-            spans.push(OutlineSpan { style: m.style, x: m.x, text, outline });
+            spans.push(GlyphRun { style: m.style, x: m.x, text, outline });
         }
         let first_glyph = spans.len();
         for g in &line.glyphs {
@@ -573,7 +573,7 @@ fn compute_outlines(fonts: &mut Fonts, props: &TextProps, size: Vec2) -> TextOut
                 continue;
             }
             if spans.len() == first_glyph || spans.last().map(|s| s.style) != Some(g.style) {
-                spans.push(OutlineSpan { style: g.style, x: g.x, text: String::new(), outline: Vec::new() });
+                spans.push(GlyphRun { style: g.style, x: g.x, text: String::new(), outline: Vec::new() });
             }
             let span = spans.last_mut().unwrap();
             span.x = span.x.min(g.x);
@@ -606,10 +606,10 @@ fn compute_outlines(fonts: &mut Fonts, props: &TextProps, size: Vec2) -> TextOut
             }
         }
         if !spans.is_empty() {
-            lines.push(OutlineLine { baseline: line.baseline, spans });
+            lines.push(RunLine { baseline: line.baseline, spans });
         }
     }
-    TextOutlines { styles: shaper.styles.clone(), lines }
+    TextRuns { styles: shaper.styles.clone(), lines }
 }
 
 // ------------------------------------------------------------------ editor geometry

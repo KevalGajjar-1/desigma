@@ -1,4 +1,4 @@
-//! Text layout for SVG export. It is the renderer's layout itself (`desigma_render::text_outlines`:
+//! Text layout for SVG export. It is the renderer's layout itself (`desigma_render::text_runs`:
 //! same shaping, wrapping, paragraphs, lists, OpenType features, leading trim and writing
 //! direction), reshaped into per-line spans so the writer can emit either `<text>` lines or
 //! outlined glyph paths.
@@ -36,7 +36,7 @@ pub struct TextOut {
 
 /// Lays out `props` in a box of `size`.
 pub fn layout(props: &TextProps, size: Vec2) -> TextOut {
-    let o = desigma_render::text_outlines(props, size);
+    let o = desigma_render::text_runs(props, size);
     TextOut {
         styles: o.styles,
         lines: o

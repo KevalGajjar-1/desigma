@@ -30,6 +30,18 @@ pub fn load_author(root: &Path) -> Option<String> {
     read(root).get("author").and_then(|v| v.as_str()).map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
 }
 
+/// A boolean app setting stored beside the author name.
+pub fn load_flag(root: &Path, key: &str) -> Option<bool> {
+    read(root).get(key).and_then(|v| v.as_bool())
+}
+
+pub fn save_flag(root: &Path, key: &str, value: bool) -> Result<(), String> {
+    let mut map = read(root);
+    map.insert(key.into(), value.into());
+    let text = serde_json::to_string_pretty(&serde_json::Value::Object(map)).map_err(|e| e.to_string())?;
+    desigma_library::write_atomic(&root.join(FILE), text.as_bytes()).map_err(|e| format!("Cannot save settings: {e}"))
+}
+
 /// Saves the author name (an empty name resets to the OS user name).
 pub fn save_author(root: &Path, name: &str) -> Result<(), String> {
     let mut map = read(root);

@@ -134,7 +134,7 @@ fn premultiplied_pixmap(img: &image::RgbaImage) -> Option<sk::Pixmap> {
 }
 
 /// Decoded image, optionally reduced to `want` size (cached).
-fn load_image(doc: &Document, image_ref: &str, want: Option<(u32, u32)>) -> Option<Rc<sk::Pixmap>> {
+pub(crate) fn load_image(doc: &Document, image_ref: &str, want: Option<(u32, u32)>) -> Option<Rc<sk::Pixmap>> {
     let data = doc.images.get(image_ref)?;
     let id = hash_bytes(image_ref, data);
     let (kw, kh) = want.unwrap_or((0, 0));

@@ -81,6 +81,8 @@ pub enum Action {
     SaveVersion,
     /// Preferences -> Your name.
     YourName,
+    /// Preferences -> Use GPU rendering.
+    ToggleGpu,
     Shortcuts,
     AboutDesigma,
     OpenGithub,
@@ -164,6 +166,7 @@ pub fn run(app: &mut App, ctx: &Context, a: Action) {
         Action::ToggleVersionHistory => app.toggle_version_history(),
         Action::SaveVersion => app.begin_save_version(),
         Action::YourName => app.ask_author_name(),
+        Action::ToggleGpu => app.toggle_gpu(),
         Action::Shortcuts => app.show_shortcuts(),
         Action::AboutDesigma => app.show_about(),
         Action::OpenGithub => app.confirm_open_github(),
@@ -370,7 +373,13 @@ fn main_nodes(app: &App) -> Vec<Node> {
         submenu("Vector", vector).sep(),
         stub_sub("Plugins"),
         stub_sub("Widgets"),
-        submenu("Preferences", vec![leaf("Your name…", "", Action::YourName)]),
+        submenu(
+            "Preferences",
+            vec![
+                leaf("Your name…", "", Action::YourName),
+                leaf("Use GPU rendering", "", Action::ToggleGpu).on(app.canvas.gpu.active()).off(!app.canvas.gpu.available),
+            ],
+        ),
         leaf("Libraries", "", Action::About).off(true).sep(),
         submenu("Help", help),
     ]

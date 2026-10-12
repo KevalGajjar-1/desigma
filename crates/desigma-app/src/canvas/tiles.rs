@@ -40,6 +40,8 @@ pub struct TileView {
     settled_zoom: f32,
     last_zoom: f32,
     zoom_changed_at: f64,
+    /// The document was replaced: the GPU geometry cache must be dropped.
+    pub gpu_reset: bool,
 }
 
 impl TileView {
@@ -51,6 +53,7 @@ impl TileView {
     /// Re-renders everything (stale tiles stay visible until replaced).
     pub fn invalidate_all(&mut self) {
         self.cache.invalidate_all();
+        self.gpu_reset = true;
     }
 }
 
@@ -86,8 +89,24 @@ fn upload(ctx: &Context, tv: &mut TileView, tile: &Tile, linear: bool) -> egui::
     id
 }
 
+/// Document revision for this frame: bumped once when the document changed.
+pub fn take_rev(app: &mut App) -> u64 {
+    let c = &mut app.canvas;
+    if c.dirty {
+        c.dirty = false;
+        c.tiles.rev += 1;
+    }
+    if std::mem::take(&mut c.tiles.gpu_reset) {
+        c.gpu.reset();
+    }
+    c.tiles.rev
+}
+
 /// Renders (as far as the budget allows) and paints the page into `rect`.
 pub fn paint(app: &mut App, ui: &Ui, rect: ERect) {
+    if super::gpu::paint(app, ui, rect) {
+        return;
+    }
     let ctx = ui.ctx();
     let ppp = ctx.pixels_per_point();
     let (w, h) = ((rect.width() * ppp).round().max(1.0), (rect.height() * ppp).round().max(1.0));
@@ -98,11 +117,8 @@ pub fn paint(app: &mut App, ui: &Ui, rect: ERect) {
 
     let (page, offset, zoom) = (app.page, app.view.offset, app.view.zoom);
     let now = ctx.input(|i| i.time);
+    take_rev(app);
     let c = &mut app.canvas;
-    if c.dirty {
-        c.dirty = false;
-        c.tiles.rev += 1;
-    }
     let tv = &mut c.tiles;
     tv.frame_no += 1;
 
