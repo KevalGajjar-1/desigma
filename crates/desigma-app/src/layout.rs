@@ -281,6 +281,8 @@ pub fn fit_group(doc: &mut Document, ed: &mut Edit, id: NodeId) {
 
 /// After any edit on `start`, re-run layout/fit on its ancestors.
 pub fn relayout_up(doc: &mut Document, ed: &mut Edit, start: NodeId) {
+    // on a board, connectors follow the moved node live (every move, resize and rotate comes through here)
+    crate::board::connect::reroute_touched(doc, ed);
     let mut cur = doc.get(start).and_then(|n| n.parent);
     while let Some(p) = cur {
         let is_group = matches!(doc.get(p).map(|n| &n.kind), Some(NodeKind::Group));

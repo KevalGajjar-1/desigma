@@ -47,6 +47,13 @@ pub enum Icon {
     Pencil,
     Text,
     Comment,
+    // board tools and layer kinds
+    Sticky,
+    Shapes,
+    Connector,
+    Marker,
+    Highlighter,
+    Stamp,
     // layer kinds
     Group,
     Vector,
@@ -162,6 +169,12 @@ impl Icon {
         Icon::Pencil,
         Icon::Text,
         Icon::Comment,
+        Icon::Sticky,
+        Icon::Shapes,
+        Icon::Connector,
+        Icon::Marker,
+        Icon::Highlighter,
+        Icon::Stamp,
         Icon::Group,
         Icon::Vector,
         Icon::Component,
@@ -264,6 +277,12 @@ impl Icon {
             Icon::Pencil => "pencil",
             Icon::Text => "type",
             Icon::Comment => "message-circle",
+            Icon::Sticky => "sticky-note",
+            Icon::Shapes => "shapes",
+            Icon::Connector => "corner-down-right",
+            Icon::Marker => "pencil-line",
+            Icon::Highlighter => "highlighter",
+            Icon::Stamp => "stamp",
             Icon::Group => "group",
             Icon::Vector => "spline",
             Icon::Component => "component",
@@ -374,6 +393,12 @@ lucide!(
     "pencil",
     "type",
     "message-circle",
+    "sticky-note",
+    "shapes",
+    "corner-down-right",
+    "pencil-line",
+    "highlighter",
+    "stamp",
     "group",
     "spline",
     "component",
@@ -529,7 +554,7 @@ mod tests {
         for i in Icon::ALL {
             assert!(seen.insert(*i), "{i:?} listed twice");
         }
-        assert_eq!(seen.len(), 97);
+        assert_eq!(seen.len(), 103);
     }
 
     #[test]

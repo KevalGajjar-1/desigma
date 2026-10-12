@@ -2,6 +2,7 @@
 //! alignment, clipboard, pages, file IO). Everything goes through `Tx`.
 
 use crate::app::{App, View};
+use crate::canvas::tools::Tool;
 use crate::clipboard;
 use crate::edit::{Edit, Tx};
 use crate::io;
@@ -308,10 +309,11 @@ impl App {
         }
         let mut tx = Tx::new();
         let mut new_sel = Vec::new();
-        for id in tops {
+        // one clip for the whole selection, so connectors between duplicated nodes join the copies
+        let copies = clipboard::capture(&self.doc, &tops).map(|c| clipboard::instantiate(&mut self.doc, &c)).unwrap_or_default();
+        for (id, mut nodes) in tops.into_iter().zip(copies) {
             let Some(parent) = self.doc.get(id).and_then(|n| n.parent) else { continue };
             let index = self.doc.get(parent).and_then(|p| p.children.iter().position(|c| *c == id)).map(|i| i + 1).unwrap_or(usize::MAX);
-            let mut nodes = clipboard::clone_subtree(&mut self.doc, id);
             let in_al = self.doc.get(parent).and_then(|p| p.kind.frame_props()).map(|f| f.auto_layout.is_some()).unwrap_or(false);
             if let Some(root) = nodes.first_mut() {
                 if !in_al {
@@ -803,6 +805,12 @@ impl App {
         self.hover = None;
         self.file_path = path;
         self.canvas.reset_interaction();
+        // a design tool means nothing on a board and the other way round
+        self.tool = Tool::Move;
+        self.board.dots = None;
+        self.board.target = None;
+        self.board.tool_menu = None;
+        self.board.bar_menu = None;
         self.layers.reset();
         self.fonts.load_for(&self.doc);
         self.changed();
@@ -868,6 +876,11 @@ impl App {
         let mut d = Document::new("Untitled");
         d.add_page("Page 1");
         self.replace_document(d, None);
+    }
+
+    /// A new, empty board (whiteboard) document.
+    pub fn new_board_document(&mut self) {
+        self.replace_document(crate::board::create::new_document("Untitled"), None);
     }
 
     pub fn export_selection(&mut self) {

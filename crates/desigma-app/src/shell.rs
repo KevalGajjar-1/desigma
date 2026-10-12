@@ -59,6 +59,8 @@ impl Shell {
             Some("no-selection") => demo::reference_document(),
             Some("variables") => demo::variables_document(),
             Some(crate::protovars::FIXTURE) => crate::protovars::document(),
+            Some("board") => crate::board::demo::document(),
+            Some("board-empty") => crate::board::create::new_document("Untitled"),
             Some(f) if crate::vecfixture::FIXTURES.contains(&f) => crate::vecfixture::document(),
             _ => demo::demo_document(),
         });
@@ -384,8 +386,12 @@ impl Shell {
                 } else if let Some(n) = app.selection.first().filter(|_| app.selection.len() == 1).and_then(|s| app.doc.get(*s)) {
                     // A single text or vector layer is entered for editing; anything else selects its children.
                     let id = n.id;
-                    if matches!(n.kind, desigma_doc::NodeKind::Text(_)) {
+                    if matches!(n.kind, desigma_doc::NodeKind::Text(_))
+                        || matches!(n.kind, desigma_doc::NodeKind::Sticky(_) | desigma_doc::NodeKind::ShapeWithText(_))
+                    {
                         interact::begin_text_edit(app, id);
+                    } else if matches!(n.kind, desigma_doc::NodeKind::Connector(_)) {
+                        crate::board::create::edit_label(app, id);
                     } else if canvas::vector::is_vector(app, id) {
                         // vectors and basic shapes (which become vectors on the first edit)
                         canvas::vector::enter(app, id);
@@ -395,6 +401,10 @@ impl Shell {
                 } else {
                     menus::run(app, ctx, Action::SelectChildren);
                 }
+            }
+            // board: Tab starts the next sticky note to the right of the selected one
+            Key::Tab if app.is_board() && !m.shift => {
+                crate::board::create::tab_next(app);
             }
             Key::Backslash => menus::run(app, ctx, Action::SelectParent),
             Key::ArrowLeft | Key::ArrowRight | Key::ArrowUp | Key::ArrowDown => {
@@ -417,7 +427,8 @@ impl Shell {
             Key::Quote if m.shift => menus::run(app, ctx, Action::TogglePixelGrid),
             k => {
                 if !m.alt {
-                    if let Some(t) = Tool::from_key(k, m.shift) {
+                    let tool = if app.is_board() { Tool::from_key_board(k, m.shift) } else { Tool::from_key(k, m.shift) };
+                    if let Some(t) = tool {
                         app.set_tool(t);
                     }
                 }
@@ -584,7 +595,10 @@ impl Shell {
         let panel_w = theme::LEFT_PANEL_WIDTH + theme::BORDER_WIDTH;
         let rail_rect = Rect::from_min_max(full.min, Pos2::new(full.left() + rail_w, full.bottom()));
         let left_rect = Rect::from_min_max(Pos2::new(rail_rect.right(), full.top()), Pos2::new(rail_rect.right() + panel_w, full.bottom()));
-        let right_rect = Rect::from_min_max(Pos2::new(full.right() - theme::RIGHT_PANEL_WIDTH - theme::BORDER_WIDTH, full.top()), full.max);
+        // a board has no right panel: its contextual toolbar floats over the canvas instead
+        let board = self.app.is_board();
+        let right_w = if board { 0.0 } else { theme::RIGHT_PANEL_WIDTH + theme::BORDER_WIDTH };
+        let right_rect = Rect::from_min_max(Pos2::new(full.right() - right_w, full.top()), full.max);
         let canvas_left = if self.app.ui.left_collapsed { rail_rect.right() } else { left_rect.right() };
         let canvas_rect = Rect::from_min_max(Pos2::new(canvas_left, full.top()), Pos2::new(right_rect.left(), full.bottom()));
 
@@ -606,8 +620,14 @@ impl Shell {
             } else {
                 left::show(&mut self.app, ui, left_rect);
             }
-            right::show(&mut self.app, ui, right_rect);
-            toolbar::show(&mut self.app, ui, canvas_rect_for_toolbar(full));
+            if board {
+                crate::board::toolbar::show(&mut self.app, ui, canvas_rect_for_toolbar(full));
+                crate::board::bar::show(&mut self.app, ui, canvas_rect);
+                crate::board::canvas::zoom_pill(&mut self.app, ui, canvas_rect);
+            } else {
+                right::show(&mut self.app, ui, right_rect);
+                toolbar::show(&mut self.app, ui, canvas_rect_for_toolbar(full));
+            }
             crate::history::banner::show(&mut self.app, ui, canvas_rect);
             self.context_menu(ui, canvas_rect);
             menus::show(&mut self.app, &ctx);

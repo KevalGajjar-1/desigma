@@ -116,6 +116,26 @@ Every screenshot here is the real app, captured offscreen with its own <code>--s
       <b>Library variables</b> and color styles appear in the same pickers; using one copies it into the file in the same undo step.
     </td>
   </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="docs/images/desigma-board.png" alt="A board on a dotted canvas: a section holding three pastel sticky notes, a diamond and a rounded shape joined by elbow connectors with a yes label, loose stamps, a floating toolbar with color swatches, text size and alignment above the selected note, and the board toolbar at the bottom" width="100%">
+      <br>
+      <sub>A board: stickies, connectors and a section, with the contextual toolbar above the selection.</sub>
+      <h3>Boards for thinking out loud</h3>
+      New board in the File menu or on the home screen opens a whiteboard with its own toolbar: stickies whose text shrinks to fit, shapes with text, markers, stamps and sections. <kbd>Tab</kbd> starts the next sticky, <kbd>Alt</kbd>-drag duplicates.
+      <br><br>
+      <b>Connectors</b> come out of the magnet dots on any shape, route around the boxes they join and follow them when they move. FigJam files open as boards.
+    </td>
+    <td width="50%" valign="top">
+      <img src="docs/images/desigma-board-home.png" alt="The home screen with two board cards, one empty on a dotted canvas and one showing a thumbnail of its whole page, both with a Board badge, next to a design file card" width="100%">
+      <br>
+      <sub>Boards on the home screen: a Board badge and a thumbnail of the whole page.</sub>
+      <h3>Design files and boards side by side</h3>
+      The home screen has separate New design file and New board buttons, and a board's card shows its dotted canvas. Boards save and autosave like any other file.
+      <br><br>
+      <b>Export</b> a board to PNG or vector SVG, or round-trip it through Figma REST JSON with its stickies, connectors, shapes and stamps.
+    </td>
+  </tr>
 </table>
 
 <br>

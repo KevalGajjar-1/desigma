@@ -106,6 +106,8 @@ pub struct Home {
     pub scroll: f32,
     pub side_scroll: f32,
     pub thumbs: thumb::Textures,
+    /// Design file or board, per file.
+    pub kinds: thumb::Kinds,
 }
 
 impl Default for Home {
@@ -132,6 +134,7 @@ impl Home {
             scroll: 0.0,
             side_scroll: 0.0,
             thumbs: Default::default(),
+            kinds: Default::default(),
         }
     }
 
@@ -213,6 +216,7 @@ pub enum Act {
     Open(String),
     OpenWindow(String),
     NewFile,
+    NewBoard,
     Import,
     NewProject,
     RenameProject(String),
@@ -395,6 +399,13 @@ pub fn apply(app: &mut App, act: Act) {
                 None => app.home.as_ref().and_then(|h| h.snap.projects.first().map(|p| (p.id.clone(), None))),
             };
             app.new_library_file(target);
+        }
+        Act::NewBoard => {
+            let target = match app.home_target() {
+                Some(t) => Some(t),
+                None => app.home.as_ref().and_then(|h| h.snap.projects.first().map(|p| (p.id.clone(), None))),
+            };
+            app.new_library_board(target);
         }
         Act::Import => {
             let paths = rfd::FileDialog::new()

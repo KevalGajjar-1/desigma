@@ -136,7 +136,7 @@ fn shapes_and_vectors() {
     assert_eq!(doc.get(u.children[1]).unwrap().name, "B");
     assert_eq!(find(&doc, "In group").parent, Some(find(&doc, "Group").id));
     assert!(matches!(&find(&doc, "Slice").kind, NodeKind::Unknown { type_name } if type_name == "SLICE"));
-    assert!(matches!(&find(&doc, "Sticky").kind, NodeKind::Unknown { type_name } if type_name == "STICKY"));
+    assert!(matches!(&find(&doc, "Sticky").kind, NodeKind::Sticky(_)), "FigJam stickies map to the board kind");
     assert!(matches!(find(&doc, "Section").kind, NodeKind::Section));
 }
 

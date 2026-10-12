@@ -113,7 +113,9 @@ pub fn paint(app: &mut App, ui: &Ui, rect: ERect) {
     let start = std::time::Instant::now();
     let bg = page_background(app);
     let painter = ui.painter().with_clip_rect(rect);
-    painter.rect_filled(rect, 0.0, bg);
+    if !app.is_board() {
+        painter.rect_filled(rect, 0.0, bg);
+    }
 
     let (page, offset, zoom) = (app.page, app.view.offset, app.view.zoom);
     let now = ctx.input(|i| i.time);

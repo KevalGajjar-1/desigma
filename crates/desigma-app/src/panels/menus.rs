@@ -16,6 +16,8 @@ use egui::{Align2, Context, Id, Key, Modifiers, Pos2, Rect, Sense, Vec2};
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Action {
     New,
+    /// File -> New board.
+    NewBoard,
     Open,
     Save,
     SaveAs,
@@ -109,6 +111,7 @@ pub enum Action {
 pub fn run(app: &mut App, ctx: &Context, a: Action) {
     match a {
         Action::New => app.new_file_here(),
+        Action::NewBoard => app.new_board_here(),
         Action::Open => app.open_dialog(),
         Action::Save => app.save(false),
         Action::SaveAs => app.save(true),
@@ -331,7 +334,8 @@ fn main_nodes(app: &App) -> Vec<Node> {
     let has_inst = !app.selected_instances().is_empty();
     let multi = app.selection.len() > 1;
     let file = vec![
-        leaf("New file", "", Action::New),
+        leaf("New design file", "", Action::New),
+        leaf("New board", "", Action::NewBoard),
         leaf("Open…", "Ctrl+O", Action::Open),
         leaf("Save", "Ctrl+S", Action::Save),
         leaf("Save as…", "Ctrl+Shift+S", Action::SaveAs),
@@ -500,7 +504,8 @@ pub fn preset_menu(ctx: &Context, app: &mut App, spec: &str, screen: Rect) -> bo
 fn file_items(app: &App) -> Vec<(MenuItem, Option<Action>)> {
     let has_sel = !app.selection.is_empty();
     vec![
-        (MenuItem::new("New file"), Some(Action::New)),
+        (MenuItem::new("New design file"), Some(Action::New)),
+        (MenuItem::new("New board"), Some(Action::NewBoard)),
         (MenuItem::new("Open…").shortcut("Ctrl+O"), Some(Action::Open)),
         (MenuItem::new("Save").shortcut("Ctrl+S"), Some(Action::Save)),
         (MenuItem::new("Save as…").shortcut("Ctrl+Shift+S"), Some(Action::SaveAs)),

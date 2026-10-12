@@ -23,6 +23,13 @@ pub enum Tool {
     Pencil,
     Text,
     Comment,
+    // board tools
+    Sticky,
+    BoardShape,
+    Connector,
+    Stamp,
+    Marker,
+    Highlighter,
 }
 
 impl Tool {
@@ -46,6 +53,12 @@ impl Tool {
             Tool::Pencil => "Pencil",
             Tool::Text => "Text",
             Tool::Comment => "Add comment",
+            Tool::Sticky => "Sticky note",
+            Tool::BoardShape => "Shape",
+            Tool::Connector => "Connector",
+            Tool::Stamp => "Stamp",
+            Tool::Marker => "Marker",
+            Tool::Highlighter => "Highlighter",
         }
     }
 
@@ -69,6 +82,12 @@ impl Tool {
             Tool::Pencil => "Shift+P",
             Tool::Text => "T",
             Tool::Comment => "C",
+            Tool::Sticky => "S",
+            Tool::BoardShape => "R",
+            Tool::Connector => "X",
+            Tool::Stamp => "E",
+            Tool::Marker => "P",
+            Tool::Highlighter => "Shift+P",
         }
     }
 
@@ -95,9 +114,47 @@ impl Tool {
         })
     }
 
+    /// Shortcut keys of a board file (no modifiers except shift): V move, H hand, P marker,
+    /// Shift+P highlighter, S sticky note, R shape, X connector, T text, Shift+S section, E stamp.
+    pub fn from_key_board(key: egui::Key, shift: bool) -> Option<Tool> {
+        use egui::Key::*;
+        Some(match (key, shift) {
+            (V, false) => Tool::Move,
+            (H, false) => Tool::Hand,
+            (P, false) => Tool::Marker,
+            (P, true) => Tool::Highlighter,
+            (S, false) => Tool::Sticky,
+            (S, true) => Tool::Section,
+            (R, false) => Tool::BoardShape,
+            (X, false) => Tool::Connector,
+            (T, false) => Tool::Text,
+            (E, false) => Tool::Stamp,
+            _ => return None,
+        })
+    }
+
     /// True for tools that create a node by dragging a box.
     pub fn is_shape_tool(self) -> bool {
-        matches!(self, Tool::Frame | Tool::Section | Tool::Slice | Tool::Rectangle | Tool::Line | Tool::Arrow | Tool::Ellipse | Tool::Polygon | Tool::Star)
+        matches!(
+            self,
+            Tool::Frame
+                | Tool::Section
+                | Tool::Slice
+                | Tool::Rectangle
+                | Tool::Line
+                | Tool::Arrow
+                | Tool::Ellipse
+                | Tool::Polygon
+                | Tool::Star
+                | Tool::Sticky
+                | Tool::BoardShape
+                | Tool::Stamp
+        )
+    }
+
+    /// Freehand tools of a board: marker strokes are pencil strokes with a thick round pen.
+    pub fn is_brush(self) -> bool {
+        matches!(self, Tool::Marker | Tool::Highlighter)
     }
 }
 
@@ -138,6 +195,8 @@ pub enum PressAction {
     /// Brush over regions with the shape builder.
     Build,
     PenPoint,
+    /// Drag a connector out of a node (or from empty canvas).
+    Connect,
     TextCreate,
     Nothing,
 }
@@ -156,7 +215,8 @@ pub fn press_action(tool: Tool, target: PressTarget, space_held: bool, middle: b
             PressTarget::Empty => PressAction::Marquee,
         },
         Tool::ShapeBuilder => PressAction::Build,
-        Tool::Pen | Tool::Pencil => PressAction::PenPoint,
+        Tool::Pen | Tool::Pencil | Tool::Marker | Tool::Highlighter => PressAction::PenPoint,
+        Tool::Connector => PressAction::Connect,
         Tool::Text => PressAction::TextCreate,
         Tool::Comment | Tool::Image => PressAction::Nothing,
         t if t.is_shape_tool() => PressAction::Draw(t),

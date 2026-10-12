@@ -12,7 +12,8 @@ pub struct Options {
     /// Open a menu after loading: `main`, `main/File`, `shape`, `palette` (for screenshots).
     pub menu: Option<String>,
     /// Built-in test document instead of the demo (`proto-vars`: a shop prototype with variables; `no-selection`: the Figma page-level reference;
-    /// `variables`; `comments`: Figma comments imported, one thread open in comment mode).
+    /// `variables`; `comments`: Figma comments imported, one thread open in comment mode;
+    /// `board`: a sample whiteboard; `board-empty`: an empty one).
     pub fixture: Option<String>,
     /// Right panel tab to show: `design` or `prototype`.
     pub tab: Option<String>,

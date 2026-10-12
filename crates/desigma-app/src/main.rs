@@ -1,4 +1,5 @@
 mod app;
+mod board;
 mod canvas;
 mod cli;
 mod clipboard;

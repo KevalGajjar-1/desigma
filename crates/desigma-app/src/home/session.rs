@@ -3,7 +3,7 @@
 
 use super::{thumb, Home, Section};
 use crate::app::App;
-use desigma_doc::Document;
+use desigma_doc::{Document, DocumentKind};
 use desigma_library::Library;
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
@@ -115,10 +115,23 @@ impl App {
         }
     }
 
-    /// Creates an empty file in `project` (or the first / a new project) and opens it.
+    /// Creates an empty design file in `project` (or the first / a new project) and opens it.
     pub fn new_library_file(&mut self, target: Option<(String, Option<String>)>) {
+        self.new_library_file_of(target, DocumentKind::Design);
+    }
+
+    /// Creates an empty board in `project` (or the first / a new project) and opens it.
+    pub fn new_library_board(&mut self, target: Option<(String, Option<String>)>) {
+        self.new_library_file_of(target, DocumentKind::Board);
+    }
+
+    fn new_library_file_of(&mut self, target: Option<(String, Option<String>)>, kind: DocumentKind) {
         let Some(lib) = self.lib.clone() else {
-            self.new_document();
+            if kind == DocumentKind::Board {
+                self.new_board_document();
+            } else {
+                self.new_document();
+            }
             return;
         };
         let result = (|| {
@@ -129,8 +142,14 @@ impl App {
                     None => (lib.create_project("My project")?.id, None),
                 },
             };
-            let mut doc = Document::new("Untitled");
-            doc.add_page("Page 1");
+            let doc = match kind {
+                DocumentKind::Board => crate::board::create::new_document("Untitled"),
+                DocumentKind::Design => {
+                    let mut doc = Document::new("Untitled");
+                    doc.add_page("Page 1");
+                    doc
+                }
+            };
             lib.create_file(&project, folder.as_deref(), "Untitled", &doc)
         })();
         match result {
@@ -143,6 +162,12 @@ impl App {
     pub fn new_file_here(&mut self) {
         let target = self.lib_file.as_ref().map(|f| (f.project_id.clone(), None));
         self.new_library_file(target);
+    }
+
+    /// File → New board: next to the open library file when there is one.
+    pub fn new_board_here(&mut self) {
+        let target = self.lib_file.as_ref().map(|f| (f.project_id.clone(), None));
+        self.new_library_board(target);
     }
 
     /// Writes the open library file (no toast); also refreshes its thumbnail.

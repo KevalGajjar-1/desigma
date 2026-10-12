@@ -474,6 +474,16 @@ pub(crate) fn import_rest_value(v: &Value, expand_instances: bool) -> Result<Doc
     }
     cx.finish(expand_instances);
     cx.register_library_assets();
+    cx.doc.kind = if crate::board::is_figjam(v) { DocumentKind::Board } else { DocumentKind::Design };
+    if cx.doc.kind == DocumentKind::Board {
+        // a board draws its own dotted canvas: the pages are transparent over it
+        for p in cx.doc.pages.clone() {
+            if let Some(NodeKind::Page { background }) = cx.doc.get_mut(p).map(|n| &mut n.kind) {
+                background.a = 0.0;
+            }
+        }
+    }
+    crate::board::link_connectors(&mut cx.doc, &cx.ids, root);
     cx.link_remote_components(v);
     crate::variables::import_variables_value(&mut cx.doc, v);
     cx.doc.style_meta = style_meta(v.get("styles"), &cx.doc);
@@ -587,6 +597,9 @@ impl Ctx {
             "FRAME" => NodeKind::Frame(frame()),
             "GROUP" => NodeKind::Group,
             "SECTION" => NodeKind::Section,
+            "STICKY" | "SHAPE_WITH_TEXT" | "STAMP" | "CONNECTOR" => {
+                crate::board::kind_from_json(ty, v, pinfo.origin).unwrap_or(NodeKind::Unknown { type_name: ty.to_string() })
+            }
             "COMPONENT" => NodeKind::Component(frame()),
             "COMPONENT_SET" => NodeKind::ComponentSet(frame()),
             "INSTANCE" => NodeKind::Instance {
@@ -766,6 +779,7 @@ impl Ctx {
             }
         }
         self.parse_component_props(&mut n, v);
+        crate::board::finish_node(&mut n);
         (n, my_layout)
     }
 

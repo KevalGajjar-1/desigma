@@ -1,0 +1,95 @@
+{
+  "name": "Sprint retro",
+  "editorType": "figjam",
+  "role": "owner",
+  "version": "1",
+  "document": {
+    "id": "0:0",
+    "name": "Document",
+    "type": "DOCUMENT",
+    "children": [
+      {
+        "id": "0:1",
+        "name": "Board",
+        "type": "CANVAS",
+        "backgroundColor": { "r": 0.96, "g": 0.96, "b": 0.96, "a": 1 },
+        "children": [
+          {
+            "id": "10:1",
+            "name": "Went well",
+            "type": "SECTION",
+            "absoluteBoundingBox": { "x": 100, "y": 100, "width": 700, "height": 420 },
+            "size": { "x": 700, "y": 420 },
+            "fills": [{ "type": "SOLID", "color": { "r": 0.93, "g": 0.97, "b": 0.93, "a": 1 } }],
+            "children": [
+              {
+                "id": "10:2",
+                "name": "Sticky",
+                "type": "STICKY",
+                "authorVisible": true,
+                "authorName": "Kir",
+                "characters": "Shipped board mode",
+                "absoluteBoundingBox": { "x": 140, "y": 160, "width": 240, "height": 240 },
+                "size": { "x": 240, "y": 240 },
+                "relativeTransform": [[1, 0, 40], [0, 1, 60]],
+                "fills": [{ "type": "SOLID", "color": { "r": 1, "g": 0.898, "b": 0.561, "a": 1 } }],
+                "style": { "fontSize": 24, "fontFamily": "Inter", "fontWeight": 500 }
+              },
+              {
+                "id": "10:3",
+                "name": "Decision",
+                "type": "SHAPE_WITH_TEXT",
+                "shapeType": "DIAMOND",
+                "characters": "Ship it?",
+                "absoluteBoundingBox": { "x": 480, "y": 180, "width": 200, "height": 140 },
+                "size": { "x": 200, "y": 140 },
+                "relativeTransform": [[1, 0, 380], [0, 1, 80]],
+                "fills": [{ "type": "SOLID", "color": { "r": 1, "g": 1, "b": 1, "a": 1 } }],
+                "strokes": [{ "type": "SOLID", "color": { "r": 0.1, "g": 0.1, "b": 0.1, "a": 1 } }],
+                "strokeWeight": 2,
+                "style": { "fontSize": 18, "textAlignHorizontal": "CENTER", "textAlignVertical": "CENTER" }
+              },
+              {
+                "id": "10:4",
+                "name": "Connector",
+                "type": "CONNECTOR",
+                "connectorLineType": "ELBOWED",
+                "connectorStartStrokeCap": "NONE",
+                "connectorEndStrokeCap": "TRIANGLE_FILLED",
+                "connectorStart": { "endpointNodeId": "10:2", "magnet": "RIGHT" },
+                "connectorEnd": { "endpointNodeId": "10:3", "magnet": "AUTO" },
+                "characters": "yes",
+                "strokes": [{ "type": "SOLID", "color": { "r": 0.1, "g": 0.1, "b": 0.1, "a": 1 } }],
+                "strokeWeight": 2,
+                "absoluteBoundingBox": { "x": 380, "y": 280, "width": 100, "height": 0 },
+                "size": { "x": 100, "y": 0 }
+              },
+              {
+                "id": "10:5",
+                "name": "Loose end",
+                "type": "CONNECTOR",
+                "connectorLineType": "STRAIGHT",
+                "connectorEndStrokeCap": "LINE_ARROW",
+                "connectorStart": { "endpointNodeId": "10:3", "magnet": "BOTTOM" },
+                "connectorEnd": { "position": { "x": 580, "y": 480 }, "magnet": "AUTO" },
+                "strokes": [{ "type": "SOLID", "color": { "r": 0.9, "g": 0.2, "b": 0.2, "a": 1 } }],
+                "strokeWeight": 3
+              },
+              {
+                "id": "10:6",
+                "name": "Heart",
+                "type": "STAMP",
+                "stampType": "heart",
+                "absoluteBoundingBox": { "x": 700, "y": 140, "width": 64, "height": 64 },
+                "size": { "x": 64, "y": 64 },
+                "relativeTransform": [[1, 0, 600], [0, 1, 40]]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "components": {},
+  "styles": {}
+}

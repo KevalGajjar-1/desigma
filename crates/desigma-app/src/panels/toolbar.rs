@@ -27,6 +27,12 @@ pub fn tool_icon(t: Tool) -> Icon {
         Tool::Pencil => Icon::Pencil,
         Tool::Text => Icon::Text,
         Tool::Comment => Icon::Comment,
+        Tool::Sticky => Icon::Sticky,
+        Tool::BoardShape => Icon::Shapes,
+        Tool::Connector => Icon::Connector,
+        Tool::Stamp => Icon::Stamp,
+        Tool::Marker => Icon::Marker,
+        Tool::Highlighter => Icon::Highlighter,
     }
 }
 

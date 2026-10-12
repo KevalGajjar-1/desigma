@@ -220,6 +220,10 @@ fn handle_hit(app: &App, rect: ERect, pos: Pos2) -> Option<HandleHit> {
     if !matches!(app.tool, Tool::Move | Tool::Scale) || app.canvas.vedit.is_some() {
         return None;
     }
+    // a connector has no box to resize: it is moved by its ends
+    if !app.selection.is_empty() && app.selection.iter().all(|id| matches!(app.doc.get(*id).map(|n| &n.kind), Some(NodeKind::Connector(_)))) {
+        return None;
+    }
     let (corners, is_line) = selection_box(app)?;
     let s = corners.map(|c| dv(app.view.to_screen(rect.min, c)));
     let w = dist(s[0], s[1]);
@@ -251,6 +255,13 @@ fn on_press(app: &mut App, rect: ERect, inp: &Inp) {
     let mid = inp.mid_pressed && !inp.pressed;
     if app.canvas.vedit.is_some() && !mid && !inp.space && vector::press(app, rect, pos, inp.mods) {
         return;
+    }
+    // board: a magnet dot starts a connector
+    if app.is_board() && !mid && !inp.space && matches!(app.tool, Tool::Move | Tool::Connector) {
+        if let Some((node, magnet)) = crate::board::connect::dot_hit(app, rect, pos) {
+            crate::board::connect::start(app, Some((node, magnet)), page);
+            return;
+        }
     }
     let deep = inp.mods.command;
     let target = if let Some(h) = handle_hit(app, rect, pos) {
@@ -294,6 +305,12 @@ fn on_press(app: &mut App, rect: ERect, inp: &Inp) {
         PressAction::Draw(tool) => start_draw(app, tool, page),
         PressAction::Build => builder::press(app, page, inp.mods.alt),
         PressAction::PenPoint => pen_press(app, rect, pos, page, inp.mods),
+        PressAction::Connect => {
+            let from = hit_under(app, page, true)
+                .filter(|id| app.doc.get(*id).is_some_and(|n| crate::board::connectable(&n.kind)))
+                .map(|id| (id, desigma_doc::Magnet::Auto));
+            crate::board::connect::start(app, from, page);
+        }
         PressAction::TextCreate => text_press(app, page),
         PressAction::Nothing => {
             if app.tool == Tool::Image {
@@ -409,6 +426,7 @@ fn on_drag(app: &mut App, ui: &Ui, rect: ERect, inp: &Inp) {
         }
         Interaction::Move(m) => update_move(app, m, cur, inp),
         Interaction::Guide(g) => rulers::drag(app, g, rect, pos),
+        Interaction::Connect(c) => crate::board::connect::drag(app, c, cur),
         Interaction::Marquee { start, cur: c, base } => {
             *c = cur;
             let r = rect_from_points(*start, cur);
@@ -460,7 +478,7 @@ fn on_drag(app: &mut App, ui: &Ui, rect: ERect, inp: &Inp) {
             if dist(d.start, c) * zoom > theme::DRAG_THRESHOLD_PX {
                 d.dragged = true;
             }
-            let g = create::draw_geom(d.tool, d.start, c, inp.mods.shift, inp.mods.alt);
+            let g = create::draw_geom(d.tool, d.start, c, inp.mods.shift || crate::board::create::keeps_square(d.tool), inp.mods.alt);
             create::apply_geom(&mut app.doc, &mut d.tx, d.id, d.parent, &g);
             app.changed();
         }
@@ -498,10 +516,12 @@ fn start_move(app: &mut App, clicked: NodeId, start: DV, alt: bool) -> Option<Mo
     let mut tx = Tx::new();
     if alt {
         let mut dup = Vec::new();
-        for id in &ids {
+        // one clip for the whole selection, so connectors between duplicated nodes join the copies
+        let clip = crate::clipboard::capture(&app.doc, &ids);
+        let copies = clip.map(|c| crate::clipboard::instantiate(&mut app.doc, &c)).unwrap_or_default();
+        for (id, nodes) in ids.iter().zip(copies) {
             let Some(parent) = app.doc.get(*id).and_then(|n| n.parent) else { continue };
             let index = app.doc.get(parent).and_then(|p| p.children.iter().position(|c| c == id)).map(|i| i + 1).unwrap_or(usize::MAX);
-            let nodes = crate::clipboard::clone_subtree(&mut app.doc, *id);
             let root = nodes.first().map(|n| n.id);
             if tx.cmd(&mut app.doc, Command::Insert { parent, index, nodes }).is_ok() {
                 dup.extend(root);
@@ -666,6 +686,7 @@ fn on_release(app: &mut App, rect: ERect, inp: &Inp) {
             }
         }
         Interaction::Guide(g) => rulers::release(app, g),
+        Interaction::Connect(c) => crate::board::connect::release(app, c),
         Interaction::Move(mut m) => {
             if m.moved && !m.ids.is_empty() {
                 reparent_after_move(app, &mut m, cur);
@@ -679,7 +700,11 @@ fn on_release(app: &mut App, rect: ERect, inp: &Inp) {
             app.run_tx(r.tx);
         }
         Interaction::Draw(mut d) => {
-            if !d.dragged {
+            if !d.dragged && (crate::board::create::types_into(d.tool) || d.tool == Tool::Stamp) {
+                // a click places a board item at its default size, centred on the pointer
+                let r = crate::board::create::click_rect(d.tool, d.start);
+                create::apply_geom(&mut app.doc, &mut d.tx, d.id, d.parent, &create::DrawGeom { rect: r, line: None });
+            } else if !d.dragged {
                 let (w, h) = (theme::DEFAULT_SHAPE_SIZE, theme::DEFAULT_SHAPE_SIZE);
                 let g = if matches!(d.tool, Tool::Line | Tool::Arrow) {
                     create::draw_geom(d.tool, d.start, add(d.start, v2(w, 0.0)), false, false)
@@ -692,15 +717,29 @@ fn on_release(app: &mut App, rect: ERect, inp: &Inp) {
             app.run_tx(d.tx);
             app.selection = vec![id];
             app.tool = if app.keep_tool { d.tool } else { Tool::Move };
+            // a new sticky or shape takes text right away
+            if crate::board::create::types_into(d.tool) {
+                begin_text_edit(app, id);
+            }
         }
         Interaction::Pencil(pts) => {
             // the stroke is smoothed into a few bezier anchors; ending on its start closes the shape
             let (dec, closed) = create::smooth_stroke(&pts, app.view.zoom);
+            let brush = app.tool.is_brush().then_some(app.tool);
             let mut tx = Tx::new();
-            if let Some(id) = create::commit_pen(app, &mut tx, &dec, closed) {
+            if let Some(id) = create::commit_pen(app, &mut tx, &dec, closed && brush.is_none()) {
+                if let Some(tool) = brush {
+                    // marker and highlighter strokes stay open, thick and round
+                    let ink = app.board.ink;
+                    if let Some(n) = tx.ed.node(&mut app.doc, id) {
+                        crate::board::create::brush_style(n, tool, ink);
+                    }
+                }
                 app.run_tx(tx);
-                app.selection = vec![id];
-                app.tool = Tool::Move;
+                if brush.is_none() {
+                    app.selection = vec![id];
+                    app.tool = Tool::Move;
+                }
             }
         }
         Interaction::VectorDrag => vector::release(app),
@@ -769,8 +808,14 @@ fn on_double_click(app: &mut App, rect: ERect, inp: &Inp) {
     }
     if let Some(id) = hit_under(app, page, true) {
         let is_text = matches!(app.doc.get(id).map(|n| &n.kind), Some(NodeKind::Text(_)));
+        let board_kind = app.doc.get(id).map(|n| &n.kind);
         if is_text {
             begin_text_edit(app, id);
+        } else if matches!(board_kind, Some(NodeKind::Sticky(_) | NodeKind::ShapeWithText(_))) {
+            // stickies and shapes take their text on double-click
+            begin_text_edit(app, id);
+        } else if matches!(board_kind, Some(NodeKind::Connector(_))) {
+            crate::board::create::edit_label(app, id);
         } else if vector::is_vector(app, id) && (app.is_selected(id) || matches!(app.doc.get(id).map(|n| &n.kind), Some(NodeKind::Vector { .. }))) {
             // vectors open right away; basic shapes first get selected (stepping into their group)
             vector::enter(app, id);
@@ -785,7 +830,7 @@ fn on_double_click(app: &mut App, rect: ERect, inp: &Inp) {
 // ------------------------------------------------------------------ pen
 fn pen_press(app: &mut App, rect: ERect, pos: Pos2, page: DV, mods: Modifiers) {
     let zoom = app.view.zoom;
-    if app.canvas.pen.is_none() {
+    if app.canvas.pen.is_none() && !app.tool.is_brush() {
         app.clear_selection();
         app.canvas.pen = Some(PenState { pts: vec![] });
     }
@@ -799,7 +844,7 @@ fn pen_press(app: &mut App, rect: ERect, pos: Pos2, page: DV, mods: Modifiers) {
             (s - pos).length() < 8.0
         })
         .unwrap_or(false);
-    if app.tool == Tool::Pencil {
+    if app.tool == Tool::Pencil || app.tool.is_brush() {
         app.canvas.pen = None;
         app.canvas.inter = Interaction::Pencil(vec![page]);
         return;
@@ -996,6 +1041,10 @@ fn update_hover_and_cursor(app: &mut App, rect: ERect, inp: &Inp, hovered: bool)
     let mut cursor = egui::CursorIcon::Default;
     let idle = matches!(app.canvas.inter, Interaction::None);
     app.canvas.cursor = None;
+    // board: magnet dots follow the pointer
+    let board_page = (hovered && app.canvas.text.is_none()).then(|| inp.pos.map(|p| app.view.to_page(rect.min, p))).flatten();
+    crate::board::connect::update_hover(app, board_page);
+    let over_dot = idle && hovered && inp.pos.is_some_and(|p| crate::board::connect::dot_hit(app, rect, p).is_some());
     if idle && hovered && app.canvas.text.is_none() {
         let page = inp.pos.map(|p| app.view.to_page(rect.min, p));
         match app.tool {
@@ -1021,13 +1070,16 @@ fn update_hover_and_cursor(app: &mut App, rect: ERect, inp: &Inp, hovered: bool)
             cursor = c;
             app.hover = None;
         }
+        if over_dot {
+            cursor = egui::CursorIcon::Crosshair;
+        }
         app.canvas.cursor = Some(cursor);
     } else if !idle {
         cursor = match &app.canvas.inter {
             Interaction::Pan => egui::CursorIcon::Grabbing,
             Interaction::Resize(r) => r.handle.cursor(),
             Interaction::Rotate(_) => egui::CursorIcon::Alias,
-            Interaction::Draw(_) | Interaction::Pencil(_) | Interaction::PenDrag => egui::CursorIcon::Crosshair,
+            Interaction::Draw(_) | Interaction::Pencil(_) | Interaction::PenDrag | Interaction::Connect(_) => egui::CursorIcon::Crosshair,
             Interaction::Guide(g) => {
                 if g.axis == snap::GuideAxis::X {
                     egui::CursorIcon::ResizeHorizontal

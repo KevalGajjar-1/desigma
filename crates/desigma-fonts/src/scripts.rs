@@ -6,7 +6,7 @@
 //! serves as the fallback for characters the text's own font lacks.
 
 use crate::FontRequest;
-use desigma_doc::{Document, NodeKind, TextProps};
+use desigma_doc::{Document, TextProps};
 use std::collections::BTreeSet;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -63,7 +63,7 @@ fn text_scripts(t: &TextProps) -> BTreeSet<Script> {
 pub fn script_requests_for(doc: &Document) -> BTreeSet<FontRequest> {
     let mut out = BTreeSet::new();
     for node in doc.nodes.values() {
-        let NodeKind::Text(t) = &node.kind else { continue };
+        let Some(t) = node.kind.any_text() else { continue };
         for script in text_scripts(t) {
             let mut weights = BTreeSet::from([t.style.font_weight]);
             weights.extend(t.runs.iter().map(|r| r.style.font_weight));
@@ -78,7 +78,7 @@ pub fn script_requests_for(doc: &Document) -> BTreeSet<FontRequest> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use desigma_doc::{Node, Rect, TextRun, TextStyle};
+    use desigma_doc::{Node, NodeKind, Rect, TextRun, TextStyle};
 
     #[test]
     fn classifies_scripts() {

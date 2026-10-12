@@ -37,6 +37,9 @@ impl Sim {
         };
         let ctx = self.ctx.clone();
         let shell = &mut self.shell;
+        // like the real window: Tab presses of a text session are taken out before egui sees them
+        let mut raw = raw;
+        eframe::App::raw_input_hook(shell, &ctx, &mut raw);
         let out = ctx.run_ui(raw, |ui| shell.draw(ui));
         self.cursor = out.platform_output.cursor_icon;
         self.shapes = out.shapes;
@@ -927,6 +930,8 @@ fn layout_guide_section_edits_the_grids_of_a_frame() {
     }
 }
 
+mod board;
+mod board_home;
 mod comments;
 mod components;
 mod dev;

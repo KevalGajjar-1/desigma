@@ -9,7 +9,7 @@
 //! or a project moves it to `trash/<id>/`, from where it can be restored.
 
 use crate::{new_id, Library, LibraryError, Result};
-use desigma_doc::{Document, Vec2};
+use desigma_doc::{Document, DocumentKind, Vec2};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -381,6 +381,20 @@ impl Library {
         m.files[i].modified = now;
         m.project.modified = now;
         self.save_manifest(&m)
+    }
+
+    /// Whether the file is a design file or a board, read from the document itself (the manifest
+    /// has no field for it). Parses the file without building a document, so it is cheap enough
+    /// to call once per file while listing.
+    pub fn file_kind(&self, id: &str) -> Result<DocumentKind> {
+        #[derive(Deserialize)]
+        struct Probe {
+            #[serde(default)]
+            kind: DocumentKind,
+        }
+        let (m, _) = self.find_file(id)?;
+        let bytes = std::fs::read(self.file_path(&m.project.id, id))?;
+        Ok(serde_json::from_slice::<Probe>(&bytes)?.kind)
     }
 
     pub fn load_file(&self, id: &str) -> Result<Document> {

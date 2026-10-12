@@ -629,3 +629,34 @@ pub const VAR_OPACITY_W: f32 = 62.0;
 pub const VAR_OPACITY_RIGHT: f32 = 74.0;
 pub const VAR_FIELD_H: f32 = 24.0;
 pub const VAR_POPOVER_W: f32 = 264.0;
+
+// ---------------------------------------------------------------- board (whiteboard) mode
+/// Sticky note and section palette: eight pastel colours (`0xRRGGBB`), the first is the default.
+pub const BOARD_PALETTE: [u32; 8] = [0xFFE58F, 0xFFC48A, 0xFFB3B3, 0xF2B8E6, 0xD5C3FF, 0xB6D4FF, 0xA8E6DD, 0xC4EBA6];
+/// Ink colours for connectors, markers and text on a board (dark first).
+pub const BOARD_INK: [u32; 8] = [0x1E1E1E, 0x757575, 0xF24822, 0xFFA629, 0x14AE5C, 0x0C8CE9, 0x9747FF, 0xEE46BC];
+/// Canvas colour of a board and the dots drawn on it.
+pub const BOARD_BG: u32 = 0xF4F4F4;
+pub const BOARD_DOT: Color32 = rgba(0x000000, 0x2E);
+/// Distance between canvas dots in page units; the grid doubles while it would be denser than the minimum on screen.
+pub const BOARD_DOT_SPACING: f32 = 24.0;
+pub const BOARD_DOT_MIN_PX: f32 = 14.0;
+/// Magnet dots on a hovered shape: radius, the gap from the shape's side, and the grab radius (screen px).
+pub const BOARD_MAGNET_RADIUS: f32 = 5.0;
+pub const BOARD_MAGNET_GAP: f32 = 12.0;
+pub const BOARD_MAGNET_HIT: f32 = 10.0;
+/// New items.
+pub const BOARD_SHAPE_W: f32 = 160.0;
+pub const BOARD_SHAPE_H: f32 = 120.0;
+pub const BOARD_STAMP_SIZE: f32 = 64.0;
+pub const BOARD_STICKY_GAP: f32 = 24.0;
+pub const BOARD_MARKER_WIDTH: f32 = 6.0;
+pub const BOARD_HIGHLIGHTER_WIDTH: f32 = 24.0;
+pub const BOARD_HIGHLIGHTER_ALPHA: f32 = 0.4;
+/// Floating contextual toolbar: height, padding, gap to the selection, swatch size.
+pub const BOARD_BAR_H: f32 = 40.0;
+pub const BOARD_BAR_PAD: f32 = 6.0;
+pub const BOARD_BAR_GAP: f32 = 12.0;
+pub const BOARD_BAR_BTN: f32 = 28.0;
+pub const BOARD_SWATCH: f32 = 18.0;
+pub const BOARD_BAR_SEP: f32 = 8.0;

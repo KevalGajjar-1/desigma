@@ -6,7 +6,7 @@ use crate::svgpath::write_path;
 use desigma_doc::*;
 use serde_json::{json, Map, Value};
 
-fn n(f: f32) -> Value {
+pub(crate) fn n(f: f32) -> Value {
     clean_f32(f)
 }
 
@@ -14,7 +14,7 @@ fn col(c: Color) -> Value {
     json!({"r": n(c.r), "g": n(c.g), "b": n(c.b), "a": n(c.a)})
 }
 
-fn v2(v: Vec2) -> Value {
+pub(crate) fn v2(v: Vec2) -> Value {
     json!({"x": n(v.x), "y": n(v.y)})
 }
 
@@ -83,7 +83,7 @@ fn paint(p: &Paint) -> Value {
     Value::Object(m)
 }
 
-fn paints(ps: &[Paint]) -> Value {
+pub(crate) fn paints(ps: &[Paint]) -> Value {
     Value::Array(ps.iter().map(paint).collect())
 }
 
@@ -337,6 +337,9 @@ fn export_node(doc: &Document, id: NodeId, parent_abs: Option<&Affine>, depth: u
         NodeKind::ComponentSet(_) => "COMPONENT_SET",
         NodeKind::Instance { .. } => "INSTANCE",
         NodeKind::Unknown { type_name } => type_name.as_str(),
+        NodeKind::Sticky(_) | NodeKind::Connector(_) | NodeKind::ShapeWithText(_) | NodeKind::Stamp { .. } => {
+            crate::board::type_name(&node.kind).unwrap_or("SECTION")
+        }
     };
     m.insert("type".into(), ty.into());
     crate::variables::export_node_variables(node, &mut m);
@@ -503,6 +506,9 @@ fn export_node(doc: &Document, id: NodeId, parent_abs: Option<&Affine>, depth: u
                 m.insert("vectorNetwork".into(), crate::vecnet::network_to_json(net));
             }
         }
+        NodeKind::Sticky(_) | NodeKind::Connector(_) | NodeKind::ShapeWithText(_) | NodeKind::Stamp { .. } => {
+            crate::board::export_fields(node, parent_abs.map(|p| p.translation()).unwrap_or(Vec2::ZERO), &mut m, &|t| figma_id(doc, t));
+        }
         NodeKind::BooleanOp(op) => {
             m.insert(
                 "booleanOperation".into(),
@@ -600,6 +606,9 @@ pub fn export_rest_json(doc: &Document) -> Value {
     });
     if let (Some(v), Some(o)) = (variables, out.as_object_mut()) {
         o.insert("variables".into(), v);
+    }
+    if doc.kind == DocumentKind::Board {
+        out["editorType"] = "figjam".into();
     }
     out
 }

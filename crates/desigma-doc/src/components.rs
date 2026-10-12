@@ -55,6 +55,7 @@ impl Ctx {
         Ctx {
             s: Document {
                 name: String::new(),
+                kind: doc.kind,
                 nodes: doc.nodes.clone(),
                 pages: doc.pages.clone(),
                 styles: Default::default(),

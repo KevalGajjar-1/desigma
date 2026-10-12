@@ -4,6 +4,7 @@
 //! [`Document`], the renderer draws it, the app edits it through [`Command`]s.
 //! Coordinates are in Figma units (1 unit = 1 CSS px at 100% zoom), y down.
 
+mod board;
 mod comments;
 mod components;
 mod dev;
@@ -23,6 +24,7 @@ mod variables_edit;
 pub mod vector;
 mod vector_fit;
 
+pub use board::*;
 pub use comments::*;
 pub use components::*;
 pub use dev::*;
@@ -63,6 +65,9 @@ pub enum DocError {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Document {
     pub name: String,
+    /// Design file or board (whiteboard) file; decides the toolbar and panels.
+    #[serde(default)]
+    pub kind: DocumentKind,
     pub nodes: BTreeMap<NodeId, Node>,
     /// Page node ids in display order. Each page is a node with [`NodeKind::Page`].
     pub pages: Vec<NodeId>,

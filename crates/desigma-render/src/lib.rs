@@ -9,6 +9,7 @@
 //! offscreen layers.
 
 mod blur;
+pub mod board;
 mod boolean;
 mod effects;
 mod fx;
@@ -217,9 +218,9 @@ impl Renderer<'_> {
 
     fn draw_children(&self, children: &[NodeId], parent_ts: sk::Transform, target: &mut sk::Pixmap, clip: Option<&sk::Mask>, back: Back) {
         for (i, cid) in children.iter().enumerate() {
-            let Some(child) = self.doc.get(*cid) else { continue };
+            let Some(child) = board::get(self.doc, *cid) else { continue };
             // Variable bindings (and the mode in effect) are applied per node at draw time.
-            let child = &*resolve_node(self.doc, child);
+            let child = &*resolve_node(self.doc, &child);
             if let Some(c) = &self.cull {
                 if !child.is_mask && !c.index.may_touch(*cid, c.win) {
                     continue;
@@ -295,6 +296,13 @@ impl Renderer<'_> {
 
     fn draw_node(&self, n: &Node, ts: sk::Transform, target: &mut sk::Pixmap, clip: Option<&sk::Mask>, back: Back) {
         if !n.visible || matches!(n.kind, NodeKind::Unknown { .. } | NodeKind::Page { .. }) {
+            return;
+        }
+        if n.kind.is_board_item() {
+            // stickies, connectors, shapes with text and stamps draw as their lowered form
+            if let Some(body) = board::lower(self.doc, n) {
+                self.draw_node(&body, ts, target, clip, back);
+            }
             return;
         }
         let clips = n.kind.frame_props().map(|f| f.clips_content).unwrap_or(false);

@@ -159,6 +159,8 @@ pub struct App {
     pub history: crate::history::HistoryState,
     /// Dev mode: code language, annotation / link editors, Compare changes.
     pub dev: crate::dev::DevState,
+    /// Board (whiteboard) mode: tool settings, magnet dots and popovers.
+    pub board: crate::board::BoardState,
 }
 
 impl App {
@@ -203,6 +205,7 @@ impl App {
             comments: Default::default(),
             history: Default::default(),
             dev: Default::default(),
+            board: Default::default(),
         }
     }
 

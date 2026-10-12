@@ -77,6 +77,9 @@ pub(crate) fn node_margin(n: &Node) -> f32 {
     if let NodeKind::Text(t) = &n.kind {
         m = m.max(t.style.font_size * 2.0);
     }
+    if matches!(n.kind, NodeKind::Sticky(_)) {
+        m = m.max(crate::board::sticky_shadow_reach(n.size));
+    }
     m
 }
 

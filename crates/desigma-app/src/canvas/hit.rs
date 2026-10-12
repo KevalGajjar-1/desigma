@@ -6,7 +6,7 @@ use desigma_doc::{Affine, Document, NodeId, NodeKind, Rect, Vec2};
 fn local_hit(kind: &NodeKind, size: Vec2, local: Vec2, tol: f32) -> bool {
     match kind {
         NodeKind::Line => local.x >= -tol && local.x <= size.x + tol && local.y.abs() <= tol.max(size.y / 2.0 + tol),
-        NodeKind::Ellipse(_) => {
+        NodeKind::Ellipse(_) | NodeKind::Stamp { .. } => {
             let rx = size.x / 2.0 + tol;
             let ry = size.y / 2.0 + tol;
             if rx <= 0.0 || ry <= 0.0 {
@@ -16,6 +16,7 @@ fn local_hit(kind: &NodeKind, size: Vec2, local: Vec2, tol: f32) -> bool {
             let dy = (local.y - size.y / 2.0) / ry;
             dx * dx + dy * dy <= 1.0
         }
+        NodeKind::ShapeWithText(s) if s.shape == desigma_doc::ShapeKind::Ellipse => local_hit(&NodeKind::Ellipse(Default::default()), size, local, tol),
         _ => local.x >= -tol && local.y >= -tol && local.x <= size.x + tol && local.y <= size.y + tol,
     }
 }
@@ -32,25 +33,42 @@ fn selects_through(kind: &NodeKind) -> bool {
 /// * `entered` lists containers (usually ancestors of the current selection)
 ///   that groups/instances may be descended into.
 pub fn hit_test(doc: &Document, root: NodeId, p: Vec2, tol: f32, deep: bool, entered: &[NodeId]) -> Option<NodeId> {
-    hit_in(doc, root, Affine::IDENTITY, p, tol, deep, entered)
+    hit_test_excluding(doc, root, p, tol, deep, entered, &[])
 }
 
-fn hit_in(doc: &Document, parent: NodeId, parent_world: Affine, p: Vec2, tol: f32, deep: bool, entered: &[NodeId]) -> Option<NodeId> {
+/// [`hit_test`] that ignores the `exclude`d nodes (and everything inside them).
+pub fn hit_test_excluding(doc: &Document, root: NodeId, p: Vec2, tol: f32, deep: bool, entered: &[NodeId], exclude: &[NodeId]) -> Option<NodeId> {
+    hit_in(doc, root, Affine::IDENTITY, p, tol, deep, entered, exclude)
+}
+
+/// Whether `p` (in the connector's parent space) is on the line of connector `id`.
+fn connector_hit(doc: &Document, id: NodeId, parent_local: Vec2, tol: f32) -> bool {
+    let Some(n) = doc.get(id) else { return false };
+    let Some(route) = desigma_doc::connector_route(doc, id) else { return false };
+    route.distance_to(parent_local) <= n.stroke.weight / 2.0 + tol * 3.0
+}
+
+#[allow(clippy::too_many_arguments)]
+fn hit_in(doc: &Document, parent: NodeId, parent_world: Affine, p: Vec2, tol: f32, deep: bool, entered: &[NodeId], exclude: &[NodeId]) -> Option<NodeId> {
     let pn = doc.get(parent)?;
     for &cid in pn.children.iter().rev() {
         let Some(n) = doc.get(cid) else { continue };
-        if !n.visible || n.locked {
+        if !n.visible || n.locked || exclude.contains(&cid) {
             continue;
         }
         let world = parent_world * n.transform;
         let Some(inv) = world.invert() else { continue };
         let local = inv.apply(p);
-        let inside = local_hit(&n.kind, n.size, local, tol);
+        let inside = match &n.kind {
+            // a connector is its line, not its bounding box
+            NodeKind::Connector(_) => parent_world.invert().is_some_and(|pi| connector_hit(doc, cid, pi.apply(p), tol)),
+            k => local_hit(k, n.size, local, tol),
+        };
         if n.kind.is_container() {
             let descend = deep || selects_through(&n.kind) || entered.contains(&cid);
             let clips = n.kind.frame_props().map(|f| f.clips_content).unwrap_or(false);
             if descend && (!clips || inside) {
-                if let Some(h) = hit_in(doc, cid, world, p, tol, deep, entered) {
+                if let Some(h) = hit_in(doc, cid, world, p, tol, deep, entered, exclude) {
                     return Some(h);
                 }
             }

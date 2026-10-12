@@ -24,6 +24,11 @@ impl Edit {
         }
     }
 
+    /// Ids of every node touched so far.
+    pub fn touched(&self) -> Vec<NodeId> {
+        self.before.keys().copied().collect()
+    }
+
     /// Mutable access to a node, recording its original state.
     pub fn node<'a>(&mut self, doc: &'a mut Document, id: NodeId) -> Option<&'a mut Node> {
         self.touch(doc, id);
@@ -91,6 +96,8 @@ impl Tx {
     }
 
     pub fn commit(mut self, doc: &mut Document, hist: &mut History) -> Result<bool, DocError> {
+        // connectors follow the nodes they join (and a moved connector its free ends)
+        crate::board::connect::reroute_touched(doc, &mut self.ed);
         let mut updates = self.ed.updates(doc);
         crate::comp_ops::record_overrides(doc, &self.ed.before, &mut updates);
         self.ed.revert(doc);

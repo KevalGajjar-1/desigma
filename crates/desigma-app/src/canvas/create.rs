@@ -83,6 +83,9 @@ fn grey() -> Paint {
 
 /// A fresh node for a drawing tool (size/transform filled in by the caller).
 pub fn new_shape(app: &mut App, tool: Tool) -> Node {
+    if let Some(n) = crate::board::create::item(app, tool) {
+        return n;
+    }
     let id = app.doc.alloc_id();
     let r = Rect::new(0.0, 0.0, 0.0, 0.0);
     let mut n = match tool {
@@ -95,6 +98,13 @@ pub fn new_shape(app: &mut App, tool: Tool) -> Node {
         Tool::Section => {
             let mut s = Node::new(id, NodeKind::Section);
             s.fills = vec![Paint::solid(Color::rgb(0xF5, 0xF5, 0xF5))];
+            if app.is_board() {
+                // a board section is a white panel with a light outline
+                s.fills = vec![Paint::solid(Color::WHITE)];
+                s.stroke.paints = vec![Paint::solid(Color::rgb(0xCF, 0xCF, 0xCF))];
+                s.stroke.weight = 1.0;
+                s.stroke.align = StrokeAlign::Inside;
+            }
             s.name = app.unique_name("Section");
             s
         }
@@ -166,7 +176,8 @@ pub fn new_text(app: &mut App, parent: NodeId, at: Vec2) -> Option<(Node, Vec2)>
     let inv = app.doc.world_transform(parent).invert()?;
     let o = inv.apply(at);
     let id = app.doc.alloc_id();
-    let style = TextStyle { font_size: theme::DEFAULT_TEXT_SIZE, fills: vec![Paint::solid(Color::BLACK)], ..Default::default() };
+    let size = if app.is_board() { 24.0 } else { theme::DEFAULT_TEXT_SIZE };
+    let style = TextStyle { font_size: size, fills: vec![Paint::solid(Color::BLACK)], ..Default::default() };
     let mut n = Node::text(id, Rect::new(o.x, o.y, 10.0, 10.0), "", style);
     if let NodeKind::Text(t) = &n.kind {
         n.size = layout::estimate_text_size(t);

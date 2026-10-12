@@ -1,6 +1,6 @@
 //! File thumbnails: rendering the first frame to a PNG, and the texture cache the home screen draws from.
 
-use desigma_doc::{Document, NodeId};
+use desigma_doc::{Document, DocumentKind, NodeId};
 use desigma_library::Library;
 use std::collections::HashMap;
 use std::time::SystemTime;
@@ -15,8 +15,61 @@ pub fn thumbnail_node(doc: &Document) -> Option<NodeId> {
     kids.iter().find(|n| n.kind.frame_props().is_some() && !matches!(n.kind, desigma_doc::NodeKind::Instance { .. })).or(kids.first()).map(|n| n.id)
 }
 
+/// Size of a board thumbnail: the whole content on the dotted canvas, 8:5 like the cards.
+const BOARD_THUMB: (u32, u32) = (THUMB_PX as u32, (THUMB_PX * 0.625) as u32);
+
+/// The whole first page of a board on its dotted canvas, fitted to [`BOARD_THUMB`] with some air
+/// around the content; `None` for an empty board.
+fn board_thumbnail_png(doc: &Document) -> Option<Vec<u8>> {
+    use desigma_render::tiny_skia as sk;
+    let page = *doc.pages.first()?;
+    let kids = &doc.get(page)?.children;
+    let mut bounds: Option<desigma_doc::Rect> = None;
+    for k in kids {
+        let n = doc.get(*k).filter(|n| n.visible)?;
+        let w = doc.world_transform(*k);
+        let corners =
+            [w.apply(desigma_doc::Vec2::ZERO), w.apply(desigma_doc::Vec2::new(n.size.x, 0.0)), w.apply(n.size), w.apply(desigma_doc::Vec2::new(0.0, n.size.y))];
+        let (x0, x1) = corners.iter().fold((f32::MAX, f32::MIN), |a, c| (a.0.min(c.x), a.1.max(c.x)));
+        let (y0, y1) = corners.iter().fold((f32::MAX, f32::MIN), |a, c| (a.0.min(c.y), a.1.max(c.y)));
+        let r = desigma_doc::Rect::new(x0, y0, x1 - x0, y1 - y0);
+        bounds = Some(bounds.map_or(r, |b| b.union(&r)));
+    }
+    let b = bounds?;
+    let (tw, th) = (BOARD_THUMB.0 as f32, BOARD_THUMB.1 as f32);
+    let pad = 24.0;
+    let zoom = ((tw - 2.0 * pad) / b.w.max(1.0)).min((th - 2.0 * pad) / b.h.max(1.0)).clamp(0.001, 1.0);
+    let offset = desigma_doc::Vec2::new(b.x + b.w / 2.0 - tw / 2.0 / zoom, b.y + b.h / 2.0 - th / 2.0 / zoom);
+    let mut content = sk::Pixmap::new(BOARD_THUMB.0, BOARD_THUMB.1)?;
+    desigma_render::render_page(doc, page, &desigma_render::Viewport { offset, zoom, dpr: 1.0 }, &mut content);
+    // the canvas colour and its dots go underneath (the page itself is transparent)
+    let mut out = sk::Pixmap::new(BOARD_THUMB.0, BOARD_THUMB.1)?;
+    let bg = crate::theme::BOARD_BG;
+    out.fill(sk::Color::from_rgba8((bg >> 16) as u8, (bg >> 8) as u8, bg as u8, 255));
+    let mut dot = sk::Paint::default();
+    dot.set_color(sk::Color::from_rgba8(0, 0, 0, 46));
+    let step = 16.0;
+    let mut y = step / 2.0;
+    while y < th {
+        let mut x = step / 2.0;
+        while x < tw {
+            if let Some(r) = sk::Rect::from_xywh(x - 0.75, y - 0.75, 1.5, 1.5) {
+                out.fill_rect(r, &dot, sk::Transform::identity(), None);
+            }
+            x += step;
+        }
+        y += step;
+    }
+    out.draw_pixmap(0, 0, content.as_ref(), &sk::PixmapPaint::default(), sk::Transform::identity(), None);
+    out.encode_png().ok()
+}
+
 /// PNG bytes of the document's thumbnail, scaled to fit [`THUMB_PX`]; `None` for an empty document.
+/// A board shows its whole first page on the dotted canvas instead of one frame.
 pub fn thumbnail_png(doc: &Document) -> Option<Vec<u8>> {
+    if doc.kind == DocumentKind::Board {
+        return board_thumbnail_png(doc);
+    }
     let id = thumbnail_node(doc)?;
     let size = doc.get(id)?.size;
     let longest = size.x.max(size.y);
@@ -41,6 +94,31 @@ pub fn refresh_in_background(lib: Library, file: String, doc: Document) {
     std::thread::spawn(move || {
         refresh(&lib, &file, &doc);
     });
+}
+
+/// Which files are boards, read from the documents (each file is probed once, and again after it
+/// was modified). A file not probed yet counts as a design file for the frame.
+#[derive(Default)]
+pub struct Kinds {
+    map: HashMap<String, (u64, DocumentKind)>,
+}
+
+impl Kinds {
+    /// The kind of `entry`; at most `budget` files are read per call.
+    pub fn get(&mut self, lib: &Library, entry: &desigma_library::FileEntry, budget: &mut u32) -> DocumentKind {
+        if let Some((modified, kind)) = self.map.get(&entry.id) {
+            if *modified == entry.modified {
+                return *kind;
+            }
+        }
+        if *budget == 0 {
+            return self.map.get(&entry.id).map(|k| k.1).unwrap_or_default();
+        }
+        *budget -= 1;
+        let kind = lib.file_kind(&entry.id).unwrap_or_default();
+        self.map.insert(entry.id.clone(), (entry.modified, kind));
+        kind
+    }
 }
 
 /// Decoded thumbnails as GPU textures, reloaded when the PNG changes on disk.

@@ -4,7 +4,7 @@
 use crate::app::App;
 use crate::edit::Tx;
 use crate::layout;
-use desigma_doc::{Affine, Command, Document, Node, NodeId, Vec2};
+use desigma_doc::{Affine, Command, Document, Node, NodeId, NodeKind, Vec2};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -108,6 +108,13 @@ pub fn instantiate(doc: &mut Document, clip: &Clip) -> Vec<Vec<Node>> {
             let mut n = (*src).clone();
             n.id = map[&id];
             n.source_id = None;
+            // connectors copied together with their nodes join the copies; a connector copied alone
+            // keeps its nodes while they exist, and is left loose (at its last point) otherwise
+            if let NodeKind::Connector(c) = &mut n.kind {
+                for e in [&mut c.start, &mut c.end] {
+                    e.node = e.node.and_then(|t| map.get(&t).copied().or_else(|| doc.get(t).map(|_| t)));
+                }
+            }
             n.children = src.children.iter().filter_map(|c| map.get(c).copied()).collect();
             n.parent = if id == *root { None } else { src.parent.and_then(|p| map.get(&p).copied()) };
             stack.extend(src.children.iter().rev().copied());
