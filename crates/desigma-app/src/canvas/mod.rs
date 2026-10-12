@@ -1,12 +1,14 @@
 //! The canvas: renders the page into a texture, handles viewport gestures,
 //! tools and interactions, and paints the selection overlays.
 
+pub mod builder;
 pub mod create;
 pub mod draw;
 pub mod grids;
 pub mod handles;
 pub mod hit;
 pub mod interact;
+pub mod polyfill;
 pub mod proto;
 pub mod reorder;
 pub mod rulers;
@@ -94,6 +96,8 @@ pub enum Interaction {
     PenDrag,
     /// Dragging a vertex/handle in vector edit mode (state lives in `CanvasState::vedit`).
     VectorDrag,
+    /// Brushing over regions with the shape builder (state lives in `CanvasState::builder`).
+    Builder,
     /// Creating or moving a ruler guide.
     Guide(rulers::GuideDrag),
 }
@@ -117,6 +121,8 @@ pub struct CanvasState {
     pub text: Option<TextSession>,
     /// Point editing of a Vector node.
     pub vedit: Option<vector::VectorEdit>,
+    /// The shape builder session.
+    pub builder: Option<builder::Builder>,
     pub pointer_page: Option<DV>,
     pub cursor: Option<egui::CursorIcon>,
     pub last_render_ms: f32,
@@ -132,6 +138,7 @@ impl CanvasState {
         self.pen = None;
         self.text = None;
         self.vedit = None;
+        self.builder = None;
         // the page or the whole document may be different now
         self.tiles.invalidate_all();
     }
@@ -147,10 +154,18 @@ impl App {
             Interaction::Rotate(r) => r.tx.cancel(&mut self.doc),
             Interaction::Draw(d) => d.tx.cancel(&mut self.doc),
             Interaction::VectorDrag => {
-                if let Some(d) = self.canvas.vedit.as_mut().and_then(|v| v.drag.take()) {
-                    d.tx.cancel(&mut self.doc);
+                if let Some(v) = self.canvas.vedit.as_mut() {
+                    v.marquee = None;
+                    if let Some(d) = v.drag.take() {
+                        d.tx.cancel(&mut self.doc);
+                    }
                 }
                 vector::reload(self);
+            }
+            Interaction::Builder => {
+                if let Some(b) = self.canvas.builder.as_mut() {
+                    b.brush = None;
+                }
             }
             _ => {}
         }
@@ -169,7 +184,11 @@ impl App {
         interact::finish_pen(self);
         interact::finish_text(self, true);
         self.cancel_interaction();
+        builder::finish(self);
         self.tool = tool;
+        if tool == tools::Tool::ShapeBuilder && !builder::start(self) {
+            self.tool = tools::Tool::Move;
+        }
     }
 }
 
@@ -194,6 +213,7 @@ pub fn show(app: &mut App, ui: &mut Ui, rect: ERect) {
     crate::comments::pins::process(app, rect, &resp);
     grids::paint(app, ui, rect);
     draw::overlays(app, ui, rect);
+    vector::toolbar(app, ui, rect);
     rulers::overlay(app, ui, rect);
     proto::overlays(app, ui, rect);
     crate::panels::inspect::measure_overlay(app, ui, rect);

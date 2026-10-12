@@ -246,7 +246,8 @@ pub fn commit_pen(app: &mut App, tx: &mut Tx, pts: &[PenPoint], closed: bool) ->
     let bb = pen_bounds(&local_pts, closed);
     let origin = v2(bb.x, bb.y);
     let id = app.doc.alloc_id();
-    let mut n = Node::new(id, NodeKind::Vector { paths: vec![pen_path(&local_pts, closed, origin)], network: None });
+    let net = VectorNetwork::from_paths(&[pen_path(&local_pts, closed, origin)]);
+    let mut n = Node::new(id, NodeKind::Vector { paths: net.to_paths(), network: Some(net) });
     n.name = app.unique_name("Vector");
     n.transform = Affine::translate(bb.x, bb.y);
     n.size = v2(bb.w.max(1.0), bb.h.max(1.0));
@@ -256,6 +257,44 @@ pub fn commit_pen(app: &mut App, tx: &mut Tx, pts: &[PenPoint], closed: bool) ->
     let index = app.doc.get(parent).map(|p| p.children.len()).unwrap_or(0);
     tx.cmd(&mut app.doc, Command::Insert { parent, index, nodes: vec![n] }).ok()?;
     Some(id)
+}
+
+/// Constrains `p` to a multiple of 45 degrees around `prev` (Shift while placing a pen point).
+pub fn snap_to_45(prev: Vec2, p: Vec2) -> Vec2 {
+    add(prev, crate::canvas::vector::snap45(sub(p, prev)))
+}
+
+/// Turns a freehand stroke into smooth bezier anchors (pencil tool). `zoom` makes the tolerance
+/// a screen distance. Returns the anchors and whether the stroke closes on its start.
+pub fn smooth_stroke(points: &[Vec2], zoom: f32) -> (Vec<PenPoint>, bool) {
+    let zoom = zoom.max(1e-3);
+    let dense = decimate(points, 0.75 / zoom);
+    let mut pts: Vec<Vec2> = dense.iter().map(|p| p.pos).collect();
+    if pts.len() < 2 {
+        return (dense, false);
+    }
+    let path_len: f32 = pts.windows(2).map(|w| dist(w[0], w[1])).sum();
+    let gap = dist(pts[0], pts[pts.len() - 1]);
+    // ends meeting after a long stroke close the shape
+    let closed = pts.len() > 8 && gap * zoom < 10.0 && path_len > gap * 4.0;
+    if closed {
+        // the loop's seam is one point, not two
+        pts.pop();
+    }
+    // low-pass the hand's jitter before fitting (the ends of an open stroke stay put)
+    for _ in 0..3 {
+        let prev = pts.clone();
+        let n = prev.len();
+        for i in 0..n {
+            if !closed && (i == 0 || i + 1 == n) {
+                continue;
+            }
+            let (a, b, c) = (prev[(i + n - 1) % n], prev[i], prev[(i + 1) % n]);
+            pts[i] = v2((a.x + 2.0 * b.x + c.x) / 4.0, (a.y + 2.0 * b.y + c.y) / 4.0);
+        }
+    }
+    let anchors = fit_polyline(&pts, closed, 1.0 / zoom, 45.0);
+    (anchors.into_iter().map(|a| PenPoint { pos: a.pos, hin: a.hin, hout: a.hout }).collect(), closed)
 }
 
 /// Freehand polyline from raw points (pencil tool), lightly decimated.
@@ -326,6 +365,62 @@ mod tests {
         assert!(matches!(closed.cmds.last(), Some(PathCmd::Close)));
         let bb = pen_bounds(&pts, false);
         assert!(bb.y < 10.0, "curve bulges above the straight segment");
+    }
+
+    #[test]
+    fn shift_snaps_pen_points_to_45_degrees() {
+        let prev = v2(10.0, 10.0);
+        assert_eq!(snap_to_45(prev, v2(110.0, 14.0)), v2(110.0, 10.0));
+        let p = snap_to_45(prev, v2(60.0, 53.0));
+        assert!((p.x - 10.0 - (p.y - 10.0)).abs() < 1e-3, "diagonal: {p:?}");
+        let p = snap_to_45(prev, v2(12.0, 90.0));
+        assert!((p.x - 10.0).abs() < 1e-3 && (p.y - 90.0).abs() < 0.1, "vertical: {p:?}");
+        assert_eq!(snap_to_45(prev, prev), prev);
+    }
+
+    fn noisy_circle(n: usize, r: f32, wobble: f32) -> Vec<Vec2> {
+        (0..=n)
+            .map(|i| {
+                let a = std::f32::consts::TAU * i as f32 / n as f32;
+                let k = if i % 2 == 0 { wobble } else { -wobble };
+                v2(200.0 + (r + k) * a.cos(), 200.0 + (r + k) * a.sin())
+            })
+            .collect()
+    }
+
+    #[test]
+    fn pencil_turns_a_wobbly_circle_into_a_few_smooth_closed_anchors() {
+        let raw = noisy_circle(180, 60.0, 0.4);
+        let (pts, closed) = smooth_stroke(&raw, 1.0);
+        // hand jitter of a pixel or two, at any zoom, is smoothed away too
+        for (w, z) in [(1.0f32, 1.0f32), (1.0, 0.4), (2.0, 0.4)] {
+            let (p2, c2) = smooth_stroke(&noisy_circle(120, 70.0 / z, w / z), z);
+            assert!(c2 && p2.len() <= 12, "wobble {w} at zoom {z}: {} anchors", p2.len());
+        }
+        assert!(closed, "the end meets the start");
+        assert!(pts.len() <= 10, "{} anchors for a circle", pts.len());
+        assert!(pts.iter().all(|p| p.hin.is_some() && p.hout.is_some()), "smooth curves, not a polyline");
+    }
+
+    #[test]
+    fn pencil_keeps_an_open_stroke_open_and_simplifies_a_straight_one() {
+        let line: Vec<Vec2> = (0..60).map(|i| v2(i as f32 * 2.0, 50.0 + if i % 2 == 0 { 0.3 } else { -0.3 })).collect();
+        let (pts, closed) = smooth_stroke(&line, 1.0);
+        assert!(!closed);
+        assert_eq!(pts.len(), 2, "jitter within the tolerance disappears");
+        let arc: Vec<Vec2> = (0..=40)
+            .map(|i| {
+                let a = std::f32::consts::PI * i as f32 / 40.0;
+                v2(100.0 + 80.0 * a.cos(), 100.0 + 80.0 * a.sin())
+            })
+            .collect();
+        let (pts, closed) = smooth_stroke(&arc, 1.0);
+        assert!(!closed && pts.len() <= 4 && pts.len() >= 2);
+        // zooming in tightens the tolerance, keeping more of the hand's wobble
+        let wobbly = noisy_circle(180, 60.0, 0.4);
+        let (loose, _) = smooth_stroke(&wobbly, 1.0);
+        let (tight, _) = smooth_stroke(&wobbly, 8.0);
+        assert!(tight.len() >= loose.len());
     }
 
     #[test]

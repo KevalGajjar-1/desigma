@@ -46,6 +46,7 @@ impl Shell {
         let mut app = App::new(match opts.fixture.as_deref() {
             Some("no-selection") => demo::reference_document(),
             Some("variables") => demo::variables_document(),
+            Some(f) if crate::vecfixture::FIXTURES.contains(&f) => crate::vecfixture::document(),
             _ => demo::demo_document(),
         });
         if opts.fixture.as_deref() != Some("variables") {
@@ -53,6 +54,9 @@ impl Shell {
         }
         if opts.fixture.as_deref() == Some("comments") {
             crate::comments::fixture::apply(&mut app);
+        }
+        if let Some(f) = opts.fixture.as_deref().filter(|f| crate::vecfixture::FIXTURES.contains(f)) {
+            crate::vecfixture::apply(&mut app, f);
         }
         if let Some(root) = opts.library.clone() {
             app.attach_library(root);
@@ -243,6 +247,10 @@ impl Shell {
         let cmd = m.command;
         if cmd {
             let act = match (key, m.shift, m.alt) {
+                (Key::E, false, _) => Some(Action::Flatten),
+                (Key::O, false, true) => Some(Action::OutlineStroke),
+                (Key::J, false, false) => Some(Action::VectorJoin),
+                (Key::J, true, false) => Some(Action::VectorSplit),
                 (Key::Z, false, _) => Some(Action::Undo),
                 (Key::Z, true, _) | (Key::Y, false, _) => Some(Action::Redo),
                 (Key::O, false, _) => Some(Action::Open),
@@ -289,18 +297,18 @@ impl Shell {
             }
             return;
         }
-        if app.canvas.vedit.is_some() {
-            match key {
-                Key::Escape | Key::Enter => {
-                    canvas::vector::exit(app);
-                    return;
-                }
-                Key::Delete | Key::Backspace => {
-                    canvas::vector::delete_selected(app);
-                    return;
-                }
-                _ => {}
+        if app.canvas.vedit.is_some() && canvas::vector::key(app, key, m) {
+            return;
+        }
+        if app.canvas.builder.is_some() && matches!(key, Key::Escape | Key::Enter) {
+            // a brush stroke in progress is dropped first; otherwise the result is applied
+            if matches!(app.canvas.inter, canvas::Interaction::Builder) {
+                canvas::builder::cancel_brush(app);
+            } else {
+                canvas::builder::finish(app);
+                app.tool = Tool::Move;
             }
+            return;
         }
         match key {
             Key::Delete | Key::Backspace => menus::run(app, ctx, Action::Delete),
@@ -338,7 +346,8 @@ impl Shell {
                     let id = n.id;
                     if matches!(n.kind, desigma_doc::NodeKind::Text(_)) {
                         interact::begin_text_edit(app, id);
-                    } else if matches!(n.kind, desigma_doc::NodeKind::Vector { .. }) {
+                    } else if canvas::vector::is_vector(app, id) {
+                        // vectors and basic shapes (which become vectors on the first edit)
                         canvas::vector::enter(app, id);
                     } else {
                         menus::run(app, ctx, Action::SelectChildren);

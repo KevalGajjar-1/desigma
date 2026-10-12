@@ -1,5 +1,6 @@
 //! Pointer/keyboard interaction on the canvas: tool state machine.
 
+use super::builder;
 use super::create::{self, PenPoint};
 use super::handles::{self, Handle, HandleHit};
 use super::hit;
@@ -178,6 +179,12 @@ pub fn process(app: &mut App, ui: &mut Ui, rect: ERect, resp: &Response) {
     }
 
     app.canvas.pointer_page = inp.pos.filter(|p| rect.contains(*p)).map(|p| app.view.to_page(rect.min, p));
+    if app.canvas.vedit.is_some() {
+        vector::hover(app, rect, inp.pos);
+    }
+    if app.tool == Tool::ShapeBuilder {
+        builder::hover(app, app.canvas.pointer_page);
+    }
 
     if (inp.pressed || inp.mid_pressed) && hovered {
         on_press(app, rect, &inp);
@@ -285,7 +292,8 @@ fn on_press(app: &mut App, rect: ERect, inp: &Inp) {
             app.canvas.inter = Interaction::Marquee { start: page, cur: page, base };
         }
         PressAction::Draw(tool) => start_draw(app, tool, page),
-        PressAction::PenPoint => pen_press(app, rect, pos, page),
+        PressAction::Build => builder::press(app, page, inp.mods.alt),
+        PressAction::PenPoint => pen_press(app, rect, pos, page, inp.mods),
         PressAction::TextCreate => text_press(app, page),
         PressAction::Nothing => {
             if app.tool == Tool::Image {
@@ -462,10 +470,13 @@ fn on_drag(app: &mut App, ui: &Ui, rect: ERect, inp: &Inp) {
             }
         }
         Interaction::VectorDrag => vector::drag(app, cur, inp.mods),
+        Interaction::Builder => builder::drag(app, cur),
         Interaction::PenDrag => {
             if let Some(pen) = &mut app.canvas.pen {
                 if let Some(last) = pen.pts.last_mut() {
                     if dist(last.pos, cur) * zoom > 3.0 {
+                        // Shift keeps the handle on a 45 degree angle
+                        let cur = if inp.mods.shift { create::snap_to_45(last.pos, cur) } else { cur };
                         last.hout = Some(cur);
                         last.hin = Some(sub(scale(last.pos, 2.0), cur));
                     }
@@ -683,15 +694,17 @@ fn on_release(app: &mut App, rect: ERect, inp: &Inp) {
             app.tool = if app.keep_tool { d.tool } else { Tool::Move };
         }
         Interaction::Pencil(pts) => {
-            let dec = create::decimate(&pts, 2.0 / app.view.zoom);
+            // the stroke is smoothed into a few bezier anchors; ending on its start closes the shape
+            let (dec, closed) = create::smooth_stroke(&pts, app.view.zoom);
             let mut tx = Tx::new();
-            if let Some(id) = create::commit_pen(app, &mut tx, &dec, false) {
+            if let Some(id) = create::commit_pen(app, &mut tx, &dec, closed) {
                 app.run_tx(tx);
                 app.selection = vec![id];
                 app.tool = Tool::Move;
             }
         }
         Interaction::VectorDrag => vector::release(app),
+        Interaction::Builder => builder::release(app),
         Interaction::PenDrag | Interaction::Pan | Interaction::Marquee { .. } | Interaction::None => {}
     }
     app.changed();
@@ -769,7 +782,7 @@ fn on_double_click(app: &mut App, rect: ERect, inp: &Inp) {
 }
 
 // ------------------------------------------------------------------ pen
-fn pen_press(app: &mut App, rect: ERect, pos: Pos2, page: DV) {
+fn pen_press(app: &mut App, rect: ERect, pos: Pos2, page: DV, mods: Modifiers) {
     let zoom = app.view.zoom;
     if app.canvas.pen.is_none() {
         app.clear_selection();
@@ -802,7 +815,12 @@ fn pen_press(app: &mut App, rect: ERect, pos: Pos2, page: DV) {
     }
     let _ = zoom;
     if let Some(p) = &mut app.canvas.pen {
-        p.pts.push(PenPoint::new(page));
+        // Shift constrains the new segment to 45 degree steps
+        let at = match p.pts.last() {
+            Some(last) if mods.shift => create::snap_to_45(last.pos, page),
+            _ => page,
+        };
+        p.pts.push(PenPoint::new(at));
     }
     app.canvas.inter = Interaction::PenDrag;
 }

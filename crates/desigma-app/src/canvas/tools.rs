@@ -8,6 +8,7 @@ pub enum Tool {
     Move,
     Hand,
     Scale,
+    ShapeBuilder,
     Frame,
     Section,
     Slice,
@@ -30,6 +31,7 @@ impl Tool {
             Tool::Move => "Move",
             Tool::Hand => "Hand tool",
             Tool::Scale => "Scale",
+            Tool::ShapeBuilder => "Shape builder",
             Tool::Frame => "Frame",
             Tool::Section => "Section",
             Tool::Slice => "Slice",
@@ -52,6 +54,7 @@ impl Tool {
             Tool::Move => "V",
             Tool::Hand => "H",
             Tool::Scale => "K",
+            Tool::ShapeBuilder => "Shift+M",
             Tool::Frame => "F",
             Tool::Section => "Shift+S",
             Tool::Slice => "S",
@@ -76,6 +79,7 @@ impl Tool {
             (V, false) => Tool::Move,
             (H, false) => Tool::Hand,
             (K, false) => Tool::Scale,
+            (M, true) => Tool::ShapeBuilder,
             (F, false) => Tool::Frame,
             (S, true) => Tool::Section,
             (S, false) => Tool::Slice,
@@ -99,7 +103,7 @@ impl Tool {
 
 /// Toolbar groups: first entry is the default tool shown on the button.
 pub const GROUPS: &[&[Tool]] = &[
-    &[Tool::Move, Tool::Hand, Tool::Scale],
+    &[Tool::Move, Tool::Hand, Tool::Scale, Tool::ShapeBuilder],
     &[Tool::Frame, Tool::Section, Tool::Slice],
     &[Tool::Rectangle, Tool::Line, Tool::Arrow, Tool::Ellipse, Tool::Polygon, Tool::Star, Tool::Image],
     &[Tool::Pen, Tool::Pencil],
@@ -131,6 +135,8 @@ pub enum PressAction {
     },
     Marquee,
     Draw(Tool),
+    /// Brush over regions with the shape builder.
+    Build,
     PenPoint,
     TextCreate,
     Nothing,
@@ -149,6 +155,7 @@ pub fn press_action(tool: Tool, target: PressTarget, space_held: bool, middle: b
             PressTarget::Node(_) => PressAction::MoveNode { select_first: true },
             PressTarget::Empty => PressAction::Marquee,
         },
+        Tool::ShapeBuilder => PressAction::Build,
         Tool::Pen | Tool::Pencil => PressAction::PenPoint,
         Tool::Text => PressAction::TextCreate,
         Tool::Comment | Tool::Image => PressAction::Nothing,

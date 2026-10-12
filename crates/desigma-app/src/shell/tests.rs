@@ -671,8 +671,8 @@ fn clicking_a_segment_adds_a_point_and_delete_removes_it() {
     let p = s.screen(335.0, 820.0);
     s.click(p);
     assert_eq!(vector_cmds(&s, id).len(), n0 + 1);
-    let sel = s.app().canvas.vedit.as_ref().unwrap().sel;
-    assert_eq!(sel, Some((0, 1)), "the new vertex is selected");
+    let sel = s.app().canvas.vedit.as_ref().unwrap().sel.clone();
+    assert_eq!(sel, std::collections::BTreeSet::from([3]), "the new vertex is selected");
     s.key(Key::Delete);
     assert_eq!(vector_cmds(&s, id).len(), n0);
     s.cmd_key(Key::Z);

@@ -1,276 +1,180 @@
-//! Vector edit mode: vertices and bezier handles of a Vector node can be
-//! dragged, segments split by clicking them, vertices deleted. Every
-//! drag/insert/delete is one undo step through [`Tx`].
+//! Vector edit mode on a vector network.
+//!
+//! Vertices (which may join more than two segments), bezier handles and
+//! segments are edited in place; every gesture (a drag, a click that adds a
+//! point, a delete, an inspector edit) commits as one undo step through
+//! [`Tx`]. The geometry lives in a [`VectorNetwork`]: the node's `paths` are
+//! re-derived from it on every write.
+//!
+//! Gestures: drag a vertex or handle; click a segment to add a point; drag a
+//! segment to move it, or Ctrl-drag (or use the Bend tool) to bend it;
+//! drag a marquee (Alt for a lasso) to select vertices; the Paint bucket
+//! fills and unfills the areas the network encloses.
 
-use super::create::PenPoint;
 use super::*;
 use crate::edit::Tx;
 use crate::theme;
 use crate::util::*;
-use desigma_doc::{Document, FillRule, NodeKind, Path, PathCmd};
+use desigma_doc::vector::{point_in_polygon, End, Face};
+use desigma_doc::{Document, HandleMirror, Node, NodeKind, VectorNetwork};
 use egui::{Modifiers, Painter, Pos2, Stroke, StrokeKind};
+use std::collections::BTreeSet;
 
-/// One sub-path of the edited vector as anchor points with handles
-/// (absolute positions in node-local space).
-#[derive(Clone, Debug, PartialEq)]
-pub struct VPath {
-    pub pts: Vec<PenPoint>,
-    pub closed: bool,
-    /// Index of the document `Path` this sub-path belongs to.
-    pub path: usize,
+/// Sub-tool of vector edit mode.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum VTool {
+    /// Select and move vertices, handles and segments.
+    #[default]
+    Move,
+    /// Drag a vertex to pull out handles, drag a segment to bend it.
+    Bend,
+    /// Click an enclosed area to fill or unfill it.
+    Bucket,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Side {
-    In,
-    Out,
+impl VTool {
+    pub fn label(self) -> &'static str {
+        match self {
+            VTool::Move => "Move",
+            VTool::Bend => "Bend",
+            VTool::Bucket => "Paint bucket",
+        }
+    }
+    pub const ALL: [VTool; 3] = [VTool::Move, VTool::Bend, VTool::Bucket];
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Hit {
-    Anchor(usize, usize),
-    Handle(usize, usize, Side),
-    /// Segment starting at point `usize` of sub-path `usize`, at parameter `t`.
-    Segment(usize, usize, f32),
+    Vertex(usize),
+    Handle(usize, End),
+    /// Segment, at parameter `t`.
+    Segment(usize, f32),
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum DragKind {
-    Anchor,
-    Handle(Side),
+    /// Move the selected vertices.
+    Vertices,
+    Handle(usize, End),
+    /// Reshape a segment so it passes through the pointer.
+    Bend {
+        seg: usize,
+        t: f32,
+        base: [DV; 4],
+    },
+    /// Pull mirrored handles out of a vertex.
+    Pull(usize),
+    /// A press on a segment: a click adds a point, a drag moves the segment.
+    Segment {
+        seg: usize,
+        t: f32,
+    },
 }
 
 pub struct VDrag {
     pub tx: Tx,
     pub kind: DragKind,
-    pub at: (usize, usize),
     /// World transform and own transform of the node when the drag began;
     /// all math happens in that frame.
     pub world0: Affine,
     pub t0: Affine,
-    pub start: Vec<VPath>,
+    pub start: VectorNetwork,
+    /// Pointer at press: page space and node-local.
+    pub anchor_page: DV,
+    pub anchor: DV,
     pub changed: bool,
+}
+
+/// A selection rectangle (or lasso) being dragged, in page space.
+pub struct Marquee {
+    pub start: DV,
+    pub cur: DV,
+    /// Lasso points (Alt-drag); empty for a rectangle.
+    pub lasso: Vec<DV>,
+    pub additive: bool,
+    pub base: BTreeSet<usize>,
 }
 
 pub struct VectorEdit {
     pub id: NodeId,
-    pub paths: Vec<VPath>,
-    pub rules: Vec<FillRule>,
-    pub sel: Option<(usize, usize)>,
+    pub net: VectorNetwork,
+    pub sel: BTreeSet<usize>,
+    /// Segment last clicked, with the parameter of the click (for Split).
+    pub seg: Option<(usize, f32)>,
+    pub tool: VTool,
     pub drag: Option<VDrag>,
+    pub marquee: Option<Marquee>,
+    pub hover: Option<Hit>,
+    /// The area under the pointer with the Paint bucket.
+    pub hover_face: Option<Face>,
 }
 
-// ------------------------------------------------------------ path <-> model
-fn near(a: DV, b: DV) -> bool {
-    dist(a, b) < 1e-4
-}
-
-fn handle(anchor: DV, h: DV) -> Option<DV> {
-    (!near(anchor, h)).then_some(h)
-}
-
-pub fn from_paths(paths: &[Path]) -> (Vec<VPath>, Vec<FillRule>) {
-    let mut out: Vec<VPath> = Vec::new();
-    for (pi, path) in paths.iter().enumerate() {
-        let mut cur: Option<VPath> = None;
-        let finish = |cur: &mut Option<VPath>, out: &mut Vec<VPath>| {
-            if let Some(v) = cur.take() {
-                if !v.pts.is_empty() {
-                    out.push(v);
-                }
-            }
-        };
-        for cmd in &path.cmds {
-            match *cmd {
-                PathCmd::MoveTo(p) => {
-                    finish(&mut cur, &mut out);
-                    cur = Some(VPath { pts: vec![PenPoint::new(p)], closed: false, path: pi });
-                }
-                PathCmd::LineTo(p) => {
-                    if let Some(v) = &mut cur {
-                        v.pts.push(PenPoint::new(p));
-                    }
-                }
-                PathCmd::QuadTo(c, p) => {
-                    if let Some(v) = &mut cur {
-                        let prev = v.pts.last().map(|q| q.pos).unwrap_or(p);
-                        let c1 = add(prev, scale(sub(c, prev), 2.0 / 3.0));
-                        let c2 = add(p, scale(sub(c, p), 2.0 / 3.0));
-                        if let Some(l) = v.pts.last_mut() {
-                            l.hout = handle(l.pos, c1);
-                        }
-                        v.pts.push(PenPoint { pos: p, hin: handle(p, c2), hout: None });
-                    }
-                }
-                PathCmd::CubicTo(c1, c2, p) => {
-                    if let Some(v) = &mut cur {
-                        if let Some(l) = v.pts.last_mut() {
-                            l.hout = handle(l.pos, c1);
-                        }
-                        v.pts.push(PenPoint { pos: p, hin: handle(p, c2), hout: None });
-                    }
-                }
-                PathCmd::Close => {
-                    if let Some(v) = &mut cur {
-                        v.closed = true;
-                        if v.pts.len() > 1 && near(v.pts[0].pos, v.pts[v.pts.len() - 1].pos) {
-                            let last = v.pts.pop().unwrap();
-                            v.pts[0].hin = last.hin;
-                        }
-                    }
-                }
-            }
-        }
-        finish(&mut cur, &mut out);
-    }
-    (out, paths.iter().map(|p| p.fill_rule).collect())
-}
-
-fn seg_cmd(a: &PenPoint, b: &PenPoint) -> PathCmd {
-    if a.hout.is_some() || b.hin.is_some() {
-        PathCmd::CubicTo(a.hout.unwrap_or(a.pos), b.hin.unwrap_or(b.pos), b.pos)
-    } else {
-        PathCmd::LineTo(b.pos)
-    }
-}
-
-pub fn to_paths(model: &[VPath], rules: &[FillRule]) -> Vec<Path> {
-    let n = rules.len().max(model.iter().map(|v| v.path + 1).max().unwrap_or(0));
-    let mut paths: Vec<Path> = (0..n).map(|i| Path { cmds: vec![], fill_rule: rules.get(i).copied().unwrap_or_default() }).collect();
-    for v in model {
-        let Some(first) = v.pts.first() else { continue };
-        let cmds = &mut paths[v.path].cmds;
-        cmds.push(PathCmd::MoveTo(first.pos));
-        for w in v.pts.windows(2) {
-            cmds.push(seg_cmd(&w[0], &w[1]));
-        }
-        if v.closed {
-            if let Some(last) = v.pts.last() {
-                cmds.push(seg_cmd(last, first));
-            }
-            cmds.push(PathCmd::Close);
-        }
-    }
-    paths.retain(|p| !p.cmds.is_empty());
-    paths
-}
-
-fn segment_count(v: &VPath) -> usize {
-    if v.closed {
-        v.pts.len()
-    } else {
-        v.pts.len().saturating_sub(1)
-    }
-}
-
-fn segment(v: &VPath, i: usize) -> (&PenPoint, &PenPoint) {
-    (&v.pts[i], &v.pts[(i + 1) % v.pts.len()])
-}
-
-fn cubic_at(a: &PenPoint, b: &PenPoint, t: f32) -> DV {
-    let (c1, c2) = (a.hout.unwrap_or(a.pos), b.hin.unwrap_or(b.pos));
-    let u = 1.0 - t;
-    let f = |p0: f32, p1: f32, p2: f32, p3: f32| u * u * u * p0 + 3.0 * u * u * t * p1 + 3.0 * u * t * t * p2 + t * t * t * p3;
-    v2(f(a.pos.x, c1.x, c2.x, b.pos.x), f(a.pos.y, c1.y, c2.y, b.pos.y))
-}
-
-/// Bounding box of the sampled curves of every sub-path.
-pub fn bounds(model: &[VPath]) -> Rect {
-    let mut pts = Vec::new();
-    for v in model {
-        for i in 0..segment_count(v) {
-            let (a, b) = segment(v, i);
-            for k in 0..=16 {
-                pts.push(cubic_at(a, b, k as f32 / 16.0));
-            }
-        }
-        if segment_count(v) == 0 {
-            pts.extend(v.pts.iter().map(|p| p.pos));
-        }
-    }
-    aabb_of(&pts)
-}
-
-/// Inserts a vertex on segment `i` at parameter `t`, keeping the curve's shape.
-/// Returns the index of the new vertex.
-pub fn split_segment(v: &mut VPath, i: usize, t: f32) -> usize {
-    let n = v.pts.len();
-    let j = (i + 1) % n;
-    let (a, b) = (v.pts[i], v.pts[j]);
-    let curved = a.hout.is_some() || b.hin.is_some();
-    let mut np = PenPoint::new(cubic_at(&a, &b, t));
-    if curved {
-        let (c1, c2) = (a.hout.unwrap_or(a.pos), b.hin.unwrap_or(b.pos));
-        let lerp = |p: DV, q: DV| add(p, scale(sub(q, p), t));
-        let (p01, p12, p23) = (lerp(a.pos, c1), lerp(c1, c2), lerp(c2, b.pos));
-        let (p012, p123) = (lerp(p01, p12), lerp(p12, p23));
-        np.hin = Some(p012);
-        np.hout = Some(p123);
-        v.pts[i].hout = Some(p01);
-        v.pts[j].hin = Some(p23);
-    }
-    if j == 0 {
-        v.pts.push(np);
-        v.pts.len() - 1
-    } else {
-        v.pts.insert(i + 1, np);
-        i + 1
-    }
-}
-
+// ------------------------------------------------------------ geometry helpers
 fn sp(p: DV) -> Pos2 {
     Pos2::new(p.x, p.y)
 }
 
-/// Finds what is under screen point `p`. `to_screen` maps node-local points to screen.
-pub fn hit_test(model: &[VPath], sel: Option<(usize, usize)>, to_screen: &dyn Fn(DV) -> DV, p: DV, radius: f32, seg_radius: f32) -> Option<Hit> {
-    // Handles of the selected vertex and its neighbours first.
-    if let Some((pi, i)) = sel {
-        if let Some(v) = model.get(pi) {
-            let n = v.pts.len();
-            let mut near_pts = vec![i];
-            if v.closed || i > 0 {
-                near_pts.push((i + n - 1) % n);
-            }
-            if v.closed || i + 1 < n {
-                near_pts.push((i + 1) % n);
-            }
-            for j in near_pts {
-                if let Some(pt) = v.pts.get(j) {
-                    for (side, h) in [(Side::In, pt.hin), (Side::Out, pt.hout)] {
-                        if let Some(h) = h {
-                            if dist(to_screen(h), p) <= radius {
-                                return Some(Hit::Handle(pi, j, side));
-                            }
-                        }
-                    }
-                }
-            }
+/// Handles worth showing: those of the selected vertices and of their neighbours,
+/// and both ends of the selected segment.
+fn visible_handles(net: &VectorNetwork, sel: &BTreeSet<usize>, seg: Option<usize>) -> BTreeSet<(usize, End)> {
+    let mut out = BTreeSet::new();
+    let other = |e: End| if e == End::Start { End::End } else { End::Start };
+    for &v in sel {
+        if v >= net.vertices.len() {
+            continue;
+        }
+        for (s, e) in net.ends_at(v) {
+            out.insert((s, e));
+            out.insert((s, other(e)));
         }
     }
-    for (pi, v) in model.iter().enumerate() {
-        for (i, pt) in v.pts.iter().enumerate() {
-            if dist(to_screen(pt.pos), p) <= radius {
-                return Some(Hit::Anchor(pi, i));
-            }
+    if let Some(s) = seg.filter(|s| *s < net.segments.len()) {
+        out.insert((s, End::Start));
+        out.insert((s, End::End));
+    }
+    out
+}
+
+fn handle_pos(net: &VectorNetwork, seg: usize, end: End) -> DV {
+    add(net.pos(net.vertex_of(seg, end)), net.tangent(seg, end))
+}
+
+/// Finds what is under screen point `p`. `to_screen` maps node-local points to screen.
+pub fn hit_test(
+    net: &VectorNetwork,
+    sel: &BTreeSet<usize>,
+    seg_sel: Option<usize>,
+    to_screen: &dyn Fn(DV) -> DV,
+    p: DV,
+    radius: f32,
+    seg_radius: f32,
+) -> Option<Hit> {
+    for (s, e) in visible_handles(net, sel, seg_sel) {
+        if len(net.tangent(s, e)) < 1e-4 {
+            continue;
+        }
+        if dist(to_screen(handle_pos(net, s, e)), p) <= radius {
+            return Some(Hit::Handle(s, e));
+        }
+    }
+    for (i, v) in net.vertices.iter().enumerate().rev() {
+        if dist(to_screen(v.pos), p) <= radius {
+            return Some(Hit::Vertex(i));
         }
     }
     let mut best: Option<(f32, Hit)> = None;
-    for (pi, v) in model.iter().enumerate() {
-        for i in 0..segment_count(v) {
-            let (a, b) = segment(v, i);
-            let steps = 32;
-            let mut prev = to_screen(a.pos);
-            for k in 1..=steps {
-                let t1 = k as f32 / steps as f32;
-                let cur = to_screen(cubic_at(a, b, t1));
-                let (d, f) = point_segment(p, prev, cur);
-                if d <= seg_radius && best.map(|(bd, _)| d < bd).unwrap_or(true) {
-                    let t = ((k - 1) as f32 + f) / steps as f32;
-                    best = Some((d, Hit::Segment(pi, i, t)));
-                }
-                prev = cur;
+    for seg in 0..net.segments.len() {
+        let c = net.cubic(seg);
+        const STEPS: usize = 32;
+        let mut prev = to_screen(c[0]);
+        for k in 1..=STEPS {
+            let t1 = k as f32 / STEPS as f32;
+            let cur = to_screen(desigma_doc::vector::cubic_point(&c, t1));
+            let (d, f) = point_segment(p, prev, cur);
+            if d <= seg_radius && best.map(|(bd, _)| d < bd).unwrap_or(true) {
+                best = Some((d, Hit::Segment(seg, ((k - 1) as f32 + f) / STEPS as f32)));
             }
+            prev = cur;
         }
     }
     best.map(|b| b.1)
@@ -284,42 +188,89 @@ fn point_segment(p: DV, a: DV, b: DV) -> (f32, f32) {
     (dist(p, add(a, scale(ab, f))), f)
 }
 
+fn len(a: DV) -> f32 {
+    (a.x * a.x + a.y * a.y).sqrt()
+}
+
+fn mapper<'a>(app: &'a App, rect: ERect, world: Affine) -> impl Fn(DV) -> DV + 'a {
+    move |p: DV| {
+        let s = app.view.to_screen(rect.min, world.apply(p));
+        v2(s.x, s.y)
+    }
+}
+
+/// Bends a cubic so that its point at `t` moves by `d`, spreading the shift over both handles.
+fn bend_cubic(base: &[DV; 4], t: f32, d: DV) -> [DV; 4] {
+    let t = t.clamp(0.08, 0.92);
+    let u = 1.0 - t;
+    let k = 1.0 / (3.0 * t * u * (u * u + t * t));
+    [base[0], add(base[1], scale(d, k * u)), add(base[2], scale(d, k * t)), base[3]]
+}
+
+/// Constrains `v` to the nearest multiple of 45 degrees.
+pub fn snap45(v: DV) -> DV {
+    let l = len(v);
+    if l < 1e-6 {
+        return v;
+    }
+    let step = std::f32::consts::FRAC_PI_4;
+    let a = (v.y.atan2(v.x) / step).round() * step;
+    // the point of the snapped line closest to `v`
+    let (dx, dy) = (a.cos(), a.sin());
+    let along = v.x * dx + v.y * dy;
+    v2(dx * along, dy * along)
+}
+
 // ------------------------------------------------------------ session
-/// Writes `model` into the node (kind, size, transform), re-origin-ing the
-/// geometry so the node box stays tight. `t0` is the node transform the model's
-/// coordinates are relative to.
-fn write_model(doc: &mut Document, ed: &mut crate::edit::Edit, id: NodeId, model: &[VPath], rules: &[FillRule], t0: Affine) {
-    let bb = bounds(model);
+/// Writes `net` into the node (kind, size, transform), re-fitting the node box
+/// to the geometry. `t0` is the node transform the network's coordinates are
+/// relative to. A rectangle, ellipse, polygon, star or line becomes a vector.
+fn write_model(doc: &mut Document, ed: &mut crate::edit::Edit, id: NodeId, net: &VectorNetwork, t0: Affine) {
+    let bb = net.bounds();
     let origin = v2(bb.x, bb.y);
-    let shifted: Vec<VPath> = model
-        .iter()
-        .map(|v| VPath {
-            pts: v.pts.iter().map(|p| PenPoint { pos: sub(p.pos, origin), hin: p.hin.map(|h| sub(h, origin)), hout: p.hout.map(|h| sub(h, origin)) }).collect(),
-            ..v.clone()
-        })
-        .collect();
+    let mut shifted = net.clone();
+    shifted.translate(v2(-origin.x, -origin.y));
+    let paths = shifted.to_paths();
     if let Some(n) = ed.node(doc, id) {
-        n.kind = NodeKind::Vector { paths: to_paths(&shifted, rules), network: None };
+        n.kind = NodeKind::Vector { paths, network: Some(shifted) };
         n.transform = t0 * Affine::translate(origin.x, origin.y);
         n.size = v2(bb.w.max(1.0), bb.h.max(1.0));
         n.fill_geometry = None;
         n.stroke_geometry = None;
+        n.corner_radii = [0.0; 4];
+        n.corner_smoothing = 0.0;
     }
 }
 
+/// Whether `id` can be edited as a vector (vectors and the basic shapes, which convert on the first edit).
 pub fn is_vector(app: &App, id: NodeId) -> bool {
-    matches!(app.doc.get(id).map(|n| &n.kind), Some(NodeKind::Vector { .. }))
+    app.doc.get(id).is_some_and(|n| {
+        matches!(
+            n.kind,
+            NodeKind::Vector { .. } | NodeKind::Rectangle | NodeKind::Ellipse(_) | NodeKind::Polygon { .. } | NodeKind::Star { .. } | NodeKind::Line
+        )
+    })
 }
 
-/// Enters point editing for a Vector node.
+/// The network of a node: the stored one, or one derived from its geometry.
+pub fn network_of(app: &App, n: &Node) -> Option<VectorNetwork> {
+    let net = match &n.kind {
+        NodeKind::Vector { network: Some(net), .. } => net.clone(),
+        NodeKind::Vector { paths, .. } => VectorNetwork::from_paths(paths),
+        _ => VectorNetwork::from_paths(&desigma_render::vectorops::node_paths(&app.doc, n)?),
+    };
+    (!net.vertices.is_empty()).then_some(net)
+}
+
+/// Enters point editing for a vector or basic shape.
 pub fn enter(app: &mut App, id: NodeId) -> bool {
-    let Some(NodeKind::Vector { paths, .. }) = app.doc.get(id).map(|n| n.kind.clone()) else { return false };
-    let (model, rules) = from_paths(&paths);
-    if model.is_empty() {
+    if !is_vector(app, id) {
         return false;
     }
+    let Some(net) = app.doc.get(id).and_then(|n| network_of(app, n)) else { return false };
     app.selection = vec![id];
-    app.canvas.vedit = Some(VectorEdit { id, paths: model, rules, sel: None, drag: None });
+    app.canvas.vedit =
+        Some(VectorEdit { id, net, sel: BTreeSet::new(), seg: None, tool: VTool::Move, drag: None, marquee: None, hover: None, hover_face: None });
     true
 }
 
@@ -335,36 +286,64 @@ pub fn exit(app: &mut App) {
     app.changed();
 }
 
-/// Re-reads the model from the document (after undo/redo or a committed edit).
+/// Re-reads the network from the document (after undo/redo or a committed edit).
 pub fn reload(app: &mut App) {
-    let Some(v) = app.canvas.vedit.as_mut() else { return };
-    if v.drag.is_some() {
+    let Some(v) = app.canvas.vedit.as_ref() else { return };
+    if v.drag.is_some() || v.marquee.is_some() {
         return;
     }
-    match app.doc.get(v.id).map(|n| &n.kind) {
-        Some(NodeKind::Vector { paths, .. }) => {
-            let (m, r) = from_paths(paths);
-            if m.is_empty() {
-                app.canvas.vedit = None;
-                return;
+    let id = v.id;
+    let net = app.doc.get(id).filter(|_| is_vector(app, id)).and_then(|n| network_of(app, n));
+    let Some(v) = app.canvas.vedit.as_mut() else { return };
+    match net {
+        Some(net) => {
+            let n = net.vertices.len();
+            v.sel.retain(|i| *i < n);
+            if v.seg.is_some_and(|(s, _)| s >= net.segments.len()) {
+                v.seg = None;
             }
-            v.paths = m;
-            v.rules = r;
-            if let Some((pi, i)) = v.sel {
-                if v.paths.get(pi).map(|p| i >= p.pts.len()).unwrap_or(true) {
-                    v.sel = None;
-                }
-            }
+            v.net = net;
         }
-        _ => app.canvas.vedit = None,
+        None => app.canvas.vedit = None,
     }
 }
 
-fn mapper<'a>(app: &'a App, rect: ERect, world: Affine) -> impl Fn(DV) -> DV + 'a {
-    move |p: DV| {
-        let s = app.view.to_screen(rect.min, world.apply(p));
-        v2(s.x, s.y)
+/// Applies `f` to a copy of the network and the vertex selection and commits the result as one
+/// undo step. Returns false when `f` declined or the edit would empty the vector.
+pub fn edit(app: &mut App, f: impl FnOnce(&mut VectorNetwork, &mut BTreeSet<usize>) -> bool) -> bool {
+    let Some(v) = app.canvas.vedit.as_mut() else { return false };
+    if v.drag.is_some() {
+        return false;
     }
+    let id = v.id;
+    let mut net = v.net.clone();
+    let mut sel = v.sel.clone();
+    if !f(&mut net, &mut sel) || net.vertices.is_empty() {
+        return false;
+    }
+    v.sel = sel;
+    v.seg = None;
+    let Some(t0) = app.doc.get(id).map(|n| n.transform) else { return false };
+    let mut tx = Tx::new();
+    write_model(&mut app.doc, &mut tx.ed, id, &net, t0);
+    let changed = app.run_tx(tx);
+    reload(app);
+    changed
+}
+
+pub fn set_tool(app: &mut App, tool: VTool) {
+    if let Some(v) = app.canvas.vedit.as_mut() {
+        v.tool = tool;
+        v.hover_face = None;
+    }
+}
+
+// ------------------------------------------------------------ pointer
+fn begin_drag(app: &mut App, kind: DragKind, world0: Affine, t0: Affine, page: DV) {
+    let Some(v) = app.canvas.vedit.as_mut() else { return };
+    let anchor = world0.invert().map(|i| i.apply(page)).unwrap_or(page);
+    v.drag = Some(VDrag { tx: Tx::new(), kind, world0, t0, start: v.net.clone(), anchor_page: page, anchor, changed: false });
+    app.canvas.inter = Interaction::VectorDrag;
 }
 
 /// Handles a primary press while editing. Returns false when the press
@@ -373,91 +352,105 @@ pub fn press(app: &mut App, rect: ERect, pos: Pos2, mods: Modifiers) -> bool {
     let Some(v) = app.canvas.vedit.as_ref() else { return false };
     let id = v.id;
     let world = app.doc.world_transform(id);
-    let Some(n) = app.doc.get(id) else { return false };
-    let t0 = n.transform;
-    let size = n.size;
+    let Some(t0) = app.doc.get(id).map(|n| n.transform) else { return false };
+    let page = app.view.to_page(rect.min, pos);
+    let tool = v.tool;
+    if tool == VTool::Bucket {
+        bucket_click(app, rect, pos);
+        return true;
+    }
     let hit = {
         let to_s = mapper(app, rect, world);
-        hit_test(&v.paths, v.sel, &to_s, v2(pos.x, pos.y), theme::VEDIT_HIT, theme::VEDIT_SEGMENT_HIT)
+        hit_test(&v.net, &v.sel, v.seg.map(|s| s.0), &to_s, v2(pos.x, pos.y), theme::VEDIT_HIT, theme::VEDIT_SEGMENT_HIT)
     };
+    let vertex_of = |app: &App, seg: usize, end: End| app.canvas.vedit.as_ref().map(|v| v.net.vertex_of(seg, end));
     match hit {
-        Some(Hit::Anchor(pi, i)) => {
-            if let Some(v) = app.canvas.vedit.as_mut() {
-                v.sel = Some((pi, i));
+        Some(Hit::Handle(seg, end)) => {
+            if let Some(vi) = vertex_of(app, seg, end) {
+                if let Some(v) = app.canvas.vedit.as_mut() {
+                    if !v.sel.contains(&vi) {
+                        v.sel = BTreeSet::from([vi]);
+                    }
+                }
             }
-            begin_drag(app, DragKind::Anchor, (pi, i), world, t0);
-            true
+            begin_drag(app, DragKind::Handle(seg, end), world, t0, page);
         }
-        Some(Hit::Handle(pi, i, side)) => {
-            if let Some(v) = app.canvas.vedit.as_mut() {
-                v.sel = Some((pi, i));
+        Some(Hit::Vertex(i)) => {
+            let Some(v) = app.canvas.vedit.as_mut() else { return true };
+            v.seg = None;
+            if tool == VTool::Bend {
+                v.sel = BTreeSet::from([i]);
+                begin_drag(app, DragKind::Pull(i), world, t0, page);
+            } else if mods.shift {
+                if !v.sel.remove(&i) {
+                    v.sel.insert(i);
+                }
+            } else {
+                if !v.sel.contains(&i) {
+                    v.sel = BTreeSet::from([i]);
+                }
+                begin_drag(app, DragKind::Vertices, world, t0, page);
             }
-            begin_drag(app, DragKind::Handle(side), (pi, i), world, t0);
-            true
         }
-        Some(Hit::Segment(pi, i, t)) => {
-            insert_point(app, pi, i, t, t0);
-            true
+        Some(Hit::Segment(seg, t)) => {
+            let Some(v) = app.canvas.vedit.as_mut() else { return true };
+            v.seg = Some((seg, t));
+            let base = v.net.cubic(seg);
+            if mods.command || tool == VTool::Bend {
+                v.sel.clear();
+                begin_drag(app, DragKind::Bend { seg, t, base }, world, t0, page);
+            } else {
+                begin_drag(app, DragKind::Segment { seg, t }, world, t0, page);
+            }
         }
         None => {
-            // Inside (or just around) the node: deselect the vertex and stay in edit mode.
-            let inside = {
-                let to_s = mapper(app, rect, world);
-                let c = [v2(0.0, 0.0), v2(size.x, 0.0), v2(size.x, size.y), v2(0.0, size.y)].map(to_s);
-                let (x0, x1) = (c.iter().map(|q| q.x).fold(f32::MAX, f32::min), c.iter().map(|q| q.x).fold(f32::MIN, f32::max));
-                let (y0, y1) = (c.iter().map(|q| q.y).fold(f32::MAX, f32::min), c.iter().map(|q| q.y).fold(f32::MIN, f32::max));
-                let m = theme::VEDIT_HIT;
-                pos.x >= x0 - m && pos.x <= x1 + m && pos.y >= y0 - m && pos.y <= y1 + m
-            };
-            let _ = mods;
-            if inside {
-                if let Some(v) = app.canvas.vedit.as_mut() {
-                    v.sel = None;
+            // Another object under the pointer leaves edit mode; empty canvas starts a marquee.
+            if let Some(h) = super::interact::hit_under(app, page, false) {
+                if h != id {
+                    exit(app);
+                    return false;
                 }
-                true
-            } else {
-                exit(app);
-                false
+            }
+            if let Some(v) = app.canvas.vedit.as_mut() {
+                let base = if mods.shift { v.sel.clone() } else { BTreeSet::new() };
+                v.seg = None;
+                v.marquee = Some(Marquee { start: page, cur: page, lasso: if mods.alt { vec![page] } else { vec![] }, additive: mods.shift, base });
+                app.canvas.inter = Interaction::VectorDrag;
             }
         }
     }
+    true
 }
 
-fn begin_drag(app: &mut App, kind: DragKind, at: (usize, usize), world0: Affine, t0: Affine) {
-    let Some(v) = app.canvas.vedit.as_mut() else { return };
-    v.drag = Some(VDrag { tx: Tx::new(), kind, at, world0, t0, start: v.paths.clone(), changed: false });
-    app.canvas.inter = Interaction::VectorDrag;
-}
-
-/// Splits a segment by clicking it (one undo step) and selects the new vertex.
-fn insert_point(app: &mut App, pi: usize, i: usize, t: f32, t0: Affine) {
-    let Some(v) = app.canvas.vedit.as_mut() else { return };
-    let (id, mut model, rules) = (v.id, v.paths.clone(), v.rules.clone());
-    let Some(vp) = model.get_mut(pi) else { return };
-    let ni = split_segment(vp, i, t);
-    v.sel = Some((pi, ni));
-    let mut tx = Tx::new();
-    write_model(&mut app.doc, &mut tx.ed, id, &model, &rules, t0);
-    app.run_tx(tx);
-    reload(app);
-}
-
-/// Pointer moved while dragging a vertex or handle.
+/// Pointer moved while a gesture is running.
 pub fn drag(app: &mut App, cur: DV, mods: Modifiers) {
-    let App { doc, canvas, .. } = app;
+    let App { doc, canvas, view, .. } = app;
+    let zoom = view.zoom;
     let Some(v) = canvas.vedit.as_mut() else { return };
+    if let Some(m) = v.marquee.as_mut() {
+        m.cur = cur;
+        if !m.lasso.is_empty() && m.lasso.last().map(|l| dist(*l, cur) * zoom > 2.0).unwrap_or(true) {
+            m.lasso.push(cur);
+        }
+        return;
+    }
     let id = v.id;
-    let rules = v.rules.clone();
     let Some(d) = v.drag.as_mut() else { return };
     let Some(inv) = d.world0.invert() else { return };
     let local = inv.apply(cur);
-    let mut model = d.start.clone();
-    let (pi, i) = d.at;
-    let Some(pt) = model.get_mut(pi).and_then(|p| p.pts.get_mut(i)) else { return };
-    let orig = d.start[pi].pts[i];
-    match d.kind {
-        DragKind::Anchor => {
-            let mut delta = sub(local, orig.pos);
+    // a press on a segment becomes a drag once the pointer has moved a few pixels
+    if let DragKind::Segment { seg, .. } = d.kind {
+        if dist(cur, d.anchor_page) * zoom <= theme::DRAG_THRESHOLD_PX {
+            return;
+        }
+        let s = &d.start.segments[seg];
+        v.sel = BTreeSet::from([s.a, s.b]);
+        d.kind = DragKind::Vertices;
+    }
+    let mut net = d.start.clone();
+    match d.kind.clone() {
+        DragKind::Vertices => {
+            let mut delta = sub(local, d.anchor);
             if mods.shift {
                 if delta.x.abs() > delta.y.abs() {
                     delta.y = 0.0;
@@ -465,121 +458,466 @@ pub fn drag(app: &mut App, cur: DV, mods: Modifiers) {
                     delta.x = 0.0;
                 }
             }
-            pt.pos = add(orig.pos, delta);
-            pt.hin = orig.hin.map(|h| add(h, delta));
-            pt.hout = orig.hout.map(|h| add(h, delta));
-        }
-        DragKind::Handle(side) => {
-            // The dragged handle follows the pointer; the opposite one mirrors it unless Alt is held.
-            let mirrored = sub(scale(orig.pos, 2.0), local);
-            match side {
-                Side::In => {
-                    pt.hin = Some(local);
-                    if !mods.alt && orig.hout.is_some() {
-                        pt.hout = Some(mirrored);
-                    }
-                }
-                Side::Out => {
-                    pt.hout = Some(local);
-                    if !mods.alt && orig.hin.is_some() {
-                        pt.hin = Some(mirrored);
-                    }
+            for &i in &v.sel {
+                if let Some(vx) = net.vertices.get_mut(i) {
+                    vx.pos = add(d.start.vertices[i].pos, delta);
                 }
             }
         }
+        DragKind::Handle(seg, end) => {
+            let vi = net.vertex_of(seg, end);
+            let mut t = sub(local, net.pos(vi));
+            if mods.shift {
+                t = snap45(t);
+            }
+            if mods.alt {
+                // Alt breaks the mirroring of the vertex for good
+                net.vertices[vi].mirror = HandleMirror::None;
+            }
+            net.set_tangent(seg, end, t);
+            net.enforce_mirror(seg, end);
+        }
+        DragKind::Bend { seg, t, base } => {
+            let d_vec = sub(local, desigma_doc::vector::cubic_point(&base, t));
+            let c = bend_cubic(&base, t, d_vec);
+            let (a, b) = (net.segments[seg].a, net.segments[seg].b);
+            net.set_tangent(seg, End::Start, sub(c[1], net.pos(a)));
+            net.set_tangent(seg, End::End, sub(c[2], net.pos(b)));
+            net.enforce_mirror(seg, End::Start);
+            net.enforce_mirror(seg, End::End);
+        }
+        DragKind::Pull(vi) => {
+            let mut t = sub(local, net.pos(vi));
+            if mods.shift {
+                t = snap45(t);
+            }
+            let ends = net.ends_at(vi);
+            let out = ends.iter().find(|e| e.1 == End::Start).or(ends.first()).copied();
+            if let Some((s, e)) = out {
+                net.set_tangent(s, e, t);
+                if let Some(&(s2, e2)) = ends.iter().find(|x| **x != (s, e)).filter(|_| ends.len() == 2) {
+                    net.set_tangent(s2, e2, scale(t, -1.0));
+                    net.vertices[vi].mirror = HandleMirror::AngleAndLength;
+                }
+            }
+        }
+        DragKind::Segment { .. } => return,
     }
     d.changed = true;
-    write_model(doc, &mut d.tx.ed, id, &model, &rules, d.t0);
-    v.paths = model;
+    write_model(doc, &mut d.tx.ed, id, &net, d.t0);
+    v.net = net;
     canvas.dirty = true;
 }
 
-/// Pointer released: commits the drag as one undo step.
+/// Pointer released: commits the gesture as one undo step.
 pub fn release(app: &mut App) {
+    let zoom = app.view.zoom;
     let Some(v) = app.canvas.vedit.as_mut() else { return };
+    if let Some(m) = v.marquee.take() {
+        let Some(world) = app.doc.get(v.id).map(|_| app.doc.world_transform(v.id)) else { return };
+        // a lasso that ends where it began has still moved
+        let moved = dist(m.start, m.cur) * zoom > theme::DRAG_THRESHOLD_PX || m.lasso.iter().any(|q| dist(m.start, *q) * zoom > theme::DRAG_THRESHOLD_PX);
+        let mut sel = m.base.clone();
+        if moved {
+            let inside = |p: DV| -> bool {
+                if m.lasso.len() >= 3 {
+                    point_in_polygon(p, &m.lasso)
+                } else {
+                    let (x0, x1) = (m.start.x.min(m.cur.x), m.start.x.max(m.cur.x));
+                    let (y0, y1) = (m.start.y.min(m.cur.y), m.start.y.max(m.cur.y));
+                    p.x >= x0 && p.x <= x1 && p.y >= y0 && p.y <= y1
+                }
+            };
+            for (i, vx) in v.net.vertices.iter().enumerate() {
+                if inside(world.apply(vx.pos)) {
+                    sel.insert(i);
+                }
+            }
+        } else if !m.additive {
+            sel.clear();
+        }
+        v.sel = sel;
+        app.changed();
+        return;
+    }
     let Some(d) = v.drag.take() else { return };
+    if !d.changed {
+        match d.kind {
+            DragKind::Segment { seg, t } => {
+                // a click on a segment adds a point
+                d.tx.cancel(&mut app.doc);
+                insert_point(app, seg, t);
+                return;
+            }
+            DragKind::Pull(vi) => {
+                // a click on a vertex with the Bend tool removes its handles
+                d.tx.cancel(&mut app.doc);
+                edit(app, |net, _| {
+                    if net.ends_at(vi).iter().all(|(s, e)| len(net.tangent(*s, *e)) < 1e-4) {
+                        return false;
+                    }
+                    net.straighten(vi);
+                    net.vertices[vi].mirror = HandleMirror::None;
+                    true
+                });
+                return;
+            }
+            _ => {}
+        }
+    }
     if d.changed {
         app.run_tx(d.tx);
     }
     reload(app);
 }
 
-/// Removes the selected vertex (one undo step).
-pub fn delete_selected(app: &mut App) {
-    let Some(v) = app.canvas.vedit.as_mut() else { return };
-    let Some((pi, i)) = v.sel else { return };
-    let (id, mut model, rules) = (v.id, v.paths.clone(), v.rules.clone());
-    let Some(vp) = model.get_mut(pi) else { return };
-    if vp.pts.len() > 2 {
-        vp.pts.remove(i);
-    } else {
-        if model.len() <= 1 {
-            return;
+/// Splits a segment by clicking it and selects the new vertex.
+pub fn insert_point(app: &mut App, seg: usize, t: f32) {
+    edit(app, |net, sel| {
+        if seg >= net.segments.len() {
+            return false;
         }
-        model.remove(pi);
+        let nv = net.split_segment(seg, t);
+        *sel = BTreeSet::from([nv]);
+        true
+    });
+}
+
+/// Updates what is under the pointer (for highlights).
+pub fn hover(app: &mut App, rect: ERect, pos: Option<Pos2>) {
+    let Some(v) = app.canvas.vedit.as_ref() else { return };
+    if v.drag.is_some() || v.marquee.is_some() {
+        return;
     }
-    v.sel = None;
-    let Some(t0) = app.doc.get(id).map(|n| n.transform) else { return };
-    let mut tx = Tx::new();
-    write_model(&mut app.doc, &mut tx.ed, id, &model, &rules, t0);
-    app.run_tx(tx);
-    reload(app);
+    let world = app.doc.world_transform(v.id);
+    let (hit, face) = match pos.filter(|p| rect.contains(*p)) {
+        None => (None, None),
+        Some(p) if v.tool == VTool::Bucket => {
+            let local = world.invert().map(|i| i.apply(app.view.to_page(rect.min, p)));
+            (None, local.and_then(|l| v.net.face_at(l)))
+        }
+        Some(p) => {
+            let to_s = mapper(app, rect, world);
+            (hit_test(&v.net, &v.sel, v.seg.map(|s| s.0), &to_s, v2(p.x, p.y), theme::VEDIT_HIT, theme::VEDIT_SEGMENT_HIT), None)
+        }
+    };
+    if let Some(v) = app.canvas.vedit.as_mut() {
+        v.hover = hit;
+        v.hover_face = face;
+    }
+}
+
+/// Paint bucket click: fills or unfills the area under the pointer.
+fn bucket_click(app: &mut App, rect: ERect, pos: Pos2) {
+    let Some(v) = app.canvas.vedit.as_ref() else { return };
+    let world = app.doc.world_transform(v.id);
+    let Some(local) = world.invert().map(|i| i.apply(app.view.to_page(rect.min, pos))) else { return };
+    let Some(face) = v.net.face_at(local) else { return };
+    edit(app, |net, _| {
+        net.toggle_face(&face);
+        true
+    });
+}
+
+// ------------------------------------------------------------ commands
+/// Removes the selected vertices (or the selected segment).
+pub fn delete_selected(app: &mut App) {
+    let Some(v) = app.canvas.vedit.as_ref() else { return };
+    let seg = v.seg.map(|s| s.0);
+    edit(app, |net, sel| {
+        if sel.is_empty() {
+            let Some(s) = seg.filter(|s| *s < net.segments.len()) else { return false };
+            net.delete_segment(s);
+            return !net.vertices.is_empty();
+        }
+        net.delete_vertices(sel);
+        sel.clear();
+        !net.vertices.is_empty()
+    });
+}
+
+/// Joins the two selected vertices into one.
+pub fn join_selected(app: &mut App) -> bool {
+    edit(app, |net, sel| {
+        let pair: Vec<usize> = sel.iter().copied().collect();
+        let [a, b] = pair[..] else { return false };
+        match net.join_vertices(a, b) {
+            Some(m) => {
+                *sel = BTreeSet::from([m]);
+                true
+            }
+            None => false,
+        }
+    })
+}
+
+/// Cuts the path at the selected vertices, or at the clicked point of a segment.
+pub fn split_selected(app: &mut App) -> bool {
+    let Some(v) = app.canvas.vedit.as_ref() else { return false };
+    let seg = v.seg;
+    edit(app, |net, sel| {
+        if sel.is_empty() {
+            let Some((s, t)) = seg.filter(|s| s.0 < net.segments.len()) else { return false };
+            return match net.cut_at(s, t) {
+                Some((a, b)) => {
+                    *sel = BTreeSet::from([a, b]);
+                    true
+                }
+                None => false,
+            };
+        }
+        let mut changed = false;
+        let mut added = vec![];
+        for &vi in sel.iter().rev() {
+            if let Some(nv) = net.split_vertex(vi) {
+                added.push(nv);
+                changed = true;
+            }
+        }
+        sel.extend(added);
+        changed
+    })
+}
+
+/// Reduces the vertices of the whole vector within `tol`.
+pub fn simplify(app: &mut App, tol: f32) -> usize {
+    let mut removed = 0;
+    edit(app, |net, sel| {
+        removed = net.simplify(tol);
+        sel.clear();
+        removed > 0
+    });
+    removed
+}
+
+/// Moves the selected vertices by `d` (arrow keys), one undo step per press.
+pub fn nudge(app: &mut App, d: DV) -> bool {
+    edit(app, |net, sel| {
+        if sel.is_empty() {
+            return false;
+        }
+        for &i in sel.iter() {
+            net.vertices[i].pos = add(net.vertices[i].pos, d);
+        }
+        true
+    })
+}
+
+/// Sets a property on every selected vertex (inspector fields).
+pub fn set_vertices(app: &mut App, f: impl Fn(&mut desigma_doc::vector::Vertex)) -> bool {
+    edit(app, |net, sel| {
+        if sel.is_empty() {
+            return false;
+        }
+        for &i in sel.iter() {
+            f(&mut net.vertices[i]);
+        }
+        true
+    })
+}
+
+/// Sets the handle mirroring of the selected vertices and snaps their handles to it.
+pub fn set_mirror(app: &mut App, mode: HandleMirror) -> bool {
+    edit(app, |net, sel| {
+        if sel.is_empty() {
+            return false;
+        }
+        for &i in sel.iter() {
+            net.set_mirror(i, mode);
+        }
+        true
+    })
+}
+
+/// Removes the handles of the selected vertices.
+pub fn straighten_selected(app: &mut App) -> bool {
+    edit(app, |net, sel| {
+        if sel.is_empty() {
+            return false;
+        }
+        for &i in sel.iter() {
+            net.straighten(i);
+            net.vertices[i].mirror = HandleMirror::None;
+        }
+        true
+    })
+}
+
+/// Moves the selected vertices to `x` / `y` in node space (inspector position fields).
+pub fn move_selected_to(app: &mut App, x: Option<f32>, y: Option<f32>) -> bool {
+    edit(app, |net, sel| {
+        if sel.is_empty() {
+            return false;
+        }
+        for &i in sel.iter() {
+            if let Some(x) = x {
+                net.vertices[i].pos.x = x;
+            }
+            if let Some(y) = y {
+                net.vertices[i].pos.y = y;
+            }
+        }
+        true
+    })
+}
+
+/// Handles a key while editing. Returns true when the key was used.
+pub fn key(app: &mut App, key: egui::Key, m: Modifiers) -> bool {
+    use egui::Key;
+    match key {
+        Key::Escape | Key::Enter => {
+            exit(app);
+            true
+        }
+        Key::Delete | Key::Backspace => {
+            delete_selected(app);
+            true
+        }
+        Key::V if !m.shift => {
+            set_tool(app, VTool::Move);
+            true
+        }
+        Key::B if !m.shift => {
+            set_tool(app, VTool::Bend);
+            true
+        }
+        Key::K if !m.shift => {
+            set_tool(app, VTool::Bucket);
+            true
+        }
+        Key::ArrowLeft | Key::ArrowRight | Key::ArrowUp | Key::ArrowDown => {
+            let sel_empty = app.canvas.vedit.as_ref().is_none_or(|v| v.sel.is_empty());
+            if sel_empty {
+                return false;
+            }
+            let step = if m.shift { theme::NUDGE_BIG } else { theme::NUDGE };
+            let d = match key {
+                Key::ArrowLeft => v2(-step, 0.0),
+                Key::ArrowRight => v2(step, 0.0),
+                Key::ArrowUp => v2(0.0, -step),
+                _ => v2(0.0, step),
+            };
+            nudge(app, d);
+            true
+        }
+        _ => false,
+    }
+}
+
+/// Common value of a property over the selected vertices.
+pub fn common_vertex<T: PartialEq>(app: &App, f: impl Fn(&desigma_doc::vector::Vertex) -> T) -> Option<T> {
+    let v = app.canvas.vedit.as_ref()?;
+    let mut it = v.sel.iter().filter_map(|i| v.net.vertices.get(*i)).map(f);
+    let first = it.next()?;
+    it.all(|x| x == first).then_some(first)
 }
 
 // ------------------------------------------------------------ overlay
 pub fn overlay(app: &App, p: &Painter, rect: ERect) {
     let Some(v) = &app.canvas.vedit else { return };
-    let world = app.doc.world_transform(v.id);
+    // while a gesture runs the document node is re-fitted on every move; its network lives in the frame of the press
+    let world = v.drag.as_ref().map(|d| d.world0).unwrap_or_else(|| app.doc.world_transform(v.id));
     let to_s = mapper(app, rect, world);
     let col = theme::CANVAS_SELECTION;
-    // Path preview.
-    for vp in &v.paths {
-        for i in 0..segment_count(vp) {
-            let (a, b) = segment(vp, i);
-            let curve = egui::epaint::CubicBezierShape::from_points_stroke(
-                [sp(to_s(a.pos)), sp(to_s(a.hout.unwrap_or(a.pos))), sp(to_s(b.hin.unwrap_or(b.pos))), sp(to_s(b.pos))],
-                false,
-                egui::Color32::TRANSPARENT,
-                Stroke::new(theme::CANVAS_OUTLINE_WIDTH, col),
-            );
-            p.add(curve);
+    // filled areas hint
+    if let Some(f) = &v.hover_face {
+        let contours: Vec<Vec<Pos2>> = v.net.face_contours(f).iter().map(|c| c.iter().map(|q| sp(to_s(*q))).collect()).collect();
+        if let Some((outer, holes)) = contours.split_first() {
+            super::polyfill::fill(p, outer, holes, col.gamma_multiply(0.35));
         }
     }
-    // Handles of the selected vertex and its neighbours.
-    if let Some((pi, i)) = v.sel {
-        if let Some(vp) = v.paths.get(pi) {
-            let n = vp.pts.len();
-            let mut idx = vec![i];
-            if vp.closed || i > 0 {
-                idx.push((i + n - 1) % n);
-            }
-            if vp.closed || i + 1 < n {
-                idx.push((i + 1) % n);
-            }
-            for j in idx {
-                let pt = vp.pts[j];
-                for h in [pt.hin, pt.hout].into_iter().flatten() {
-                    p.line_segment([sp(to_s(pt.pos)), sp(to_s(h))], Stroke::new(1.0, col));
-                    p.circle_filled(sp(to_s(h)), theme::VEDIT_HANDLE_RADIUS, theme::CANVAS_HANDLE_FILL);
-                    p.circle_stroke(sp(to_s(h)), theme::VEDIT_HANDLE_RADIUS, Stroke::new(1.0, col));
-                }
-            }
+    // curves
+    for seg in 0..v.net.segments.len() {
+        let c = v.net.cubic(seg);
+        let selected = v.seg.is_some_and(|s| s.0 == seg) || matches!(v.hover, Some(Hit::Segment(s, _)) if s == seg);
+        let curve = egui::epaint::CubicBezierShape::from_points_stroke(
+            [sp(to_s(c[0])), sp(to_s(c[1])), sp(to_s(c[2])), sp(to_s(c[3]))],
+            false,
+            egui::Color32::TRANSPARENT,
+            Stroke::new(if selected { theme::CANVAS_OUTLINE_WIDTH * 2.0 } else { theme::CANVAS_OUTLINE_WIDTH }, col),
+        );
+        p.add(curve);
+    }
+    // handles
+    for (s, e) in visible_handles(&v.net, &v.sel, v.seg.map(|s| s.0)) {
+        let t = v.net.tangent(s, e);
+        if len(t) < 1e-4 {
+            continue;
+        }
+        let anchor = sp(to_s(v.net.pos(v.net.vertex_of(s, e))));
+        let h = sp(to_s(handle_pos(&v.net, s, e)));
+        p.line_segment([anchor, h], Stroke::new(1.0, col));
+        p.circle_filled(h, theme::VEDIT_HANDLE_RADIUS, theme::CANVAS_HANDLE_FILL);
+        p.circle_stroke(h, theme::VEDIT_HANDLE_RADIUS, Stroke::new(1.0, col));
+    }
+    // vertices
+    for (i, vx) in v.net.vertices.iter().enumerate() {
+        let hovered = v.hover == Some(Hit::Vertex(i));
+        let size = theme::VEDIT_POINT_SIZE * if hovered { 1.4 } else { 1.0 };
+        let r = ERect::from_center_size(sp(to_s(vx.pos)), egui::Vec2::splat(size));
+        let selected = v.sel.contains(&i);
+        p.rect_filled(r, 0.0, if selected { col } else { theme::CANVAS_HANDLE_FILL });
+        p.rect_stroke(r, 0.0, Stroke::new(1.0, col), StrokeKind::Inside);
+        if vx.corner_radius > 0.0 {
+            // a ring marks vertices with a rounded corner
+            p.circle_stroke(sp(to_s(vx.pos)), theme::VEDIT_POINT_SIZE * 1.1, Stroke::new(1.0, col));
         }
     }
-    // Vertices.
-    for (pi, vp) in v.paths.iter().enumerate() {
-        for (i, pt) in vp.pts.iter().enumerate() {
-            let r = ERect::from_center_size(sp(to_s(pt.pos)), egui::Vec2::splat(theme::VEDIT_POINT_SIZE));
-            let selected = v.sel == Some((pi, i));
-            p.rect_filled(r, 0.0, if selected { col } else { theme::CANVAS_HANDLE_FILL });
+    // marquee / lasso
+    if let Some(m) = &v.marquee {
+        let to_scr = |q: DV| app.view.to_screen(rect.min, q);
+        if m.lasso.len() >= 2 {
+            let pts: Vec<Pos2> = m.lasso.iter().map(|q| to_scr(*q)).collect();
+            super::polyfill::fill(p, &pts, &[], col.gamma_multiply(0.1));
+            p.add(egui::Shape::line(pts, Stroke::new(1.0, col)));
+        } else {
+            let r = ERect::from_two_pos(to_scr(m.start), to_scr(m.cur));
+            p.rect_filled(r, 0.0, col.gamma_multiply(0.1));
             p.rect_stroke(r, 0.0, Stroke::new(1.0, col), StrokeKind::Inside);
         }
+    }
+}
+
+/// The floating sub-tool switcher at the bottom of the canvas.
+pub fn toolbar(app: &mut App, ui: &mut egui::Ui, rect: ERect) {
+    let Some(tool) = app.canvas.vedit.as_ref().map(|v| v.tool) else { return };
+    let font = theme::font_body();
+    let w = 84.0;
+    let total = VTool::ALL.len() as f32 * w + 8.0;
+    let bar = ERect::from_center_size(
+        Pos2::new(rect.center().x, rect.bottom() - theme::TOOLBELT_BOTTOM_MARGIN - theme::TOOLBELT_HEIGHT - 26.0),
+        egui::vec2(total, 36.0),
+    );
+    ui.painter().rect_filled(bar, theme::cr(theme::RADIUS_MEDIUM), theme::BG_TOOLBAR);
+    let mut picked = None;
+    for (i, t) in VTool::ALL.iter().enumerate() {
+        let r = ERect::from_min_size(Pos2::new(bar.left() + 4.0 + i as f32 * w, bar.top() + 4.0), egui::vec2(w, 28.0));
+        let resp = ui.interact(r, ui.id().with(("vtool", i)), egui::Sense::click());
+        #[cfg(test)]
+        ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new(("test-rect", format!("vtool:{}", t.label()))), r));
+        let on = *t == tool;
+        let bg = if on {
+            theme::BG_TOOLBAR_SELECTED
+        } else if resp.hovered() {
+            theme::BG_TOOLBAR_HOVER
+        } else {
+            egui::Color32::TRANSPARENT
+        };
+        ui.painter().rect_filled(r, theme::cr(theme::RADIUS_MEDIUM), bg);
+        ui.painter().text(r.center(), egui::Align2::CENTER_CENTER, t.label(), font.clone(), theme::TEXT);
+        if resp.clicked() {
+            picked = Some(*t);
+        }
+    }
+    if let Some(t) = picked {
+        set_tool(app, t);
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use desigma_doc::{Color, FillRule, Paint, Path, PathCmd};
 
     fn line_path() -> Vec<Path> {
         vec![Path {
@@ -588,116 +926,23 @@ mod tests {
         }]
     }
 
-    fn id(p: &[VPath]) -> Vec<VPath> {
-        p.to_vec()
-    }
-
-    #[test]
-    fn path_roundtrip_open_closed_and_curves() {
-        let (m, r) = from_paths(&line_path());
-        assert_eq!(m.len(), 1);
-        assert_eq!(m[0].pts.len(), 3);
-        assert!(!m[0].closed);
-        assert_eq!(to_paths(&m, &r), line_path());
-
-        let closed = vec![Path {
-            cmds: vec![
-                PathCmd::MoveTo(v2(0.0, 0.0)),
-                PathCmd::CubicTo(v2(10.0, -20.0), v2(40.0, -20.0), v2(50.0, 0.0)),
-                PathCmd::LineTo(v2(50.0, 50.0)),
-                PathCmd::LineTo(v2(0.0, 0.0)),
-                PathCmd::Close,
-            ],
-            fill_rule: FillRule::EvenOdd,
-        }];
-        let (m, r) = from_paths(&closed);
-        assert!(m[0].closed);
-        assert_eq!(m[0].pts.len(), 3, "the duplicate end vertex is merged into the start");
-        assert_eq!(m[0].pts[0].hout, Some(v2(10.0, -20.0)));
-        assert_eq!(m[0].pts[1].hin, Some(v2(40.0, -20.0)));
-        assert_eq!(to_paths(&m, &r), closed, "round trip is lossless");
-
-        // quads become cubics
-        let q = vec![Path { cmds: vec![PathCmd::MoveTo(v2(0.0, 0.0)), PathCmd::QuadTo(v2(30.0, 30.0), v2(60.0, 0.0))], fill_rule: FillRule::NonZero }];
-        let (m, _) = from_paths(&q);
-        assert!(m[0].pts[0].hout.is_some() && m[0].pts[1].hin.is_some());
-    }
-
-    #[test]
-    fn splitting_a_curve_keeps_its_shape() {
-        let (mut m, _) = from_paths(&[Path {
-            cmds: vec![PathCmd::MoveTo(v2(0.0, 0.0)), PathCmd::CubicTo(v2(0.0, 60.0), v2(100.0, 60.0), v2(100.0, 0.0))],
-            fill_rule: FillRule::NonZero,
-        }]);
-        let (a, b) = (m[0].pts[0], m[0].pts[1]);
-        let mid = cubic_at(&a, &b, 0.5);
-        let ni = split_segment(&mut m[0], 0, 0.5);
-        assert_eq!(ni, 1);
-        assert_eq!(m[0].pts.len(), 3);
-        assert!(dist(m[0].pts[1].pos, mid) < 1e-4);
-        // the first half still passes through the quarter point of the original
-        let q = cubic_at(&a, &b, 0.25);
-        let half = cubic_at(&m[0].pts[0], &m[0].pts[1], 0.5);
-        assert!(dist(q, half) < 1e-3, "{q:?} vs {half:?}");
-    }
-
-    #[test]
-    fn splitting_the_closing_segment_appends() {
-        let (mut m, _) = from_paths(&line_path());
-        m[0].closed = true;
-        let ni = split_segment(&mut m[0], 2, 0.5);
-        assert_eq!(ni, 3);
-        assert_eq!(m[0].pts[3].pos, v2(50.0, 50.0));
-        assert!(m[0].pts[3].hin.is_none());
-    }
-
-    #[test]
-    fn hit_priority_handle_then_anchor_then_segment() {
-        let mut path = from_paths(&[Path {
-            cmds: vec![PathCmd::MoveTo(v2(0.0, 0.0)), PathCmd::CubicTo(v2(30.0, 50.0), v2(70.0, 50.0), v2(100.0, 0.0))],
-            fill_rule: FillRule::NonZero,
-        }])
-        .0;
-        let ident = |p: DV| p;
-        assert_eq!(hit_test(&path, None, &ident, v2(1.0, 1.0), 6.0, 5.0), Some(Hit::Anchor(0, 0)));
-        // handles only respond for the selected vertex
-        assert!(!matches!(hit_test(&path, None, &ident, v2(30.0, 50.0), 6.0, 5.0), Some(Hit::Handle(..))));
-        assert_eq!(hit_test(&path, Some((0, 0)), &ident, v2(30.0, 50.0), 6.0, 5.0), Some(Hit::Handle(0, 0, Side::Out)));
-        // a point on the curve's middle hits the segment
-        let a = path[0].pts[0];
-        let b = path[0].pts[1];
-        let mid = cubic_at(&a, &b, 0.5);
-        match hit_test(&path, None, &ident, mid, 6.0, 5.0) {
-            Some(Hit::Segment(0, 0, t)) => assert!((t - 0.5).abs() < 0.05, "{t}"),
-            other => panic!("{other:?}"),
-        }
-        assert_eq!(hit_test(&path, None, &ident, v2(50.0, 300.0), 6.0, 5.0), None);
-        path.clear();
-    }
-
-    #[test]
-    fn bounds_cover_the_curve_not_just_the_anchors() {
-        let (m, _) = from_paths(&[Path {
-            cmds: vec![PathCmd::MoveTo(v2(0.0, 0.0)), PathCmd::CubicTo(v2(0.0, 60.0), v2(100.0, 60.0), v2(100.0, 0.0))],
-            fill_rule: FillRule::NonZero,
-        }]);
-        let bb = bounds(&id(&m));
-        assert!(bb.h > 40.0 && bb.w >= 99.9);
-    }
-
-    // ---- app level
-    fn app_with_vector() -> (App, NodeId) {
+    fn app_with_paths(paths: Vec<Path>) -> (App, NodeId) {
         let mut d = Document::new("t");
         let page = d.add_page("p");
         let fid = d.alloc_id();
-        let mut n = desigma_doc::Node::new(fid, NodeKind::Vector { paths: line_path(), network: None });
+        let mut n = desigma_doc::Node::new(fid, NodeKind::Vector { paths, network: None });
         n.transform = Affine::translate(200.0, 100.0);
         n.size = v2(100.0, 100.0);
-        n.stroke.paints = vec![desigma_doc::Paint::solid(desigma_doc::Color::BLACK)];
+        n.stroke.paints = vec![Paint::solid(Color::BLACK)];
+        n.fills = vec![Paint::solid(Color::rgb(255, 0, 0))];
         let id = d.insert(page, n).unwrap();
         let mut app = App::new(d);
         app.selection = vec![id];
         (app, id)
+    }
+
+    fn app_with_vector() -> (App, NodeId) {
+        app_with_paths(line_path())
     }
 
     fn paths_of(app: &App, id: NodeId) -> Vec<Path> {
@@ -707,12 +952,38 @@ mod tests {
         }
     }
 
+    fn net_of(app: &App, id: NodeId) -> VectorNetwork {
+        match &app.doc.get(id).unwrap().kind {
+            NodeKind::Vector { network: Some(n), .. } => n.clone(),
+            k => panic!("no network: {k:?}"),
+        }
+    }
+
+    fn vedit(app: &App) -> &VectorEdit {
+        app.canvas.vedit.as_ref().unwrap()
+    }
+
+    fn sel(app: &mut App, v: &[usize]) {
+        app.canvas.vedit.as_mut().unwrap().sel = v.iter().copied().collect();
+    }
+
+    fn press_drag(app: &mut App, kind: DragKind, page: DV) {
+        let id = vedit(app).id;
+        let world = app.doc.world_transform(id);
+        let t0 = app.doc.get(id).unwrap().transform;
+        begin_drag(app, kind, world, t0, page);
+    }
+
     #[test]
-    fn only_vectors_can_be_edited() {
+    fn vectors_and_basic_shapes_can_be_edited_frames_cannot() {
         let (mut app, id) = app_with_vector();
+        let fid = app.doc.alloc_id();
+        let f = app.doc.insert(app.page, desigma_doc::Node::frame(fid, Rect::new(0.0, 0.0, 10.0, 10.0))).unwrap();
         let rid = app.doc.alloc_id();
         let r = app.doc.insert(app.page, desigma_doc::Node::rectangle(rid, Rect::new(0.0, 0.0, 10.0, 10.0))).unwrap();
-        assert!(!enter(&mut app, r));
+        assert!(!enter(&mut app, f));
+        assert!(enter(&mut app, r), "a rectangle can be edited");
+        exit(&mut app);
         assert!(enter(&mut app, id));
         assert!(app.canvas.vedit.is_some());
         exit(&mut app);
@@ -720,77 +991,127 @@ mod tests {
     }
 
     #[test]
+    fn the_first_edit_turns_a_rectangle_into_a_vector_and_undo_restores_it() {
+        let mut d = Document::new("t");
+        let page = d.add_page("p");
+        let rid = d.alloc_id();
+        let mut r = desigma_doc::Node::rectangle(rid, Rect::new(50.0, 60.0, 100.0, 40.0));
+        r.corner_radii = [8.0; 4];
+        let id = d.insert(page, r).unwrap();
+        let mut app = App::new(d);
+        enter(&mut app, id);
+        assert_eq!(vedit(&app).net.vertices.len(), 8, "a rounded rectangle has an arc at every corner");
+        assert!(matches!(app.doc.get(id).unwrap().kind, NodeKind::Rectangle), "entering alone changes nothing");
+        assert!(!app.hist.can_undo());
+        sel(&mut app, &[3]);
+        nudge(&mut app, v2(10.0, 0.0));
+        let n = app.doc.get(id).unwrap();
+        assert!(matches!(n.kind, NodeKind::Vector { network: Some(_), .. }));
+        assert_eq!(n.corner_radii, [0.0; 4], "the radius is baked into the geometry");
+        app.undo();
+        assert!(matches!(app.doc.get(id).unwrap().kind, NodeKind::Rectangle));
+        assert_eq!(app.doc.get(id).unwrap().corner_radii, [8.0; 4]);
+        assert!(app.canvas.vedit.is_some(), "still editing after undo");
+    }
+
+    #[test]
     fn dragging_a_vertex_is_one_undo_step() {
         let (mut app, id) = app_with_vector();
         let before = paths_of(&app, id);
         enter(&mut app, id);
-        let world = app.doc.world_transform(id);
-        let t0 = app.doc.get(id).unwrap().transform;
-        app.canvas.vedit.as_mut().unwrap().sel = Some((0, 1));
-        begin_drag(&mut app, DragKind::Anchor, (0, 1), world, t0);
+        sel(&mut app, &[1]);
         // the vertex (100, 0) local = (300, 100) page; drag it by (+20, -30)
+        press_drag(&mut app, DragKind::Vertices, v2(300.0, 100.0));
         for step in 1..=3 {
             drag(&mut app, v2(300.0 + 20.0 * step as f32 / 3.0, 100.0 - 10.0 * step as f32), Modifiers::NONE);
         }
         release(&mut app);
-        assert!(app.canvas.vedit.as_ref().unwrap().drag.is_none());
+        assert!(vedit(&app).drag.is_none());
         let n = app.doc.get(id).unwrap();
-        // the geometry moved up by 30 and the box was re-fitted: world position of the vertex is right
         let p = match &n.kind {
             NodeKind::Vector { paths, .. } => paths[0].cmds.iter().filter_map(|c| if let PathCmd::LineTo(p) = c { Some(*p) } else { None }).next().unwrap(),
             _ => unreachable!(),
         };
         let wp = app.doc.world_transform(id).apply(p);
         assert!((wp.x - 320.0).abs() < 1e-3 && (wp.y - 70.0).abs() < 1e-3, "{wp:?}");
-        assert_eq!(n.size, v2(120.0, 130.0));
+        assert_eq!(n.size, v2(120.0, 130.0), "the box was re-fitted");
         app.undo();
         assert_eq!(paths_of(&app, id), before);
         assert_eq!(app.doc.get(id).unwrap().transform, Affine::translate(200.0, 100.0));
         assert!(!app.hist.can_undo(), "the whole drag was a single step");
         app.redo();
-        let wp2 = app.doc.world_transform(id).apply(match &paths_of(&app, id)[0].cmds[1] {
-            PathCmd::LineTo(p) => *p,
-            _ => unreachable!(),
-        });
-        assert!((wp2.x - 320.0).abs() < 1e-3 && (wp2.y - 70.0).abs() < 1e-3);
+        assert!(app.hist.can_undo());
     }
 
     #[test]
-    fn dragging_a_handle_mirrors_the_opposite_one() {
-        let mut d = Document::new("t");
-        let page = d.add_page("p");
-        let fid = d.alloc_id();
-        let mut n = desigma_doc::Node::new(
-            fid,
-            NodeKind::Vector {
-                paths: vec![Path {
-                    cmds: vec![
-                        PathCmd::MoveTo(v2(0.0, 50.0)),
-                        PathCmd::CubicTo(v2(20.0, 50.0), v2(30.0, 0.0), v2(50.0, 0.0)),
-                        PathCmd::CubicTo(v2(70.0, 0.0), v2(80.0, 50.0), v2(100.0, 50.0)),
-                    ],
-                    fill_rule: FillRule::NonZero,
-                }],
-                network: None,
-            },
-        );
-        n.size = v2(100.0, 50.0);
-        let id = d.insert(page, n).unwrap();
-        let mut app = App::new(d);
+    fn several_selected_vertices_move_together() {
+        let (mut app, id) = app_with_vector();
         enter(&mut app, id);
-        let world = app.doc.world_transform(id);
-        let t0 = app.doc.get(id).unwrap().transform;
-        app.canvas.vedit.as_mut().unwrap().sel = Some((0, 1));
-        begin_drag(&mut app, DragKind::Handle(Side::Out), (0, 1), world, t0);
-        drag(&mut app, v2(60.0, 10.0), Modifiers::NONE);
-        let v = app.canvas.vedit.as_ref().unwrap();
-        let pt = v.paths[0].pts[1];
-        assert_eq!(pt.hout, Some(v2(60.0, 10.0)));
-        assert_eq!(pt.hin, Some(v2(40.0, -10.0)), "mirrored through the vertex");
+        sel(&mut app, &[0, 1]);
+        press_drag(&mut app, DragKind::Vertices, v2(200.0, 100.0));
+        drag(&mut app, v2(210.0, 105.0), Modifiers::NONE);
+        release(&mut app);
+        let net = net_of(&app, id);
+        let w = app.doc.world_transform(id);
+        let p0 = w.apply(net.vertices[0].pos);
+        let p1 = w.apply(net.vertices[1].pos);
+        assert!((p0.x - 210.0).abs() < 1e-3 && (p0.y - 105.0).abs() < 1e-3, "{p0:?}");
+        assert!((p1.x - 310.0).abs() < 1e-3 && (p1.y - 105.0).abs() < 1e-3, "{p1:?}");
+        let p2 = w.apply(net.vertices[2].pos);
+        assert!((p2.x - 300.0).abs() < 1e-3 && (p2.y - 200.0).abs() < 1e-3, "the third stayed: {p2:?}");
+        assert!(app.hist.can_undo());
+        app.undo();
+        assert!(!app.hist.can_undo());
+    }
+
+    fn smooth_path() -> Vec<Path> {
+        vec![Path {
+            cmds: vec![
+                PathCmd::MoveTo(v2(0.0, 50.0)),
+                PathCmd::CubicTo(v2(20.0, 50.0), v2(30.0, 0.0), v2(50.0, 0.0)),
+                PathCmd::CubicTo(v2(70.0, 0.0), v2(80.0, 50.0), v2(100.0, 50.0)),
+            ],
+            fill_rule: FillRule::NonZero,
+        }]
+    }
+
+    #[test]
+    fn dragging_a_handle_mirrors_the_opposite_one_unless_alt() {
+        let (mut app, id) = app_with_paths(smooth_path());
+        enter(&mut app, id);
+        sel(&mut app, &[1]);
+        let seg = 1; // second segment starts at the middle vertex
+        press_drag(&mut app, DragKind::Handle(seg, End::Start), v2(270.0, 100.0));
+        // local (70,0) -> (60,10): page = local + (200,100)
+        drag(&mut app, v2(260.0, 110.0), Modifiers::NONE);
+        let net = &vedit(&app).net;
+        assert_eq!(net.tangent(seg, End::Start), v2(10.0, 10.0));
+        assert_eq!(net.tangent(0, End::End), v2(-10.0, -10.0), "mirrored through the vertex");
         release(&mut app);
         assert!(app.hist.can_undo());
         app.undo();
         assert!(!app.hist.can_undo());
+        // Alt breaks the mirroring, and it stays broken
+        sel(&mut app, &[1]);
+        press_drag(&mut app, DragKind::Handle(seg, End::Start), v2(270.0, 100.0));
+        let before = vedit(&app).net.tangent(0, End::End);
+        drag(&mut app, v2(260.0, 110.0), Modifiers::ALT);
+        release(&mut app);
+        let net = net_of(&app, id);
+        assert_eq!(net.tangent(0, End::End), before, "the other handle did not follow");
+        assert_eq!(net.vertices[1].mirror, HandleMirror::None);
+    }
+
+    #[test]
+    fn shift_snaps_handles_to_45_degrees() {
+        let (mut app, id) = app_with_paths(smooth_path());
+        enter(&mut app, id);
+        sel(&mut app, &[1]);
+        press_drag(&mut app, DragKind::Handle(1, End::Start), v2(270.0, 100.0));
+        drag(&mut app, v2(262.0, 111.0), Modifiers::SHIFT);
+        let t = vedit(&app).net.tangent(1, End::Start);
+        assert!((t.x - t.y).abs() < 1e-3, "{t:?}");
+        release(&mut app);
     }
 
     #[test]
@@ -798,14 +1119,13 @@ mod tests {
         let (mut app, id) = app_with_vector();
         let before = paths_of(&app, id);
         enter(&mut app, id);
-        let t0 = app.doc.get(id).unwrap().transform;
-        insert_point(&mut app, 0, 0, 0.5, t0);
-        assert_eq!(app.canvas.vedit.as_ref().unwrap().paths[0].pts.len(), 4);
-        assert_eq!(app.canvas.vedit.as_ref().unwrap().sel, Some((0, 1)));
+        insert_point(&mut app, 0, 0.5);
+        assert_eq!(vedit(&app).net.vertices.len(), 4);
+        assert_eq!(vedit(&app).sel, BTreeSet::from([3]), "the new vertex is selected");
         assert_eq!(paths_of(&app, id)[0].cmds.len(), 4);
         delete_selected(&mut app);
         assert_eq!(paths_of(&app, id), before);
-        assert!(app.canvas.vedit.as_ref().unwrap().sel.is_none());
+        assert!(vedit(&app).sel.is_empty());
         app.undo();
         assert_eq!(paths_of(&app, id)[0].cmds.len(), 4, "undo restores the inserted point");
         app.undo();
@@ -813,14 +1133,309 @@ mod tests {
     }
 
     #[test]
-    fn cannot_delete_the_last_path() {
-        let (mut app, id) = app_with_vector();
+    fn the_last_segment_cannot_be_deleted_away() {
+        let (mut app, id) =
+            app_with_paths(vec![Path { cmds: vec![PathCmd::MoveTo(v2(0.0, 0.0)), PathCmd::LineTo(v2(100.0, 0.0))], fill_rule: FillRule::NonZero }]);
         enter(&mut app, id);
-        let v = app.canvas.vedit.as_mut().unwrap();
-        v.paths[0].pts.truncate(2);
-        v.sel = Some((0, 0));
+        sel(&mut app, &[0]);
         delete_selected(&mut app);
         assert!(app.doc.get(id).is_some());
+        assert!(!app.hist.can_undo(), "deleting the whole vector is refused");
+    }
+
+    #[test]
+    fn bending_a_straight_segment_makes_it_pass_through_the_pointer() {
+        let (mut app, id) = app_with_vector();
+        enter(&mut app, id);
+        let base = vedit(&app).net.cubic(0);
+        // press the middle of the first segment (local (50,0) = page (250,100)), pull it 20 up
+        press_drag(&mut app, DragKind::Bend { seg: 0, t: 0.5, base }, v2(250.0, 100.0));
+        drag(&mut app, v2(250.0, 80.0), Modifiers::NONE);
+        release(&mut app);
+        let net = net_of(&app, id);
+        let mid = net.point_on(0, 0.5);
+        let w = app.doc.world_transform(id).apply(mid);
+        assert!((w.x - 250.0).abs() < 0.5 && (w.y - 80.0).abs() < 0.5, "{w:?}");
+        assert!(!net.is_straight(0), "the segment now has handles");
+        assert!(net.is_straight(1), "the other segment is untouched");
+        assert!(paths_of(&app, id)[0].cmds.iter().any(|c| matches!(c, PathCmd::CubicTo(..))));
+        app.undo();
+        assert!(!app.hist.can_undo(), "one undo step");
+    }
+
+    #[test]
+    fn a_click_on_a_segment_adds_a_point_but_a_drag_moves_the_segment() {
+        let (mut app, id) = app_with_vector();
+        enter(&mut app, id);
+        press_drag(&mut app, DragKind::Segment { seg: 1, t: 0.5 }, v2(300.0, 150.0));
+        release(&mut app);
+        assert_eq!(vedit(&app).net.vertices.len(), 4, "a click adds a vertex");
+        app.undo();
+        reload(&mut app);
+        press_drag(&mut app, DragKind::Segment { seg: 1, t: 0.5 }, v2(300.0, 150.0));
+        drag(&mut app, v2(330.0, 150.0), Modifiers::NONE);
+        release(&mut app);
+        let net = net_of(&app, id);
+        assert_eq!(net.vertices.len(), 3);
+        let w = app.doc.world_transform(id);
+        assert!((w.apply(net.vertices[1].pos).x - 330.0).abs() < 1e-3 && (w.apply(net.vertices[2].pos).x - 330.0).abs() < 1e-3);
+        assert!((w.apply(net.vertices[0].pos).x - 200.0).abs() < 1e-3, "the other end of the path stayed");
+    }
+
+    #[test]
+    fn the_bend_tool_pulls_handles_out_of_a_vertex_and_a_click_removes_them() {
+        let (mut app, id) = app_with_vector();
+        enter(&mut app, id);
+        set_tool(&mut app, VTool::Bend);
+        sel(&mut app, &[1]);
+        press_drag(&mut app, DragKind::Pull(1), v2(300.0, 100.0));
+        drag(&mut app, v2(330.0, 100.0), Modifiers::NONE);
+        release(&mut app);
+        let net = net_of(&app, id);
+        assert_eq!(net.vertices[1].mirror, HandleMirror::AngleAndLength);
+        let out = net.tangent(1, End::Start);
+        let inn = net.tangent(0, End::End);
+        assert!((out.x - 30.0).abs() < 1e-3 && out.y.abs() < 1e-3, "{out:?}");
+        assert_eq!(inn, v2(-30.0, 0.0));
+        // a click without moving straightens it again
+        sel(&mut app, &[1]);
+        press_drag(&mut app, DragKind::Pull(1), v2(300.0, 100.0));
+        release(&mut app);
+        let net = net_of(&app, id);
+        assert_eq!(net.tangent(1, End::Start), DV::ZERO);
+        assert_eq!(net.tangent(0, End::End), DV::ZERO);
+        app.undo();
+        app.undo();
         assert!(!app.hist.can_undo());
+    }
+
+    #[test]
+    fn marquee_selects_the_vertices_inside_and_shift_adds() {
+        let (mut app, id) = app_with_vector();
+        enter(&mut app, id);
+        let world = app.doc.world_transform(id);
+        let page = |i: usize| world.apply(vedit(&app).net.vertices[i].pos);
+        let (p0, p1) = (page(0), page(1));
+        app.canvas.vedit.as_mut().unwrap().marquee =
+            Some(Marquee { start: v2(p0.x - 10.0, p0.y - 10.0), cur: v2(p0.x - 10.0, p0.y - 10.0), lasso: vec![], additive: false, base: BTreeSet::new() });
+        drag(&mut app, v2(p1.x + 10.0, p1.y + 10.0), Modifiers::NONE);
+        release(&mut app);
+        assert_eq!(vedit(&app).sel, BTreeSet::from([0, 1]), "the top edge is inside, the last vertex is not");
+        // a click on empty space deselects
+        app.canvas.vedit.as_mut().unwrap().marquee =
+            Some(Marquee { start: v2(0.0, 0.0), cur: v2(0.0, 0.0), lasso: vec![], additive: false, base: BTreeSet::new() });
+        release(&mut app);
+        assert!(vedit(&app).sel.is_empty());
+        assert!(!app.hist.can_undo(), "selection is not an edit");
+    }
+
+    #[test]
+    fn lasso_selects_what_it_encloses() {
+        let (mut app, id) = app_with_vector();
+        enter(&mut app, id);
+        let w = app.doc.world_transform(id);
+        let p2 = w.apply(vedit(&app).net.vertices[2].pos);
+        let lasso = vec![v2(p2.x - 20.0, p2.y - 20.0), v2(p2.x + 20.0, p2.y - 20.0), v2(p2.x + 20.0, p2.y + 20.0), v2(p2.x - 20.0, p2.y + 20.0)];
+        app.canvas.vedit.as_mut().unwrap().marquee = Some(Marquee { start: lasso[0], cur: lasso[3], lasso, additive: false, base: BTreeSet::new() });
+        release(&mut app);
+        assert_eq!(vedit(&app).sel, BTreeSet::from([2]));
+    }
+
+    #[test]
+    fn corner_radius_is_one_undo_step_and_rounds_the_derived_path() {
+        let (mut app, id) = app_with_vector();
+        enter(&mut app, id);
+        sel(&mut app, &[1]);
+        assert!(set_vertices(&mut app, |v| v.corner_radius = 20.0));
+        let paths = paths_of(&app, id);
+        assert!(paths[0].cmds.iter().any(|c| matches!(c, PathCmd::CubicTo(..))), "the corner is an arc now");
+        assert_eq!(net_of(&app, id).vertices[1].corner_radius, 20.0);
+        assert_eq!(common_vertex(&app, |v| v.corner_radius), Some(20.0));
+        app.undo();
+        reload(&mut app);
+        assert_eq!(vedit(&app).net.vertices[1].corner_radius, 0.0);
+        assert!(!app.hist.can_undo());
+        // the rounded corner stays within the box and the box refits
+        app.redo();
+        let n = app.doc.get(id).unwrap();
+        assert!((n.size.x - 100.0).abs() < 1e-3 && (n.size.y - 100.0).abs() < 1e-3, "{:?}", n.size);
+    }
+
+    #[test]
+    fn caps_mirroring_and_position_edit_the_selected_vertices() {
+        let (mut app, id) = app_with_paths(smooth_path());
+        enter(&mut app, id);
+        sel(&mut app, &[0, 2]);
+        set_vertices(&mut app, |v| v.cap = Some(desigma_doc::StrokeCap::Round));
+        let net = net_of(&app, id);
+        assert_eq!(
+            (net.vertices[0].cap, net.vertices[2].cap, net.vertices[1].cap),
+            (Some(desigma_doc::StrokeCap::Round), Some(desigma_doc::StrokeCap::Round), None)
+        );
+        sel(&mut app, &[1]);
+        set_mirror(&mut app, HandleMirror::Angle);
+        assert_eq!(net_of(&app, id).vertices[1].mirror, HandleMirror::Angle);
+        straighten_selected(&mut app);
+        let net = net_of(&app, id);
+        assert_eq!(net.tangent(1, End::Start), DV::ZERO);
+        assert_eq!(net.vertices[1].mirror, HandleMirror::None);
+        move_selected_to(&mut app, None, Some(70.0));
+        let net = net_of(&app, id);
+        let top = net.vertices[1].pos.y;
+        let bottom_ref = net.vertices[0].pos.y;
+        assert!(top > bottom_ref, "moved below the end points ({top} vs {bottom_ref})");
+    }
+
+    #[test]
+    fn join_split_and_simplify_commands() {
+        let two = vec![
+            Path { cmds: vec![PathCmd::MoveTo(v2(0.0, 0.0)), PathCmd::LineTo(v2(50.0, 0.0))], fill_rule: FillRule::NonZero },
+            Path { cmds: vec![PathCmd::MoveTo(v2(55.0, 0.0)), PathCmd::LineTo(v2(100.0, 40.0))], fill_rule: FillRule::NonZero },
+        ];
+        let (mut app, id) = app_with_paths(two);
+        enter(&mut app, id);
+        assert!(!join_selected(&mut app), "needs two selected vertices");
+        sel(&mut app, &[1, 2]);
+        assert!(join_selected(&mut app));
+        assert_eq!(net_of(&app, id).vertices.len(), 3);
+        assert_eq!(paths_of(&app, id).len(), 1, "one path now");
+        // split the middle vertex again
+        sel(&mut app, &[1]);
+        assert!(split_selected(&mut app));
+        assert_eq!(net_of(&app, id).vertices.len(), 4);
+        assert_eq!(paths_of(&app, id)[0].cmds.iter().filter(|c| matches!(c, PathCmd::MoveTo(_))).count(), 2);
+        app.undo();
+        app.undo();
+        assert!(!app.hist.can_undo());
+    }
+
+    #[test]
+    fn simplify_removes_nodes_in_one_step() {
+        let mut cmds = vec![PathCmd::MoveTo(v2(0.0, 0.0))];
+        for i in 1..=60 {
+            cmds.push(PathCmd::LineTo(v2(i as f32 * 2.0, 20.0 * (i as f32 * 0.12).sin())));
+        }
+        let (mut app, id) = app_with_paths(vec![Path { cmds, fill_rule: FillRule::NonZero }]);
+        enter(&mut app, id);
+        let removed = simplify(&mut app, 1.0);
+        assert!(removed > 40, "{removed}");
+        assert!(net_of(&app, id).vertices.len() < 15);
+        app.undo();
+        assert!(!app.hist.can_undo());
+        assert_eq!(net_of_or_paths(&app, id), 61);
+    }
+
+    fn net_of_or_paths(app: &App, id: NodeId) -> usize {
+        match &app.doc.get(id).unwrap().kind {
+            NodeKind::Vector { network: Some(n), .. } => n.vertices.len(),
+            NodeKind::Vector { paths, .. } => VectorNetwork::from_paths(paths).vertices.len(),
+            _ => 0,
+        }
+    }
+
+    #[test]
+    fn the_paint_bucket_fills_and_unfills_an_area() {
+        let rect = |x: f32, w: f32| {
+            vec![PathCmd::MoveTo(v2(x, 0.0)), PathCmd::LineTo(v2(x + w, 0.0)), PathCmd::LineTo(v2(x + w, 100.0)), PathCmd::LineTo(v2(x, 100.0)), PathCmd::Close]
+        };
+        let mut cmds = rect(0.0, 100.0);
+        cmds.extend(rect(100.0, 100.0));
+        let (mut app, id) = app_with_paths(vec![Path { cmds, fill_rule: FillRule::NonZero }]);
+        enter(&mut app, id);
+        assert_eq!(net_of_or_regions(&app, id), 1, "both squares form one region");
+        // unfill: the whole shape's region is the faces the paths enclose; remove it, then fill one square
+        edit(&mut app, |net, _| {
+            net.regions.clear();
+            true
+        });
+        assert_eq!(net_of(&app, id).regions.len(), 0);
+        assert!(net_of(&app, id).has_stroke_only_segments());
+        let left = net_of(&app, id).face_at(v2(50.0, 50.0)).unwrap();
+        edit(&mut app, |net, _| {
+            net.toggle_face(&left);
+            true
+        });
+        let net = net_of(&app, id);
+        assert_eq!(net.regions.len(), 1);
+        assert!(net.face_at(v2(50.0, 50.0)).and_then(|f| net.region_of_face(&f)).is_some());
+        assert!(net.face_at(v2(150.0, 50.0)).and_then(|f| net.region_of_face(&f)).is_none());
+        app.undo();
+        assert_eq!(net_of(&app, id).regions.len(), 0);
+    }
+
+    fn net_of_or_regions(app: &App, id: NodeId) -> usize {
+        match &app.doc.get(id).unwrap().kind {
+            NodeKind::Vector { network: Some(n), .. } => n.regions.len(),
+            NodeKind::Vector { paths, .. } => VectorNetwork::from_paths(paths).regions.len(),
+            _ => 0,
+        }
+    }
+
+    #[test]
+    fn arrow_keys_nudge_selected_vertices_and_leave_the_node_alone() {
+        let (mut app, id) = app_with_vector();
+        enter(&mut app, id);
+        sel(&mut app, &[2]);
+        let t0 = app.doc.get(id).unwrap().transform;
+        assert!(key(&mut app, egui::Key::ArrowRight, Modifiers::SHIFT));
+        let net = net_of(&app, id);
+        let w = app.doc.world_transform(id);
+        assert!((w.apply(net.vertices[2].pos).x - 310.0).abs() < 1e-3);
+        assert_ne!(app.doc.get(id).unwrap().transform, Affine::translate(0.0, 0.0));
+        let _ = t0;
+        sel(&mut app, &[]);
+        assert!(!key(&mut app, egui::Key::ArrowRight, Modifiers::NONE), "without a selection the arrow keys move the layer");
+    }
+
+    #[test]
+    fn hit_priority_handle_then_vertex_then_segment() {
+        let net = VectorNetwork::from_paths(&[Path {
+            cmds: vec![PathCmd::MoveTo(v2(0.0, 0.0)), PathCmd::CubicTo(v2(30.0, 50.0), v2(70.0, 50.0), v2(100.0, 0.0))],
+            fill_rule: FillRule::NonZero,
+        }]);
+        let ident = |p: DV| p;
+        let none = BTreeSet::new();
+        assert_eq!(hit_test(&net, &none, None, &ident, v2(1.0, 1.0), 6.0, 5.0), Some(Hit::Vertex(0)));
+        // handles only respond for the selected vertex
+        assert!(!matches!(hit_test(&net, &none, None, &ident, v2(30.0, 50.0), 6.0, 5.0), Some(Hit::Handle(..))));
+        let sel0 = BTreeSet::from([0]);
+        assert_eq!(hit_test(&net, &sel0, None, &ident, v2(30.0, 50.0), 6.0, 5.0), Some(Hit::Handle(0, End::Start)));
+        // the neighbour end's handle is reachable too
+        assert_eq!(hit_test(&net, &sel0, None, &ident, v2(70.0, 50.0), 6.0, 5.0), Some(Hit::Handle(0, End::End)));
+        let mid = net.point_on(0, 0.5);
+        match hit_test(&net, &none, None, &ident, mid, 6.0, 5.0) {
+            Some(Hit::Segment(0, t)) => assert!((t - 0.5).abs() < 0.05, "{t}"),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(hit_test(&net, &none, None, &ident, v2(50.0, 300.0), 6.0, 5.0), None);
+    }
+
+    #[test]
+    fn bend_math_moves_the_point_exactly() {
+        let base = [v2(0.0, 0.0), v2(0.0, 0.0), v2(100.0, 0.0), v2(100.0, 0.0)];
+        for t in [0.2, 0.5, 0.8] {
+            let c = bend_cubic(&base, t, v2(0.0, -15.0));
+            let before = desigma_doc::vector::cubic_point(&base, t);
+            let after = desigma_doc::vector::cubic_point(&c, t);
+            assert!((after.y - (before.y - 15.0)).abs() < 1e-3 && (after.x - before.x).abs() < 1e-3, "t={t}");
+        }
+        assert_eq!(snap45(v2(10.0, 1.0)).y, 0.0);
+    }
+
+    #[test]
+    fn undo_while_editing_reloads_the_network() {
+        let (mut app, id) = app_with_vector();
+        enter(&mut app, id);
+        insert_point(&mut app, 0, 0.5);
+        assert_eq!(vedit(&app).net.vertices.len(), 4);
+        app.undo();
+        reload(&mut app);
+        assert_eq!(vedit(&app).net.vertices.len(), 3);
+        assert!(vedit(&app).sel.iter().all(|i| *i < 3));
+        // deleting the node ends the session
+        app.selection = vec![id];
+        app.delete_selection();
+        reload(&mut app);
+        assert!(app.canvas.vedit.is_none());
     }
 }

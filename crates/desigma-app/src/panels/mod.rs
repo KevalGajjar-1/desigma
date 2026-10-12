@@ -16,6 +16,7 @@ pub mod stroke;
 pub mod toolbar;
 pub mod typography;
 pub mod var_bind;
+pub mod vertex;
 
 use crate::theme;
 use egui::{Rect, Ui};

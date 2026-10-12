@@ -376,6 +376,13 @@ impl App {
     /// Wraps `ids` (all siblings, in desired child order) into a new group or
     /// frame; returns the container id.
     fn wrap_in_container(&mut self, tx: &mut Tx, ids: &[NodeId], frame: bool) -> Option<NodeId> {
+        let kind = if frame { NodeKind::Frame(FrameProps::default()) } else { NodeKind::Group };
+        self.wrap_in_kind(tx, ids, kind)
+    }
+
+    /// Wraps `ids` into a new container of `kind` (group, frame or boolean group).
+    pub(crate) fn wrap_in_kind(&mut self, tx: &mut Tx, ids: &[NodeId], kind: NodeKind) -> Option<NodeId> {
+        let frame = matches!(kind, NodeKind::Frame(_));
         let first = *ids.first()?;
         let parent = self.doc.get(first)?.parent?;
         let siblings = &self.doc.get(parent)?.children;
@@ -391,13 +398,12 @@ impl App {
         }
         let bb = aabb_of(&pts);
         let gid = self.doc.alloc_id();
-        let mut g = if frame { Node::frame(gid, bb) } else { Node::new(gid, NodeKind::Group) };
+        let name = kind.default_name();
+        let mut g = if frame { Node::frame(gid, bb) } else { Node::new(gid, kind) };
         if frame {
             g.fills.clear();
-            g.name = self.unique_name("Frame");
-        } else {
-            g.name = self.unique_name("Group");
         }
+        g.name = self.unique_name(name);
         g.transform = Affine::translate(bb.x, bb.y);
         g.size = v2(bb.w, bb.h);
         tx.cmd(&mut self.doc, Command::Insert { parent, index: max_index + 1, nodes: vec![g] }).ok()?;
@@ -411,7 +417,7 @@ impl App {
         Some(gid)
     }
 
-    fn same_parent_tops(&self) -> Vec<NodeId> {
+    pub(crate) fn same_parent_tops(&self) -> Vec<NodeId> {
         let mut tops = self.top_selection();
         let Some(first) = tops.first().copied() else { return tops };
         let parent = self.doc.get(first).and_then(|n| n.parent);
