@@ -6,6 +6,7 @@
 
 mod comments;
 mod components;
+pub mod find;
 mod geom;
 mod history;
 mod library;
