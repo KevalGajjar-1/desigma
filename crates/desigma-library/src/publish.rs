@@ -50,6 +50,10 @@ pub struct LibraryIndex {
     /// this device (lets "Go to main component" open it).
     #[serde(default)]
     pub source_path: Option<String>,
+    /// Id of the projects-library file this library was published from, when
+    /// it lives in the same library root (opens through the home store).
+    #[serde(default)]
+    pub source_file: Option<String>,
 }
 
 impl LibraryIndex {
@@ -127,6 +131,7 @@ impl Library {
             styles: 0,
             variables: 0,
             source_path: None,
+            source_file: None,
         });
         let previous = if index.versions.is_empty() { None } else { self.load_snapshot(&id, None).ok() };
         let version = index.latest_version().max(doc.library.published.as_ref().map(|p| p.version).unwrap_or(0)) + 1;
@@ -161,6 +166,13 @@ impl Library {
     pub fn set_library_source(&self, id: &str, path: Option<&str>) -> Result<()> {
         let mut index = self.library_index(id)?;
         index.source_path = path.map(String::from);
+        write_atomic(&self.library_dir(id).join("index.json"), serde_json::to_string_pretty(&index)?.as_bytes())
+    }
+
+    /// Records the projects-library file the library was published from.
+    pub fn set_library_source_file(&self, id: &str, file_id: Option<&str>) -> Result<()> {
+        let mut index = self.library_index(id)?;
+        index.source_file = file_id.map(String::from);
         write_atomic(&self.library_dir(id).join("index.json"), serde_json::to_string_pretty(&index)?.as_bytes())
     }
 

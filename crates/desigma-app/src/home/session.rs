@@ -53,6 +53,8 @@ fn doc_hash(doc: &Document) -> u64 {
 impl App {
     /// Opens (or creates) the library at `root` and seeds it on first run.
     pub fn attach_library(&mut self, root: PathBuf) {
+        // Shared libraries use the same root as the projects library.
+        self.libs.set_root(root.clone());
         match Library::open(&root) {
             Ok(lib) => {
                 match lib.seed_first_run(crate::demo::demo_document) {

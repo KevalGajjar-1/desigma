@@ -52,9 +52,16 @@ impl App {
     /// Applies the shared style `key` to `sel`: records the reference in
     /// `style_refs` and copies the style's values onto the nodes.
     pub fn apply_style(&mut self, sel: &[NodeId], key: &str) {
+        let mut tx = crate::edit::Tx::new();
+        self.apply_style_in(&mut tx, sel, key);
+        self.run_tx(tx);
+    }
+
+    /// [`App::apply_style`] inside a caller-owned transaction.
+    pub fn apply_style_in(&mut self, tx: &mut crate::edit::Tx, sel: &[NodeId], key: &str) {
         let Some(style) = self.doc.styles.get(key).cloned() else { return };
         let prop = property_of(&self.doc, key);
-        self.edit_nodes(sel, |n| match &style {
+        let f = |n: &mut Node| match &style {
             Style::Fill(paints) if prop == StyleProperty::Stroke => {
                 n.stroke.paints = paints.clone();
                 n.style_refs.insert("stroke".into(), key.into());
@@ -87,7 +94,13 @@ impl App {
                     n.style_refs.insert("grid".into(), key.into());
                 }
             }
-        });
+        };
+        for id in sel {
+            if let Some(n) = tx.ed.node(&mut self.doc, *id) {
+                f(n);
+            }
+            layout::relayout_around(&mut self.doc, &mut tx.ed, *id);
+        }
     }
 
     /// Replaces solid colour `old` by `new` in the whole subtree of the selection (one undo step).

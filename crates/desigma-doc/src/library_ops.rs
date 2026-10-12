@@ -679,6 +679,17 @@ impl<'a> Trial<'a> {
         self.push(Command::SetVariables { variables: v, collections: c });
     }
 
+    /// Writes style `local` (and its metadata) through `Command::SetStyles` so it is undoable.
+    fn set_style(&mut self, local: &str, style: Style, meta: Option<StyleMeta>) {
+        let mut styles = self.doc.styles.clone();
+        let mut style_meta = self.doc.style_meta.clone();
+        styles.insert(local.to_string(), style);
+        if let Some(m) = meta {
+            style_meta.insert(local.to_string(), StyleMeta { key: None, ..m });
+        }
+        self.push(Command::SetStyles { styles, style_meta });
+    }
+
     fn imported(&self, raw_key: &str) -> Option<&ExternalAsset> {
         self.doc.library.external.get(&self.ns(raw_key))
     }
@@ -711,10 +722,7 @@ impl<'a> Trial<'a> {
         }
         let Some(style) = self.snap.styles.get(raw).cloned() else { return };
         let local = self.ns(raw);
-        self.doc.styles.insert(local.clone(), style);
-        if let Some(m) = self.snap.style_meta.get(raw) {
-            self.doc.style_meta.insert(local.clone(), StyleMeta { key: None, ..m.clone() });
-        }
+        self.set_style(&local, style, self.snap.style_meta.get(raw).cloned());
         let version = self.snap.version;
         let library_id = self.snap.library_id.clone();
         self.register(&key, ExternalAsset { library_id, version, kind: LibraryAssetKind::Style, node: None, local_key: Some(local) });
@@ -903,10 +911,7 @@ impl<'a> Trial<'a> {
     fn update_style(&mut self, raw: &str) {
         let Some(style) = self.snap.styles.get(raw).cloned() else { return };
         let local = self.ns(raw);
-        self.doc.styles.insert(local.clone(), style.clone());
-        if let Some(m) = self.snap.style_meta.get(raw) {
-            self.doc.style_meta.insert(local.clone(), StyleMeta { key: None, ..m.clone() });
-        }
+        self.set_style(&local, style.clone(), self.snap.style_meta.get(raw).cloned());
         let prop = style_property(self.doc, &local);
         let targets: Vec<NodeId> =
             self.doc.nodes.values().filter(|n| n.style_refs.values().any(|v| *v == local) && !is_library_node(self.doc, n.id)).map(|n| n.id).collect();
@@ -1068,8 +1073,7 @@ fn topo(snap: &LibrarySnapshot, keys: &BTreeSet<String>) -> Vec<String> {
 /// Replaces the local copies of the assets named by `keys` with the snapshot's
 /// version, keeping ids stable where the structure matches, then re-syncs the
 /// instances of every affected component (their overrides are preserved).
-/// Assets the library removed are left alone. One undo step; styles are
-/// updated in place outside undo.
+/// Assets the library removed are left alone. One undo step.
 pub fn apply_updates(doc: &mut Document, snap: &LibrarySnapshot, keys: &[String]) -> Command {
     let pending = pending_updates(doc, snap);
     let chosen: Vec<&Update> = pending.iter().filter(|u| keys.contains(&u.key) && u.change != UpdateKind::Removed).collect();

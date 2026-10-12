@@ -96,6 +96,26 @@ Every screenshot here is the real app, captured offscreen with its own <code>--s
       <b>Export</b> to PNG, JPG and real vector SVG at any scale, copy as PNG, SVG or CSS, and switch to Dev mode for measurements and ready-to-paste CSS.
     </td>
   </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="docs/images/desigma-home.png" alt="The projects home screen: a sidebar with Recents, Starred and a list of projects, and a grid of file cards with thumbnails, project names and edit times" width="100%">
+      <br>
+      <sub>The projects home screen, with a library seeded by <code>--home --library DIR</code>.</sub>
+      <h3>Your files, in one place</h3>
+      A local projects library with Recents, Starred, projects and folders, search, grid and list views, thumbnails, trash and drag and drop. Files autosave as you work, and "Open in new window" starts another editor on the same library.
+      <br><br>
+      <b>Shared libraries</b> publish a file's components, styles and variables for other files to enable, with a review step when a new version lands.
+    </td>
+    <td width="50%" valign="top">
+      <img src="docs/images/desigma-variables.png" alt="The Variables view: a Variable collection with six color variables, each with a swatch and a hex value" width="100%">
+      <br>
+      <sub>The Variables view: a collection of color variables and their values.</sub>
+      <h3>Variables and modes</h3>
+      Color, number, string and boolean variables in collections with modes, bound to fills, strokes, sizes and spacing from a picker next to the field. Switch a frame to another mode and everything bound to it follows.
+      <br><br>
+      <b>Library variables</b> and color styles appear in the same pickers; using one copies it into the file in the same undo step.
+    </td>
+  </tr>
 </table>
 
 <br>
@@ -183,11 +203,13 @@ desigma --screenshot out.png --size 1600x1000 --select Card   # render one frame
 desigma --select Welcome --rulers --layout-grid columns --zoom 120 --screenshot out.png   # rulers + column grid
 desigma --edit-text "Welcome back" --select-text 0-7 --screenshot out.png                 # mid-edit with a selection
 desigma --tab prototype --present                              # open straight into Present
+desigma --home --library ./my-library --screenshot home.png    # the projects home screen on a library directory
+desigma --fixture variables --panel variables --screenshot v.png  # the Variables view
 desigma-diff compare reference.png actual.png --out diff.png   # pixel-compare two images
 ```
 
 > [!IMPORTANT]
-> **Status:** desigma is in early alpha. Much of Figma's everyday design surface exists, but **it is not yet a replacement for professional daily work**. The biggest gaps are real-world `.fig` coverage, collaboration and comments, plugins, variables, PDF export, and GPU rendering for very large files. Expect rough edges, and please file issues with your OS, a sample file if you can share one, and a screenshot.
+> **Status:** desigma is in early alpha. Much of Figma's everyday design surface exists, but **it is not yet a replacement for professional daily work**. The biggest gaps are real-world `.fig` coverage, collaboration, plugins, PDF export, and GPU rendering for very large files. Expect rough edges, and please file issues with your OS, a sample file if you can share one, and a screenshot.
 
 ## License
 

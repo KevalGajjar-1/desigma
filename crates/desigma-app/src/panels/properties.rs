@@ -1186,11 +1186,18 @@ fn create_style(app: &mut App, pk: &mut Picker) {
         n += 1;
     }
     let key = format!("Color style {n}");
-    app.doc.styles.insert(key.clone(), Style::Fill(vec![Paint { visible: true, ..pk.paint.clone() }]));
-    app.doc.style_meta.insert(
+    // Creating the style and linking it to the layers is one undo step (the picker's transaction).
+    let mut styles = app.doc.styles.clone();
+    let mut style_meta = app.doc.style_meta.clone();
+    styles.insert(key.clone(), Style::Fill(vec![Paint { visible: true, ..pk.paint.clone() }]));
+    style_meta.insert(
         key.clone(),
         StyleMeta { name: key.clone(), key: None, description: String::new(), property: if stroke { StyleProperty::Stroke } else { StyleProperty::Fill } },
     );
+    if let Err(e) = pk.tx.cmd(&mut app.doc, Command::SetStyles { styles, style_meta }) {
+        app.show_toast(format!("Edit failed: {e}"), true);
+        return;
+    }
     for id in &pk.ids {
         if let Some(node) = pk.tx.ed.node(&mut app.doc, *id) {
             node.style_refs.insert(if stroke { "stroke" } else { "fill" }.into(), key.clone());
@@ -1204,12 +1211,12 @@ pub(super) fn picker_popup(app: &mut App, ui: &mut Ui, region: Rect) {
     let Some(mut pk) = app.props.picker.take() else { return };
     let ctx = ui.ctx().clone();
     let paint_types = matches!(pk.target, PickTarget::Fill(_) | PickTarget::Stroke(_));
-    let styles: Vec<picker::StyleItem> = if paint_types {
+    let mut styles: Vec<picker::StyleItem> = if paint_types {
         crate::styles::style_entries(&app.doc, false)
             .into_iter()
             .filter_map(|e| match app.doc.styles.get(&e.key) {
                 Some(Style::Fill(ps)) => {
-                    ps.first().map(|p| picker::StyleItem { name: app.doc.style_name(&e.key).to_string(), key: e.key.clone(), paint: p.clone() })
+                    ps.first().map(|p| picker::StyleItem { name: app.doc.style_name(&e.key).to_string(), key: e.key.clone(), paint: p.clone(), library: None })
                 }
                 _ => None,
             })
@@ -1217,6 +1224,21 @@ pub(super) fn picker_popup(app: &mut App, ui: &mut Ui, region: Rect) {
     } else {
         Vec::new()
     };
+    // Colour styles of enabled libraries, grouped per library after the document's own.
+    if paint_types && pk.state.tab == picker::Tab::Libraries {
+        for ls in app.library_styles().into_iter().filter(|s| !s.text && s.local_key.is_none()) {
+            if let Style::Fill(ps) = &ls.style {
+                if let Some(p) = ps.first() {
+                    styles.push(picker::StyleItem {
+                        name: ls.name.clone(),
+                        key: ls.key.clone(),
+                        paint: p.clone(),
+                        library: Some((ls.library_id.clone(), ls.library_name.clone())),
+                    });
+                }
+            }
+        }
+    }
     let env = picker::Env { paint_types, sources: &pk.sources, styles: &styles, can_add_style: paint_types };
     let h = picker::panel_height(&env, picker::mode_of(&pk.paint.kind), pk.state.tab, pk.state.source);
     let screen = ctx.content_rect();
@@ -1291,6 +1313,12 @@ pub(super) fn picker_popup(app: &mut App, ui: &mut Ui, region: Rect) {
     let outside =
         !pk.eyedrop && !pk.state.menu_open && pressed && ptr.map(|p| !panel.contains(p) && !pk.anchor.contains(p) && !handle_hit(&pk, app, p)).unwrap_or(false);
     let esc = esc && !pk.eyedrop && !pk.state.menu_open;
+    if let Some((lib, key)) = out.apply_library_style.take() {
+        // Import the library style and apply it together with the picker's own edits: one undo step.
+        let ids = pk.ids.clone();
+        app.apply_library_style(pk.tx, &ids, &lib, &key);
+        return;
+    }
     if outside || esc || out.close || out.apply_style.is_some() || remove {
         let ids = pk.ids.clone();
         let target = pk.target;

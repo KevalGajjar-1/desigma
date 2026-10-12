@@ -174,12 +174,6 @@ impl App {
         self.commit_store(store, &rv, &rc)
     }
 
-    /// Hook for the shared-libraries feature: variables of enabled libraries that the binding
-    /// picker lists next to the local ones. Empty until `App::library_variables()` lands.
-    pub fn library_variables_hook(&self) -> Vec<widgets::PickItem> {
-        Vec::new()
-    }
-
     pub fn close_variables(&mut self) {
         self.vars.open = false;
         self.vars.menu = None;
@@ -262,6 +256,13 @@ impl App {
     /// Binds `keys` of every node in `nodes` to variable `var` (one undo step).
     /// The raw property takes the variable's current value so detaching keeps the look.
     pub fn bind_variable(&mut self, nodes: &[NodeId], keys: &[&str], var: &str) {
+        let mut tx = Tx::new();
+        self.bind_variable_in(&mut tx, nodes, keys, var);
+        self.run_tx(tx);
+    }
+
+    /// [`App::bind_variable`] inside a caller-owned transaction.
+    pub fn bind_variable_in(&mut self, tx: &mut Tx, nodes: &[NodeId], keys: &[&str], var: &str) {
         let mut pre = Vec::new();
         for id in nodes {
             for k in keys {
@@ -270,7 +271,6 @@ impl App {
                 }
             }
         }
-        let mut tx = Tx::new();
         for (id, key, val) in &pre {
             if let Some(n) = tx.ed.node(&mut self.doc, *id) {
                 n.variables.bindings.insert(key.clone(), var.to_string());
@@ -278,7 +278,6 @@ impl App {
             }
             layout::relayout_around(&mut self.doc, &mut tx.ed, *id);
         }
-        self.run_tx(tx);
     }
 
     /// Removes the bindings of `keys`, keeping the values they currently resolve to.

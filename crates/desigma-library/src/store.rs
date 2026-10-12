@@ -167,10 +167,13 @@ fn clean_name(name: &str, what: &str) -> Result<String> {
 }
 
 impl Library {
-    /// `$DESIGMA_LIBRARY` if set, otherwise `<data dir>/desigma/library`.
+    /// `$DESIGMA_LIBRARY` if set (`$DESIGMA_LIBRARY_DIR` is accepted as a
+    /// deprecated alias), otherwise `<data dir>/desigma/library`.
     pub fn default_root() -> PathBuf {
-        if let Some(p) = std::env::var_os("DESIGMA_LIBRARY").filter(|p| !p.is_empty()) {
-            return PathBuf::from(p);
+        for var in ["DESIGMA_LIBRARY", "DESIGMA_LIBRARY_DIR"] {
+            if let Some(p) = std::env::var_os(var).filter(|p| !p.is_empty()) {
+                return PathBuf::from(p);
+            }
         }
         dirs::data_dir().unwrap_or_else(|| PathBuf::from(".")).join("desigma").join("library")
     }
@@ -883,7 +886,12 @@ mod tests {
         // Only this test touches the variable.
         std::env::set_var("DESIGMA_LIBRARY", "/tmp/somewhere-else");
         assert_eq!(Library::default_root(), PathBuf::from("/tmp/somewhere-else"));
+        // The old name still works, but the new one wins.
+        std::env::set_var("DESIGMA_LIBRARY_DIR", "/tmp/old-name");
+        assert_eq!(Library::default_root(), PathBuf::from("/tmp/somewhere-else"));
         std::env::remove_var("DESIGMA_LIBRARY");
+        assert_eq!(Library::default_root(), PathBuf::from("/tmp/old-name"));
+        std::env::remove_var("DESIGMA_LIBRARY_DIR");
         assert!(Library::default_root().ends_with("desigma/library") || Library::default_root().ends_with("desigma\\library"));
     }
 
