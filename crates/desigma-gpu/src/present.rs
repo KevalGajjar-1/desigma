@@ -9,17 +9,25 @@ pub struct Presenter {
 impl Presenter {
     /// `target_format` and `samples` must match the pass the page is drawn into.
     pub fn new(dev: &wgpu::Device, target_format: wgpu::TextureFormat, samples: u32) -> Self {
-        let module = dev.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("present"), source: wgpu::ShaderSource::Wgsl(include_str!("shaders/present.wgsl").into()) });
+        let module = dev.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("present"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/present.wgsl").into()),
+        });
         let layout = dev.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("present"),
             entries: &[wgpu::BindGroupLayoutEntry {
                 binding: 0,
                 visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Float { filterable: false }, view_dimension: wgpu::TextureViewDimension::D2, multisampled: false },
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
                 count: None,
             }],
         });
-        let pl = dev.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: Some("present"), bind_group_layouts: &[Some(&layout)], immediate_size: 0 });
+        let pl =
+            dev.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: Some("present"), bind_group_layouts: &[Some(&layout)], immediate_size: 0 });
         let pipeline = dev.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("present"),
             layout: Some(&pl),

@@ -12,6 +12,7 @@ use desigma_render::tiny_skia as sk;
 use desigma_render::{font_generation, outline_of, stroke_outline, stroke_plan, text_outlines, NodeShape, StrokeClip};
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::rc::Rc;
 use std::sync::Arc;
 
 /// The fields of a node that determine its geometry.
@@ -110,10 +111,7 @@ impl GeomSrc {
             return false;
         }
         self.kids.iter().zip(&n.children).all(|(k, c)| {
-            k.id == *c
-                && doc
-                    .get(*c)
-                    .is_some_and(|child| child.visible == k.visible && child.transform == k.transform && k.src.same(doc, child, true))
+            k.id == *c && doc.get(*c).is_some_and(|child| child.visible == k.visible && child.transform == k.transform && k.src.same(doc, child, true))
         })
     }
 }
@@ -127,12 +125,14 @@ pub struct TextGeom {
     stroke: RefCell<Option<Option<Arc<Mesh>>>>,
 }
 
+type StrokeMesh = Option<(Arc<Mesh>, StrokeClip)>;
+
 /// Cached geometry of one node at one zoom bucket.
 pub struct NodeGeom {
     pub shape: Option<NodeShape>,
     /// Fill mesh of `shape.paths`.
     pub fill: Option<Arc<Mesh>>,
-    stroke: RefCell<Option<Option<(Arc<Mesh>, StrokeClip)>>>,
+    stroke: RefCell<Option<StrokeMesh>>,
     pub text: Vec<TextGeom>,
     /// Device scale the meshes were flattened for.
     pub scale: f32,
@@ -151,7 +151,11 @@ impl NodeGeom {
         if let Some(c) = self.stroke.borrow().as_ref() {
             return c.clone();
         }
-        let built = self.shape.as_ref().and_then(|sh| stroke_plan(n, sh, self.scale)).and_then(|plan| tessellate(&plan.outline, 0.1 / self.scale).map(|m| (Arc::new(m), plan.clip)));
+        let built = self
+            .shape
+            .as_ref()
+            .and_then(|sh| stroke_plan(n, sh, self.scale))
+            .and_then(|plan| tessellate(&plan.outline, 0.1 / self.scale).map(|m| (Arc::new(m), plan.clip)));
         *self.stroke.borrow_mut() = Some(built.clone());
         built
     }
@@ -177,12 +181,8 @@ impl NodeGeom {
             return m.clone();
         }
         let tol = 0.1 / self.scale;
-        let outline: Vec<_> = sh
-            .paths
-            .iter()
-            .filter_map(|(p, _)| desigma_render::miter_outline(p, width, self.scale))
-            .map(|p| (p, sk::FillRule::Winding))
-            .collect();
+        let outline: Vec<_> =
+            sh.paths.iter().filter_map(|(p, _)| desigma_render::miter_outline(p, width, self.scale)).map(|p| (p, sk::FillRule::Winding)).collect();
         let mesh = tessellate(&outline, tol).map(Arc::new);
         self.lazy.borrow_mut().outlines.push((key, mesh.clone()));
         mesh
@@ -206,7 +206,7 @@ struct Entry {
     src: GeomSrc,
     bucket: i32,
     rev: u64,
-    geom: Arc<NodeGeom>,
+    geom: Rc<NodeGeom>,
 }
 
 /// Cache of [`NodeGeom`] per node.
@@ -248,7 +248,7 @@ impl GeomCache {
     /// Geometry of `n` (already variable-resolved) for the given bucket.
     /// `rev` is the document revision: unchanged entries are not re-checked
     /// within the same revision.
-    pub fn get(&mut self, doc: &Document, n: &Node, bucket: i32, rev: u64) -> Arc<NodeGeom> {
+    pub fn get(&mut self, doc: &Document, n: &Node, bucket: i32, rev: u64) -> Rc<NodeGeom> {
         if let Some(e) = self.entries.get_mut(&n.id) {
             if e.bucket == bucket && e.rev == rev {
                 return e.geom.clone();
@@ -260,7 +260,7 @@ impl GeomCache {
         }
         self.builds += 1;
         let scale = bucket_scale(bucket);
-        let geom = Arc::new(build_geom(doc, n, scale));
+        let geom = Rc::new(build_geom(doc, n, scale));
         self.entries.insert(n.id, Entry { src: GeomSrc::build(doc, n, false), bucket, rev, geom: geom.clone() });
         geom
     }

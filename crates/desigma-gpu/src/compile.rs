@@ -14,7 +14,11 @@ use desigma_doc::{resolve_node, Document, Effect, Node, NodeId, NodeKind, Vec2};
 use desigma_render::tiny_skia as sk;
 use desigma_render::{node_margin, render_node_into, SceneIndex, StrokeClip, Viewport};
 use std::collections::HashMap;
+use std::rc::Rc;
 use std::sync::Arc;
+
+/// Decides which nodes the CPU renderer draws instead of the GPU.
+pub type FallbackFn = Arc<dyn Fn(&Node) -> bool + Send + Sync>;
 
 /// Compile-time knobs.
 #[derive(Clone, Default)]
@@ -23,7 +27,10 @@ pub struct CompileOptions {
     pub max_texture: u32,
     /// Nodes for which this returns true are rendered by the CPU renderer into
     /// a texture instead of by the GPU. Used by tests and as an escape hatch.
-    pub force_fallback: Option<Arc<dyn Fn(&Node) -> bool + Send + Sync>>,
+    pub force_fallback: Option<FallbackFn>,
+    /// Render at this multiple of the output size and box-filter down (1 = off).
+    /// 2 gives 16 samples per pixel together with the 4x MSAA.
+    pub supersample: u32,
 }
 
 /// Persistent compiler state: geometry, paint and index caches.
@@ -45,12 +52,28 @@ impl SceneCompiler {
     /// `size` device pixels. `rev` must change whenever the document does.
     pub fn compile(&mut self, doc: &Document, page: NodeId, rev: u64, vp: &Viewport, size: (u32, u32)) -> Frame {
         self.index.ensure(doc, page, rev);
+        let s = vp.zoom * vp.dpr;
+        let ts = sk::Transform::from_row(s, 0.0, 0.0, s, -vp.offset.x * s, -vp.offset.y * s);
+        self.compile_with(doc, page, rev, ts, size, false)
+    }
+
+    /// Compiles one node (a page: its children over the page background) with
+    /// its own top-left at (0, 0), scaled by `scale`; the counterpart of
+    /// `desigma_render::render_node` (used for Present frames and exports).
+    pub fn compile_node(&mut self, doc: &Document, node: NodeId, rev: u64, scale: f32, size: (u32, u32)) -> Frame {
+        let ts = sk::Transform::from_scale(scale, scale);
+        self.compile_with(doc, node, rev, ts, size, true)
+    }
+
+    fn compile_with(&mut self, doc: &Document, root_node: NodeId, rev: u64, logical_ts: sk::Transform, size: (u32, u32), single: bool) -> Frame {
         self.geom.trim(rev);
         let unit = self.unit_rect.get_or_insert_with(|| Arc::new(Mesh::rect(0.0, 0.0, 1.0, 1.0))).clone();
-        let s = vp.zoom * vp.dpr;
-        let root_ts = sk::Transform::from_row(s, 0.0, 0.0, s, -vp.offset.x * s, -vp.offset.y * s);
+        let ss = self.opts.supersample.clamp(1, 4);
         let clampi = |v: f32| if v.is_finite() { v.clamp(-1.0e9, 1.0e9) as i32 } else { 0 };
-        let grid = (clampi(-root_ts.tx.round()), clampi(-root_ts.ty.round()));
+        let grid = (clampi(-logical_ts.tx.round()), clampi(-logical_ts.ty.round()));
+        let root_ts = logical_ts.post_scale(ss as f32, ss as f32);
+        let out_size = size;
+        let size = (size.0 * ss, size.1 * ss);
         let root_rect = IRect::new(0, 0, size.0 as i32, size.1 as i32);
         let mut cx = Ctx {
             doc,
@@ -67,10 +90,13 @@ impl SceneCompiler {
             clips: Vec::new(),
             clip_ids: HashMap::new(),
             unit,
-            cull: true,
+            cull: !single,
+            ss,
         };
-        let bg = match doc.get(page).map(|n| &n.kind) {
+        let node = doc.get(root_node).map(|n| resolve_node(doc, n).into_owned());
+        let bg = match node.as_ref().map(|n| &n.kind) {
             Some(NodeKind::Page { background }) => [background.r, background.g, background.b, background.a],
+            _ if single => [0.0; 4],
             _ => [0xF5 as f32 / 255.0, 0xF5 as f32 / 255.0, 0xF5 as f32 / 255.0, 1.0],
         };
         let mut root = Program::new(root_rect);
@@ -78,11 +104,15 @@ impl SceneCompiler {
         cx.progs.push(root);
         cx.stack.push(0);
         let full = cx.clip_for(ClipDesc { scissor: root_rect, mask: None });
-        if let Some(p) = doc.get(page) {
-            let children = p.children.clone();
-            cx.draw_children(&children, root_ts, full);
+        if let Some(n) = node {
+            if single && !matches!(n.kind, NodeKind::Page { .. }) {
+                cx.draw_node(&n, root_ts, full);
+            } else {
+                let children = n.children.clone();
+                cx.draw_children(&children, root_ts, full);
+            }
         }
-        Frame { size, root: 0, programs: cx.progs, clips: cx.clips }
+        Frame { size, out_size, ss, root: 0, programs: cx.progs, clips: cx.clips }
     }
 }
 
@@ -159,6 +189,8 @@ struct Ctx<'a> {
     unit: Arc<Mesh>,
     /// Index-based culling is valid (not while drawing offset silhouettes).
     cull: bool,
+    /// Supersampling factor of the target.
+    ss: u32,
 }
 
 impl Ctx<'_> {
@@ -371,7 +403,7 @@ impl Ctx<'_> {
             return;
         }
         if let Some(f) = &self.opts.force_fallback {
-            if f(n) {
+            if f(n) && !self.has_bg_blur(n) {
                 self.fallback(n, ts, clip);
                 return;
             }
@@ -446,7 +478,7 @@ impl Ctx<'_> {
         let Some(mut pm) = sk::Pixmap::new(w, h) else { return };
         let Some(inv) = to_sk(&n.transform).invert() else { return };
         let parent_ts = ts.pre_concat(inv).post_translate(-(rect.x0 as f32), -(rect.y0 as f32));
-        render_node_into(self.doc, n.id, parent_ts, self.root_ts, &mut pm);
+        render_node_into(self.doc, n.id, parent_ts, self.root_ts.post_translate(-(rect.x0 as f32), -(rect.y0 as f32)), &mut pm);
         let prog = self.new_prog(rect);
         self.progs[prog as usize].pixels = Some(Arc::new(PixelData { w, h, rgba: pm.data().to_vec() }));
         let mode = if special_blend(n.blend) { CompMode::Blend(n.blend) } else { CompMode::Over };
@@ -473,13 +505,13 @@ impl Ctx<'_> {
             } else {
                 None
             };
-            let cell = (t.size.max(0.1) * scale).max(1.0);
+            let cell = (t.size.max(0.1) * scale / self.ss as f32).max(1.0);
             let c = self.cur() as usize;
-            self.progs[c].post.push(Post::Displace { amp, cell, seed: t.seed, grid: self.grid, clip_to });
+            self.progs[c].post.push(Post::Displace { amp, cell, seed: t.seed, grid: self.grid, clip_to, ss: self.ss });
         }
     }
 
-    fn geom_of(&mut self, n: &Node, ts: &sk::Transform) -> Arc<NodeGeom> {
+    fn geom_of(&mut self, n: &Node, ts: &sk::Transform) -> Rc<NodeGeom> {
         let bucket = bucket_of(ts_scale(ts));
         self.geom.get(self.doc, n, bucket, self.rev)
     }
@@ -598,7 +630,7 @@ impl Ctx<'_> {
         self.draw_mesh(mesh, ts, pi, DrawBlend::Over, clip);
     }
 
-    fn draw_text(&mut self, n: &Node, g: &Arc<NodeGeom>, ts: sk::Transform, clip: ClipId, alpha: f32) {
+    fn draw_text(&mut self, n: &Node, g: &Rc<NodeGeom>, ts: sk::Transform, clip: ClipId, alpha: f32) {
         let strokes = visible_strokes(n);
         for (i, t) in g.text.iter().enumerate() {
             for p in &t.fills {
@@ -614,7 +646,7 @@ impl Ctx<'_> {
         }
     }
 
-    fn draw_strokes(&mut self, n: &Node, g: &Arc<NodeGeom>, ts: sk::Transform, clip: ClipId, alpha: f32) {
+    fn draw_strokes(&mut self, n: &Node, g: &Rc<NodeGeom>, ts: sk::Transform, clip: ClipId, alpha: f32) {
         let paints = visible_strokes(n);
         if paints.is_empty() {
             return;
@@ -641,7 +673,7 @@ impl Ctx<'_> {
     /// alpha unless `opaque`), shifted by (`dx`, `dy`) device pixels and grown
     /// (`grow` > 0) or eroded (< 0) by `grow` local units.
     #[allow(clippy::too_many_arguments)]
-    fn sil_program(&mut self, n: &Node, g: &Arc<NodeGeom>, ts: sk::Transform, rect: IRect, dx: f32, dy: f32, grow: f32, opaque: bool) -> ProgId {
+    fn sil_program(&mut self, n: &Node, g: &Rc<NodeGeom>, ts: sk::Transform, rect: IRect, dx: f32, dy: f32, grow: f32, opaque: bool) -> ProgId {
         let prog = self.new_prog(rect);
         let clip = self.full_clip(rect);
         self.with_prog(prog, |c| c.silhouette(n, g, ts, dx, dy, grow, opaque, clip));
@@ -649,7 +681,7 @@ impl Ctx<'_> {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn silhouette(&mut self, n: &Node, g: &Arc<NodeGeom>, ts: sk::Transform, dx: f32, dy: f32, grow: f32, opaque: bool, clip: ClipId) {
+    fn silhouette(&mut self, n: &Node, g: &Rc<NodeGeom>, ts: sk::Transform, dx: f32, dy: f32, grow: f32, opaque: bool, clip: ClipId) {
         let ts2 = ts.post_translate(dx, dy);
         let fills = visible_fills(n);
         let strokes = visible_strokes(n);
@@ -721,7 +753,7 @@ impl Ctx<'_> {
     fn drop_shadow(
         &mut self,
         n: &Node,
-        g: &Arc<NodeGeom>,
+        g: &Rc<NodeGeom>,
         ts: sk::Transform,
         clip: ClipId,
         bbox: FBox,
@@ -755,7 +787,7 @@ impl Ctx<'_> {
     fn inner_shadow(
         &mut self,
         n: &Node,
-        g: &Arc<NodeGeom>,
+        g: &Rc<NodeGeom>,
         ts: sk::Transform,
         clip: ClipId,
         bbox: FBox,
@@ -799,7 +831,7 @@ impl Ctx<'_> {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn background_blur(&mut self, n: &Node, g: &Arc<NodeGeom>, ts: sk::Transform, clip: ClipId, inner_bb: FBox, scale: f32, radius: f32) {
+    fn background_blur(&mut self, n: &Node, g: &Rc<NodeGeom>, ts: sk::Transform, clip: ClipId, inner_bb: FBox, scale: f32, radius: f32) {
         let sigma = radius.max(0.0) * scale / 2.0;
         let region = IRect::outward(inner_bb).intersect(self.root_rect);
         if region.is_empty() {
@@ -808,18 +840,11 @@ impl Ctx<'_> {
         let pad = (3.0 * sigma).ceil() as i32 + 1;
         let padr = region.grow(pad).intersect(self.root_rect);
         let mask = self.sil_program(n, g, ts, region, 0.0, 0.0, 0.0, true);
-        self.push_op(Op::Backdrop(Box::new(BackdropOp {
-            kind: BackdropKind::Blur { sigma },
-            region,
-            pad: padr,
-            mask,
-            clip,
-            grid: self.grid,
-        })));
+        self.push_op(Op::Backdrop(Box::new(BackdropOp { kind: BackdropKind::Blur { sigma }, region, pad: padr, mask, clip, grid: self.grid })));
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn glass(&mut self, n: &Node, g: &Arc<NodeGeom>, ts: sk::Transform, clip: ClipId, inner_bb: FBox, scale: f32, e: &d::GlassEffect) {
+    fn glass(&mut self, n: &Node, g: &Rc<NodeGeom>, ts: sk::Transform, clip: ClipId, inner_bb: FBox, scale: f32, e: &d::GlassEffect) {
         let region = IRect::outward(inner_bb).intersect(self.root_rect);
         if region.is_empty() {
             return;
@@ -844,7 +869,7 @@ impl Ctx<'_> {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn noise(&mut self, n: &Node, g: &Arc<NodeGeom>, ts: sk::Transform, clip: ClipId, bbox: FBox, scale: f32, e: &d::NoiseEffect, alpha: f32) {
+    fn noise(&mut self, n: &Node, g: &Rc<NodeGeom>, ts: sk::Transform, clip: ClipId, bbox: FBox, scale: f32, e: &d::NoiseEffect, alpha: f32) {
         let rect = IRect::outward(bbox).intersect(self.visible(clip));
         if rect.is_empty() {
             return;
@@ -858,10 +883,10 @@ impl Ctx<'_> {
         };
         let inst = Instance {
             q: [KIND_NOISE, e.seed, mode, 0],
-            q2: [self.grid.0, self.grid.1, 0, 0],
+            q2: [self.grid.0, self.grid.1, self.ss as i32, 0],
             c0: ca,
             c1: cb,
-            c2: [(e.size.max(0.05) * scale).max(1.0), e.density.clamp(0.0, 1.0), 0.0, 0.0],
+            c2: [(e.size.max(0.05) * scale / self.ss as f32).max(1.0), e.density.clamp(0.0, 1.0), 0.0, 0.0],
             t: [0.0, 0.0, 1.0, 0.0],
             ..Default::default()
         };

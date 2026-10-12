@@ -233,7 +233,7 @@ pub enum Post {
     /// instead of fading to transparent.
     Blur { sigma: f32, clamp: bool },
     /// Texture effect: displace pixels with seeded value noise.
-    Displace { amp: f32, cell: f32, seed: u32, grid: (i32, i32), clip_to: Option<ProgId> },
+    Displace { amp: f32, cell: f32, seed: u32, grid: (i32, i32), clip_to: Option<ProgId>, ss: u32 },
 }
 
 /// Pixels rendered by the CPU renderer (fallback layers).
@@ -270,7 +270,12 @@ pub struct ClipDesc {
 }
 
 pub struct Frame {
+    /// Render target size in pixels (`out_size * ss`).
     pub size: (u32, u32),
+    /// Size of the final image.
+    pub out_size: (u32, u32),
+    /// Supersampling factor: the page is rendered `ss` times larger and box-filtered down.
+    pub ss: u32,
     pub root: ProgId,
     pub programs: Vec<Program>,
     pub clips: Vec<ClipDesc>,

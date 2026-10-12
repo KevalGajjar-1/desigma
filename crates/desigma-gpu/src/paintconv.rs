@@ -111,9 +111,8 @@ impl PaintCache {
                 return img.clone();
             }
         }
-        let img = decoded_image(doc, image_ref).map(|pm| {
-            Arc::new(ImageData { id: NEXT_IMAGE_ID.fetch_add(1, Ordering::Relaxed), w: pm.width(), h: pm.height(), rgba: pm.data().to_vec() })
-        });
+        let img = decoded_image(doc, image_ref)
+            .map(|pm| Arc::new(ImageData { id: NEXT_IMAGE_ID.fetch_add(1, Ordering::Relaxed), w: pm.width(), h: pm.height(), rgba: pm.data().to_vec() }));
         if self.images.len() > 256 {
             self.images.clear();
         }

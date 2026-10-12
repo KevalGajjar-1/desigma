@@ -51,7 +51,13 @@ pub fn compare(g: &mut HeadlessGpu, name: &str, doc: &Document, page: NodeId, vp
     cpu.save_png(dir.join(format!("{name}-cpu.png"))).unwrap();
     gpu.save_png(dir.join(format!("{name}-gpu.png"))).unwrap();
     diff.save(dir.join(format!("{name}-diff.png"))).unwrap();
-    eprintln!("{name}: mismatch {:.4}% ({} px of {}) at tolerance {tolerance}, ssim {:.4}", report.ratio * 100.0, report.mismatched, size.0 * size.1, report.ssim);
+    eprintln!(
+        "{name}: mismatch {:.4}% ({} px of {}) at tolerance {tolerance}, ssim {:.4}",
+        report.ratio * 100.0,
+        report.mismatched,
+        size.0 * size.1,
+        report.ssim
+    );
     Cmp { report, cpu, gpu }
 }
 

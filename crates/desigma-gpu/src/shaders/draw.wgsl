@@ -125,7 +125,7 @@ fn paint(i: VOut, frag: vec2<f32>) -> vec4<f32> {
         return vec4<f32>(i.c0.rgb * i.c0.a, i.c0.a);
     }
     if (kind == 6u) {
-        let px = vec2<i32>(floor(frag + g.origin));
+        let px = vec2<i32>(floor((frag + g.origin) / f32(max(i.q2.z, 1))));
         let gx = px.x + i.q2.x;
         let gy = px.y + i.q2.y;
         let cell = i.c2.x;

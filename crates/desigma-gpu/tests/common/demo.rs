@@ -35,7 +35,7 @@ fn grad(kind: fn([Vec2; 3], Vec<GradientStop>) -> PaintKind, a: Color, b: Color,
     }
 }
 
-fn checker() -> Vec<u8> {
+pub fn checker() -> Vec<u8> {
     let mut pm = Pixmap::new(32, 32).unwrap();
     for y in 0..32u32 {
         for x in 0..32u32 {

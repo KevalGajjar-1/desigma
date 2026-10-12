@@ -61,6 +61,7 @@ pub struct Renderer {
     output: Option<Output>,
     /// Multisampled twin of `output` (same exact size).
     output_ms: Option<(wgpu::Texture, wgpu::TextureView)>,
+    output_ms_size: (u32, u32),
     frame_no: u64,
     max_dim: u32,
     pub stats: ExecStats,
@@ -129,7 +130,12 @@ impl Renderer {
             mapped_at_creation: false,
         });
         queue.write_buffer(&noclip_buf, 0, bytemuck::bytes_of(&ClipParams { origin: [0.0; 2], size: [0.0; 2], enabled: 0.0, pad: [0.0; 3] }));
-        let noclip_bg = uniform_bg(device, &layouts.clip, &(noclip_buf, 0, std::mem::size_of::<ClipParams>() as u64), &[wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&dummy) }]);
+        let noclip_bg = uniform_bg(
+            device,
+            &layouts.clip,
+            &(noclip_buf, 0, std::mem::size_of::<ClipParams>() as u64),
+            &[wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&dummy) }],
+        );
         if let Some(e) = pollster::block_on(scope.pop()) {
             return Err(crate::GpuError::Unsupported(e.to_string()));
         }
@@ -155,6 +161,7 @@ impl Renderer {
             inst_cap: 0,
             output: None,
             output_ms: None,
+            output_ms_size: (0, 0),
             frame_no: 0,
             max_dim: device.limits().max_texture_dimension_2d,
             stats: ExecStats::default(),
@@ -184,7 +191,12 @@ impl Renderer {
         let row = self.ramp_next;
         self.ramp_next += 1;
         self.queue.write_texture(
-            wgpu::TexelCopyTextureInfo { texture: &self.ramp_tex, mip_level: 0, origin: wgpu::Origin3d { x: 0, y: row, z: 0 }, aspect: wgpu::TextureAspect::All },
+            wgpu::TexelCopyTextureInfo {
+                texture: &self.ramp_tex,
+                mip_level: 0,
+                origin: wgpu::Origin3d { x: 0, y: row, z: 0 },
+                aspect: wgpu::TextureAspect::All,
+            },
             &r.rgba,
             wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(RAMP_W as u32 * 4), rows_per_image: Some(1) },
             wgpu::Extent3d { width: RAMP_W as u32, height: 1, depth_or_array_layers: 1 },
@@ -193,12 +205,13 @@ impl Renderer {
         row
     }
 
-    fn ensure_output(&mut self, size: (u32, u32)) -> Output {
+    fn ensure_output(&mut self, size: (u32, u32), render: (u32, u32)) -> Output {
         if let Some(o) = &self.output {
-            if o.size == size {
+            if o.size == size && self.output_ms_size == render {
                 return o.clone();
             }
         }
+        self.output_ms_size = render;
         let texture = self.dev.create_texture(&wgpu::TextureDescriptor {
             label: Some("canvas"),
             size: wgpu::Extent3d { width: size.0.max(1), height: size.1.max(1), depth_or_array_layers: 1 },
@@ -212,7 +225,7 @@ impl Renderer {
         let view = texture.create_view(&Default::default());
         let ms = self.dev.create_texture(&wgpu::TextureDescriptor {
             label: Some("canvas ms"),
-            size: wgpu::Extent3d { width: size.0.max(1), height: size.1.max(1), depth_or_array_layers: 1 },
+            size: wgpu::Extent3d { width: render.0.max(1), height: render.1.max(1), depth_or_array_layers: 1 },
             mip_level_count: 1,
             sample_count: MSAA,
             dimension: wgpu::TextureDimension::D2,
@@ -232,9 +245,12 @@ impl Renderer {
         self.frame_no += 1;
         self.stats = ExecStats::default();
         self.ring.reset();
-        let output = self.ensure_output(frame.size);
+        let output = self.ensure_output(frame.out_size, frame.size);
         let mut run = FrameRun::new(self, frame, enc, output.clone());
         run.run_program(enc, frame.root);
+        if frame.ss > 1 {
+            run.downsample_root(enc);
+        }
         let st = run.stats;
         self.stats = st;
         self.stats.pool_bytes = self.ms_pool.bytes() + self.plain_pool.bytes();
@@ -509,6 +525,35 @@ impl<'a> FrameRun<'a> {
         }
     }
 
+    /// Box-filters the supersampled root into the output texture.
+    fn downsample_root(&mut self, enc: &mut wgpu::CommandEncoder) {
+        let root = self.frame.root as usize;
+        let Some(src) = self.res[root].as_ref().and_then(|r| r.lease.clone()) else { return };
+        let ub = self.r.ring.alloc(
+            &self.r.dev,
+            &self.r.queue,
+            &BlitParams {
+                src_extent: [self.frame.size.0 as f32, self.frame.size.1 as f32],
+                dst_extent: [self.frame.out_size.0 as f32, self.frame.out_size.1 as f32],
+                src_tex: [src.w as f32, src.h as f32],
+                pad: [0.0; 2],
+            },
+        );
+        let bg = uniform_bg(
+            &self.r.dev,
+            &self.r.layouts.blit,
+            &ub,
+            &[
+                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&src.view) },
+                wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Sampler(&self.r.samp_clamp) },
+            ],
+        );
+        let pipe = self.r.pipes.blit.clone();
+        let out = self.output.view.clone();
+        self.full_pass(enc, &out, self.frame.out_size, &pipe, &bg);
+        self.r.plain_pool.release(&src);
+    }
+
     fn hoistable(&self, p: ProgId) -> bool {
         let prog = &self.frame.programs[p as usize];
         !prog.needs_backdrop && prog.rect.area() <= HOIST_AREA
@@ -547,13 +592,14 @@ impl<'a> FrameRun<'a> {
         }
         let (w, h) = (prog.rect.w() as u32, prog.rect.h() as u32);
         let frame_no = self.r.frame_no;
-        let ms = if id == frame.root {
+        let direct_root = id == frame.root && frame.ss == 1;
+        let ms = if direct_root {
             let (tex, view) = self.r.output_ms.clone().expect("root target");
             Lease { idx: usize::MAX, tex, view, w, h }
         } else {
             self.r.ms_pool.acquire(&self.r.dev, w, h, frame_no)
         };
-        let (resolve, resolve_view, resolve_tex) = if id == frame.root {
+        let (resolve, resolve_view, resolve_tex) = if direct_root {
             (None, self.output.view.clone(), self.output.texture.clone())
         } else {
             let l = self.r.plain_pool.acquire(&self.r.dev, w, h, frame_no);
@@ -599,8 +645,47 @@ impl<'a> FrameRun<'a> {
                     view = out.view.clone();
                     lease = Some(out);
                 }
-                Post::Displace { amp, cell, seed, grid, clip_to } => {
-                    let _ = (amp, cell, seed, grid, clip_to);
+                Post::Displace { amp, cell, seed, grid, clip_to, ss } => {
+                    if let Some(m) = *clip_to {
+                        self.ensure_done(enc, m);
+                    }
+                    let src = lease.clone().expect("displace of the root target");
+                    let mask = clip_to.and_then(|m| self.res[m as usize].as_ref().map(|r| (r.view.clone(), r.rect)));
+                    let dst = self.r.plain_pool.acquire(&self.r.dev, w, h, self.r.frame_no);
+                    let params = FxParams {
+                        origin: [prog.rect.x0, prog.rect.y0],
+                        size: [w as i32, h as i32],
+                        mask_origin: mask.as_ref().map_or([0; 2], |(_, r)| [r.x0, r.y0]),
+                        mask_size: mask.as_ref().map_or([0; 2], |(_, r)| [r.w(), r.h()]),
+                        grid: [grid.0, grid.1],
+                        seed: *seed,
+                        has_mask: mask.is_some() as u32,
+                        amp: *amp,
+                        cell: *cell,
+                        ss: *ss as f32,
+                        depth: 0.0,
+                        light: [0.0; 2],
+                        intensity: 0.0,
+                        refraction: 0.0,
+                        dispersion: 0.0,
+                        pad: 0.0,
+                    };
+                    let ub = self.r.ring.alloc(&self.r.dev, &self.r.queue, &params);
+                    let bg = uniform_bg(
+                        &self.r.dev,
+                        &self.r.layouts.fx,
+                        &ub,
+                        &[
+                            wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&src.view) },
+                            wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(mask.as_ref().map_or(&self.r.dummy, |(v, _)| v)) },
+                            wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::TextureView(&self.r.dummy) },
+                        ],
+                    );
+                    let pipe = self.r.pipes.displace.clone();
+                    self.full_pass(enc, &dst.view, (w, h), &pipe, &bg);
+                    self.r.plain_pool.release(&src);
+                    view = dst.view.clone();
+                    lease = Some(dst);
                 }
             }
         }
@@ -647,9 +732,7 @@ impl<'a> FrameRun<'a> {
         let clip_ready = |c: ClipId| self.frame.clips[c as usize].mask.is_none_or(ready);
         match op {
             Op::Draw(d) => clip_ready(d.clip),
-            Op::Composite(c) => {
-                !matches!(c.mode, CompMode::Blend(_)) && ready(c.src) && c.aux.is_none_or(|(a, _)| ready(a)) && clip_ready(c.clip)
-            }
+            Op::Composite(c) => !matches!(c.mode, CompMode::Blend(_)) && ready(c.src) && c.aux.is_none_or(|(a, _)| ready(a)) && clip_ready(c.clip),
             Op::Backdrop(_) => false,
         }
     }
@@ -658,7 +741,9 @@ impl<'a> FrameRun<'a> {
     fn consumed(&self, op: &Op) -> bool {
         match op {
             Op::Backdrop(_) => true,
-            Op::Composite(c) => matches!(c.mode, CompMode::Blend(_)) && self.done[c.src as usize] && c.aux.is_none_or(|(a, _)| self.done[a as usize]) && self.clip_done(c.clip),
+            Op::Composite(c) => {
+                matches!(c.mode, CompMode::Blend(_)) && self.done[c.src as usize] && c.aux.is_none_or(|(a, _)| self.done[a as usize]) && self.clip_done(c.clip)
+            }
             Op::Draw(_) => false,
         }
     }
@@ -743,15 +828,30 @@ impl<'a> FrameRun<'a> {
         let res = self.res[m as usize].as_ref();
         let bg = match res {
             Some(res) => {
-                let cp = ClipParams { origin: [res.rect.x0 as f32, res.rect.y0 as f32], size: [res.rect.w() as f32, res.rect.h() as f32], enabled: 1.0, pad: [0.0; 3] };
+                let cp = ClipParams {
+                    origin: [res.rect.x0 as f32, res.rect.y0 as f32],
+                    size: [res.rect.w() as f32, res.rect.h() as f32],
+                    enabled: 1.0,
+                    pad: [0.0; 3],
+                };
                 let ub = self.r.ring.alloc(&self.r.dev, &self.r.queue, &cp);
-                uniform_bg(&self.r.dev, &self.r.layouts.clip, &ub, &[wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&res.view) }])
+                uniform_bg(
+                    &self.r.dev,
+                    &self.r.layouts.clip,
+                    &ub,
+                    &[wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&res.view) }],
+                )
             }
             // the mask never rendered (empty): everything it clips is invisible
             None => {
                 let cp = ClipParams { origin: [0.0; 2], size: [0.0; 2], enabled: 1.0, pad: [0.0; 3] };
                 let ub = self.r.ring.alloc(&self.r.dev, &self.r.queue, &cp);
-                uniform_bg(&self.r.dev, &self.r.layouts.clip, &ub, &[wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&self.r.dummy) }])
+                uniform_bg(
+                    &self.r.dev,
+                    &self.r.layouts.clip,
+                    &ub,
+                    &[wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&self.r.dummy) }],
+                )
             }
         };
         self.clip_bgs.insert(m, bg.clone());
@@ -1025,7 +1125,12 @@ impl<'a> FrameRun<'a> {
             self.stats.passes += 1;
             let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("backdrop"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment { view: &dst.view, depth_slice: None, resolve_target: None, ops: wgpu::Operations { load, store: wgpu::StoreOp::Store } })],
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &dst.view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations { load, store: wgpu::StoreOp::Store },
+                })],
                 depth_stencil_attachment: None,
                 timestamp_writes: None,
                 occlusion_query_set: None,
@@ -1071,6 +1176,7 @@ impl<'a> FrameRun<'a> {
         if sc.is_empty() {
             return;
         }
+        let glass = matches!(b.kind, BackdropKind::Glass(_));
         let bd = self.backdrop_texture(enc, pad);
         let (pw, ph) = (pad.w() as u32, pad.h() as u32);
         let processed = match b.kind {
@@ -1079,13 +1185,57 @@ impl<'a> FrameRun<'a> {
                 self.r.plain_pool.release(&bd);
                 out
             }
-            BackdropKind::Glass(_) => bd,
+            BackdropKind::Glass(gp) => {
+                let mres = self.res[b.mask as usize].as_ref().and_then(|r| r.lease.clone().map(|l| (l, r.rect)));
+                let Some((mlease, mrect)) = mres else {
+                    self.r.plain_pool.release(&bd);
+                    return;
+                };
+                let frost = self.blur(enc, &bd, pw, ph, gp.sigma_frost, true);
+                self.r.plain_pool.release(&bd);
+                let soft = self.blur(enc, &mlease, mrect.w() as u32, mrect.h() as u32, gp.sigma_mask, false);
+                let out = self.r.plain_pool.acquire(&self.r.dev, sc.w() as u32, sc.h() as u32, self.r.frame_no);
+                let params = FxParams {
+                    origin: [sc.x0, sc.y0],
+                    size: [pw as i32, ph as i32],
+                    mask_origin: [mrect.x0, mrect.y0],
+                    mask_size: [mrect.w(), mrect.h()],
+                    grid: [0; 2],
+                    seed: 0,
+                    has_mask: 1,
+                    amp: 0.0,
+                    cell: 1.0,
+                    ss: 1.0,
+                    depth: gp.depth,
+                    light: gp.light,
+                    intensity: gp.intensity,
+                    refraction: gp.refraction,
+                    dispersion: gp.dispersion,
+                    pad: 0.0,
+                };
+                let ub = self.r.ring.alloc(&self.r.dev, &self.r.queue, &params);
+                let bgf = uniform_bg(
+                    &self.r.dev,
+                    &self.r.layouts.fx,
+                    &ub,
+                    &[
+                        wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&frost.view) },
+                        wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(&mask.0) },
+                        wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::TextureView(&soft.view) },
+                    ],
+                );
+                let pipe = self.r.pipes.glass.clone();
+                self.full_pass(enc, &out.view, (sc.w() as u32, sc.h() as u32), &pipe, &bgf);
+                self.r.plain_pool.release(&frost);
+                self.r.plain_pool.release(&soft);
+                out
+            }
         };
         let snap = self.snapshot(enc, id, sc);
         let params = CParams {
             rect: f4(sc),
-            src_origin: [pad.x0 as f32, pad.y0 as f32],
-            src_size: [pw as f32, ph as f32],
+            src_origin: if glass { [sc.x0 as f32, sc.y0 as f32] } else { [pad.x0 as f32, pad.y0 as f32] },
+            src_size: if glass { [sc.w() as f32, sc.h() as f32] } else { [pw as f32, ph as f32] },
             aux_origin: [mask.1.x0 as f32, mask.1.y0 as f32],
             aux_size: [mask.1.w() as f32, mask.1.h() as f32],
             snap_origin: [sc.x0 as f32, sc.y0 as f32],
@@ -1096,7 +1246,8 @@ impl<'a> FrameRun<'a> {
             aux_mode: 1,
             blend: 0,
         };
-        let spec = CompSpec { params, src: &processed.view, aux: Some(&mask.0), snap: Some(&snap.view), kind: CompKind::Replace, scissor: sc, clip_mask: cd.mask };
+        let spec =
+            CompSpec { params, src: &processed.view, aux: Some(&mask.0), snap: Some(&snap.view), kind: CompKind::Replace, scissor: sc, clip_mask: cd.mask };
         self.composite_pass(enc, id, spec);
         self.r.plain_pool.release(&snap);
         self.r.plain_pool.release(&processed);
@@ -1104,12 +1255,12 @@ impl<'a> FrameRun<'a> {
 
     // ----- blur ----------------------------------------------------------------------
 
-    fn full_pass(&mut self, enc: &mut wgpu::CommandEncoder, dst: &Lease, extent: (u32, u32), pipe: &wgpu::RenderPipeline, bg: &wgpu::BindGroup) {
+    fn full_pass(&mut self, enc: &mut wgpu::CommandEncoder, dst: &wgpu::TextureView, extent: (u32, u32), pipe: &wgpu::RenderPipeline, bg: &wgpu::BindGroup) {
         self.stats.passes += 1;
         let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("post"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: &dst.view,
+                view: dst,
                 depth_slice: None,
                 resolve_target: None,
                 ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT), store: wgpu::StoreOp::Store },
@@ -1142,10 +1293,13 @@ impl<'a> FrameRun<'a> {
             &self.r.dev,
             &self.r.layouts.blit,
             &ub,
-            &[wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&src.view) }, wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Sampler(&self.r.samp_clamp) }],
+            &[
+                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&src.view) },
+                wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Sampler(&self.r.samp_clamp) },
+            ],
         );
         let pipe = self.r.pipes.blit.clone();
-        self.full_pass(enc, &dst, dst_extent, &pipe, &bg);
+        self.full_pass(enc, &dst.view, dst_extent, &pipe, &bg);
         dst
     }
 
@@ -1157,9 +1311,10 @@ impl<'a> FrameRun<'a> {
             &self.r.queue,
             &BlurParams { dir, size: [extent.0 as i32, extent.1 as i32], radius, clamp_edges: clamp as u32, sigma, pad: 0.0 },
         );
-        let bg = uniform_bg(&self.r.dev, &self.r.layouts.blur, &ub, &[wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&src.view) }]);
+        let bg =
+            uniform_bg(&self.r.dev, &self.r.layouts.blur, &ub, &[wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&src.view) }]);
         let pipe = self.r.pipes.blur.clone();
-        self.full_pass(enc, &dst, extent, &pipe, &bg);
+        self.full_pass(enc, &dst.view, extent, &pipe, &bg);
         self.stats.blur_passes += 1;
         dst
     }

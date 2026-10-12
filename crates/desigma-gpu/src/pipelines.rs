@@ -60,7 +60,29 @@ pub struct BlitParams {
     pub pad: [f32; 2],
 }
 
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct FxParams {
+    pub origin: [i32; 2],
+    pub size: [i32; 2],
+    pub mask_origin: [i32; 2],
+    pub mask_size: [i32; 2],
+    pub grid: [i32; 2],
+    pub seed: u32,
+    pub has_mask: u32,
+    pub amp: f32,
+    pub cell: f32,
+    pub ss: f32,
+    pub depth: f32,
+    pub light: [f32; 2],
+    pub intensity: f32,
+    pub refraction: f32,
+    pub dispersion: f32,
+    pub pad: f32,
+}
+
 pub struct Layouts {
+    pub fx: wgpu::BindGroupLayout,
     pub globals: wgpu::BindGroupLayout,
     pub clip: wgpu::BindGroupLayout,
     pub image: wgpu::BindGroupLayout,
@@ -88,6 +110,8 @@ pub struct Pipelines {
     pub comp_1x: [wgpu::RenderPipeline; 4],
     pub blur: wgpu::RenderPipeline,
     pub blit: wgpu::RenderPipeline,
+    pub displace: wgpu::RenderPipeline,
+    pub glass: wgpu::RenderPipeline,
 }
 
 impl Pipelines {
@@ -127,8 +151,28 @@ impl Layouts {
     pub fn new(dev: &wgpu::Device) -> Self {
         use wgpu::ShaderStages as S;
         let vf = S::VERTEX | S::FRAGMENT;
-        let mk = |label: &str, entries: &[wgpu::BindGroupLayoutEntry]| dev.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some(label), entries });
+        let mk = |label: &str, entries: &[wgpu::BindGroupLayoutEntry]| {
+            dev.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some(label), entries })
+        };
         Self {
+            fx: mk(
+                "fx",
+                &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: S::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: wgpu::BufferSize::new(size_of::<FxParams>() as u64),
+                        },
+                        count: None,
+                    },
+                    tex_entry(1, S::FRAGMENT, false),
+                    tex_entry(2, S::FRAGMENT, false),
+                    tex_entry(3, S::FRAGMENT, false),
+                ],
+            ),
             globals: mk(
                 "globals",
                 &[uniform_entry(0, vf, size_of::<Globals>()), tex_entry(1, S::FRAGMENT, true), sampler_entry(2, S::FRAGMENT), sampler_entry(3, S::FRAGMENT)],
@@ -152,15 +196,31 @@ impl Layouts {
 
 fn over_blend() -> wgpu::BlendState {
     wgpu::BlendState {
-        color: wgpu::BlendComponent { src_factor: wgpu::BlendFactor::One, dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha, operation: wgpu::BlendOperation::Add },
-        alpha: wgpu::BlendComponent { src_factor: wgpu::BlendFactor::One, dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha, operation: wgpu::BlendOperation::Add },
+        color: wgpu::BlendComponent {
+            src_factor: wgpu::BlendFactor::One,
+            dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+            operation: wgpu::BlendOperation::Add,
+        },
+        alpha: wgpu::BlendComponent {
+            src_factor: wgpu::BlendFactor::One,
+            dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+            operation: wgpu::BlendOperation::Add,
+        },
     }
 }
 
 fn erase_blend() -> wgpu::BlendState {
     wgpu::BlendState {
-        color: wgpu::BlendComponent { src_factor: wgpu::BlendFactor::Zero, dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha, operation: wgpu::BlendOperation::Add },
-        alpha: wgpu::BlendComponent { src_factor: wgpu::BlendFactor::Zero, dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha, operation: wgpu::BlendOperation::Add },
+        color: wgpu::BlendComponent {
+            src_factor: wgpu::BlendFactor::Zero,
+            dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+            operation: wgpu::BlendOperation::Add,
+        },
+        alpha: wgpu::BlendComponent {
+            src_factor: wgpu::BlendFactor::Zero,
+            dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+            operation: wgpu::BlendOperation::Add,
+        },
     }
 }
 
@@ -179,10 +239,24 @@ fn instance_attrs() -> [wgpu::VertexAttribute; 7] {
 
 impl Pipelines {
     pub fn new(dev: &wgpu::Device, l: &Layouts) -> Self {
-        let draw_src = dev.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("draw"), source: wgpu::ShaderSource::Wgsl(include_str!("shaders/draw.wgsl").into()) });
-        let comp_src = dev.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("composite"), source: wgpu::ShaderSource::Wgsl(include_str!("shaders/composite.wgsl").into()) });
-        let blur_src = dev.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("blur"), source: wgpu::ShaderSource::Wgsl(include_str!("shaders/blur.wgsl").into()) });
-        let blit_src = dev.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("blit"), source: wgpu::ShaderSource::Wgsl(include_str!("shaders/blit.wgsl").into()) });
+        let draw_src = dev.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("draw"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/draw.wgsl").into()),
+        });
+        let comp_src = dev.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("composite"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/composite.wgsl").into()),
+        });
+        let blur_src = dev.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("blur"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/blur.wgsl").into()),
+        });
+        let fx_src = dev
+            .create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("fx"), source: wgpu::ShaderSource::Wgsl(include_str!("shaders/fx.wgsl").into()) });
+        let blit_src = dev.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("blit"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/blit.wgsl").into()),
+        });
 
         let layout = |label: &str, groups: &[&wgpu::BindGroupLayout]| {
             let g: Vec<Option<&wgpu::BindGroupLayout>> = groups.iter().map(|b| Some(*b)).collect();
@@ -193,6 +267,7 @@ impl Pipelines {
         let comp_layout = layout("comp", &[&l.globals, &l.clip, &l.comp]);
         let blur_layout = layout("blur", &[&l.blur]);
         let blit_layout = layout("blit", &[&l.blit]);
+        let fx_layout = layout("fx", &[&l.fx]);
 
         let mesh_attr = [wgpu::VertexAttribute { format: wgpu::VertexFormat::Float32x2, offset: 0, shader_location: 0 }];
         let inst_attr = instance_attrs();
@@ -279,6 +354,8 @@ impl Pipelines {
             comp_1x: comp_set(false),
             blur: full("blur", &blur_layout, &blur_src, "fs_blur"),
             blit: full("blit", &blit_layout, &blit_src, "fs_blit"),
+            displace: full("displace", &fx_layout, &fx_src, "fs_displace"),
+            glass: full("glass", &fx_layout, &fx_src, "fs_glass"),
         }
     }
 }

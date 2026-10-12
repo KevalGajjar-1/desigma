@@ -9,6 +9,7 @@
 //! GPU. The editor compiles while painting its UI and executes inside egui's
 //! paint callback; [`HeadlessGpu`] does both for tests and screenshots.
 
+mod canvas;
 mod compile;
 mod context;
 mod exec;
@@ -21,6 +22,7 @@ mod pipelines;
 mod present;
 mod resources;
 
+pub use canvas::Canvas;
 pub use compile::{CompileOptions, SceneCompiler};
 pub use context::{GpuContext, GpuError};
 pub use exec::{ExecStats, Output, Renderer};

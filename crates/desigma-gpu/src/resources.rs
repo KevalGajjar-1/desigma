@@ -46,10 +46,6 @@ impl Arena {
         self.bytes = 0;
     }
 
-    pub fn bytes(&self) -> usize {
-        self.bytes
-    }
-
     /// Uploads every mesh in `meshes` that is not resident yet.
     pub fn ensure(&mut self, dev: &wgpu::Device, queue: &wgpu::Queue, meshes: &[Arc<Mesh>]) {
         let mut seen = HashSet::new();
@@ -165,7 +161,10 @@ impl Pool {
                 let usage = if self.ms {
                     wgpu::TextureUsages::RENDER_ATTACHMENT
                 } else {
-                    wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_SRC | wgpu::TextureUsages::COPY_DST
+                    wgpu::TextureUsages::RENDER_ATTACHMENT
+                        | wgpu::TextureUsages::TEXTURE_BINDING
+                        | wgpu::TextureUsages::COPY_SRC
+                        | wgpu::TextureUsages::COPY_DST
                 };
                 let tex = dev.create_texture(&wgpu::TextureDescriptor {
                     label: Some(if self.ms { "ms target" } else { "target" }),
@@ -274,7 +273,6 @@ pub fn uniform_bg(dev: &wgpu::Device, layout: &wgpu::BindGroupLayout, ub: &(wgpu
 // ---------------------------------------------------------------- images
 
 pub struct ImageTex {
-    pub view: wgpu::TextureView,
     pub bind: wgpu::BindGroup,
     pub last_used: u64,
 }
@@ -342,9 +340,7 @@ impl ImageUpload<'_> {
             wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(w * 4), rows_per_image: Some(h) },
             wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
         );
-        let level = |m: u32| {
-            tex.create_view(&wgpu::TextureViewDescriptor { base_mip_level: m, mip_level_count: Some(1), ..Default::default() })
-        };
+        let level = |m: u32| tex.create_view(&wgpu::TextureViewDescriptor { base_mip_level: m, mip_level_count: Some(1), ..Default::default() });
         for m in 1..mips {
             let (sw, sh) = ((w >> (m - 1)).max(1), (h >> (m - 1)).max(1));
             let (dw, dh) = ((w >> m).max(1), (h >> m).max(1));
@@ -359,7 +355,10 @@ impl ImageUpload<'_> {
                 self.dev,
                 self.blit_layout,
                 &ub,
-                &[wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&src) }, wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Sampler(self.sampler) }],
+                &[
+                    wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&src) },
+                    wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Sampler(self.sampler) },
+                ],
             );
             let mut pass = self.enc.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("mip"),
@@ -384,6 +383,6 @@ impl ImageUpload<'_> {
             layout: self.image_layout,
             entries: &[wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&view) }],
         });
-        ImageTex { view, bind, last_used: self.frame }
+        ImageTex { bind, last_used: self.frame }
     }
 }
