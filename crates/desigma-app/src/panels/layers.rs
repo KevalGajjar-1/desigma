@@ -148,6 +148,10 @@ pub(crate) fn kind_icon(k: &NodeKind) -> Icon {
         NodeKind::BooleanOp(_) => Icon::Boolean,
         NodeKind::Component(_) | NodeKind::ComponentSet(_) => Icon::Component,
         NodeKind::Instance { .. } => Icon::Instance,
+        NodeKind::Sticky(_) => Icon::Sticky,
+        NodeKind::Connector(_) => Icon::Connector,
+        NodeKind::ShapeWithText(_) => Icon::Shapes,
+        NodeKind::Stamp { .. } => Icon::Stamp,
         NodeKind::Unknown { .. } => Icon::Rectangle,
     }
 }

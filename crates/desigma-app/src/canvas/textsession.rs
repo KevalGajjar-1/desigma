@@ -79,8 +79,9 @@ pub enum TextCmd {
 // ------------------------------------------------------------------ lifecycle
 pub fn begin_text_edit(app: &mut App, id: NodeId) {
     finish_text(app, true);
-    let len = match app.doc.get(id).map(|n| &n.kind) {
-        Some(NodeKind::Text(t)) => t.content.len(),
+    // text layers, and the text of stickies, shapes and connector labels
+    let len = match app.doc.get(id).and_then(|n| n.kind.any_text()) {
+        Some(t) => t.content.len(),
         _ => return,
     };
     app.selection = vec![id];
@@ -101,19 +102,32 @@ pub fn finish_text(app: &mut App, commit: bool) {
     if let Some(range) = sess.preedit.take() {
         // an unfinished composition is discarded
         if let Some(n) = sess.tx.ed.node(&mut app.doc, sess.id) {
-            if let NodeKind::Text(t) = &mut n.kind {
+            if let Some(t) = n.kind.any_text_mut() {
                 richtext::splice(t, range, "", None);
             }
         }
     }
-    let empty = matches!(app.doc.get(sess.id).map(|n| &n.kind), Some(NodeKind::Text(t)) if t.content.is_empty());
+    let empty = app.doc.get(sess.id).and_then(|n| n.kind.any_text()).is_some_and(|t| t.content.is_empty());
+    if empty && commit {
+        // a connector label emptied out is no label at all
+        if let Some(n) = sess.tx.ed.node(&mut app.doc, sess.id) {
+            if let NodeKind::Connector(c) = &mut n.kind {
+                c.label = None;
+            }
+        }
+        if let Some(g) = desigma_doc::connector_geometry(&app.doc, sess.id) {
+            if let Some(n) = sess.tx.ed.node(&mut app.doc, sess.id) {
+                g.apply(n);
+            }
+        }
+    }
     if (sess.created && empty) || !commit {
         sess.tx.cancel(&mut app.doc);
         app.sanitize();
     } else {
         let id = sess.id;
         // text in Arabic, Hebrew or Devanagari needs its Noto fallback font (fetched once, then cached)
-        let complex = matches!(app.doc.get(id).map(|n| &n.kind), Some(NodeKind::Text(t)) if !desigma_fonts::scripts_in(&t.content).is_empty());
+        let complex = app.doc.get(id).and_then(|n| n.kind.any_text()).is_some_and(|t| !desigma_fonts::scripts_in(&t.content).is_empty());
         app.run_tx(sess.tx);
         app.selection = vec![id];
         if complex {
@@ -125,12 +139,21 @@ pub fn finish_text(app: &mut App, commit: bool) {
 
 // ------------------------------------------------------------------ queries
 fn props_of(app: &App) -> Option<(TextProps, DV)> {
+    let f = frame_of(app)?;
+    Some((f.props, f.size))
+}
+
+/// The edited text as stored in the node (a sticky's props keep the largest size; the frame's
+/// props carry the size fitted for drawing).
+fn stored_of(app: &App) -> Option<TextProps> {
     let sess = app.canvas.text.as_ref()?;
-    let n = app.doc.get(sess.id)?;
-    match &n.kind {
-        NodeKind::Text(t) => Some((t.clone(), n.size)),
-        _ => None,
-    }
+    app.doc.get(sess.id)?.kind.any_text().cloned()
+}
+
+/// Where the edited text is laid out (see [`crate::board::create::text_frame`]).
+fn frame_of(app: &App) -> Option<crate::board::create::TextFrame> {
+    let sess = app.canvas.text.as_ref()?;
+    crate::board::create::text_frame(&app.doc, app.doc.get(sess.id)?)
 }
 
 /// Node-local point of a page-space point for the edited node.
@@ -154,8 +177,8 @@ fn hit_at(app: &App, page: DV) -> Option<usize> {
 fn hit_stop_at(app: &App, page: DV) -> Option<(usize, f32)> {
     let id = app.canvas.text.as_ref()?.id;
     let l = to_local(app, id, page)?;
-    let (t, size) = props_of(app)?;
-    Some(tm::hit_stop(&t, size, l.x, l.y))
+    let f = frame_of(app)?;
+    Some(tm::hit_stop(&f.props, f.size, l.x - f.origin.x, l.y - f.origin.y))
 }
 
 fn set_hint(app: &mut App, x: f32) {
@@ -288,6 +311,18 @@ fn move_caret(app: &mut App, key: egui::Key, shift: bool, ctrl: bool) {
 }
 
 // ------------------------------------------------------------------ editing
+/// A connector label that grew or shrank changes the extent of its connector.
+fn follow_label(doc: &mut desigma_doc::Document, tx: &mut Tx, id: NodeId) {
+    if !matches!(doc.get(id).map(|n| &n.kind), Some(NodeKind::Connector(_))) {
+        return;
+    }
+    if let Some(g) = desigma_doc::connector_geometry(doc, id) {
+        if let Some(n) = tx.ed.node(doc, id) {
+            g.apply(n);
+        }
+    }
+}
+
 /// Runs `f` on the edited text. `log` records an undo step (None = no step, for IME previews).
 fn edit_props(app: &mut App, log: Option<(EditKind, bool)>, f: impl FnOnce(&mut TextProps, &mut usize, &mut usize)) {
     let now = app.now;
@@ -297,15 +332,19 @@ fn edit_props(app: &mut App, log: Option<(EditKind, bool)>, f: impl FnOnce(&mut 
     let (mut caret, mut anchor) = (sess.caret, sess.anchor);
     let mut before = None;
     if let Some(n) = sess.tx.ed.node(doc, id) {
-        if let NodeKind::Text(t) = &mut n.kind {
+        let is_text = matches!(n.kind, NodeKind::Text(_));
+        if let Some(t) = n.kind.any_text_mut() {
             let snap = Snap { props: t.clone(), caret, anchor };
             f(t, &mut caret, &mut anchor);
             if *t != snap.props {
                 before = Some(snap);
             }
-            n.size = layout::fit_text(t, n.size);
+            if is_text {
+                n.size = layout::fit_text(t, n.size);
+            }
         }
     }
+    follow_label(doc, &mut sess.tx, id);
     if let (Some(b), Some((kind, new_word))) = (before, log) {
         sess.log.record(b, kind, now, new_word);
     }
@@ -396,7 +435,7 @@ fn change_list_level(app: &mut App, delta: i8) {
 /// In-session undo (`redo = false`) or redo.
 fn undo_step(app: &mut App, redo: bool) {
     let now = (|| {
-        let (t, _) = props_of(app)?;
+        let t = stored_of(app)?;
         let s = app.canvas.text.as_ref()?;
         Some(Snap { props: t, caret: s.caret, anchor: s.anchor })
     })();
@@ -408,11 +447,15 @@ fn undo_step(app: &mut App, redo: bool) {
     let sess = canvas.text.as_mut().unwrap();
     let id = sess.id;
     if let Some(n) = sess.tx.ed.node(doc, id) {
-        if let NodeKind::Text(t) = &mut n.kind {
+        let is_text = matches!(n.kind, NodeKind::Text(_));
+        if let Some(t) = n.kind.any_text_mut() {
             *t = snap.props;
-            n.size = layout::fit_text(t, n.size);
+            if is_text {
+                n.size = layout::fit_text(t, n.size);
+            }
         }
     }
+    follow_label(doc, &mut sess.tx, id);
     sess.caret = snap.caret;
     sess.anchor = snap.anchor;
     sess.hint_x = None;
@@ -435,7 +478,7 @@ pub fn style_selection_as(app: &mut App, f: impl Fn(&mut TextStyle), kind: EditK
     let range = sess.range();
     let empty_text = props_of(app).is_none_or(|(t, _)| t.content.is_empty());
     if range.is_empty() && !empty_text {
-        let Some((t, _)) = props_of(app) else { return true };
+        let Some(t) = stored_of(app) else { return true };
         let caret = app.canvas.text.as_ref().map(|s| s.caret).unwrap_or(0);
         let mut st = app.canvas.text.as_ref().and_then(|s| s.typing.clone()).unwrap_or_else(|| richtext::style_for_typing(&t, caret));
         f(&mut st);
@@ -466,7 +509,7 @@ pub fn edit_text_props(app: &mut App, f: impl Fn(&mut TextProps)) {
 
 /// Style summary of the open session's selection (for the inspector).
 pub fn session_summary(app: &App) -> Option<richtext::Summary> {
-    let (t, _) = props_of(app)?;
+    let t = stored_of(app)?;
     let s = app.canvas.text.as_ref()?;
     let mut sum = richtext::summary(&t, s.range());
     if let (true, Some(ty)) = (s.range().is_empty(), &s.typing) {
@@ -493,24 +536,30 @@ pub fn text_command(app: &mut App, cmd: TextCmd) {
     }
     let ids = app.selection.clone();
     for id in ids {
-        let Some(NodeKind::Text(t)) = app.doc.get(id).map(|n| n.kind.clone()) else { continue };
+        let Some(t) = app.doc.get(id).and_then(|n| n.kind.any_text()).cloned() else { continue };
         let sum = richtext::summary(&t, 0..t.content.len());
         match cmd {
             TextCmd::List(kind) => {
                 app.edit_nodes(&[id], |n| {
-                    if let NodeKind::Text(t) = &mut n.kind {
+                    let is_text = matches!(n.kind, NodeKind::Text(_));
+                    if let Some(t) = n.kind.any_text_mut() {
                         let len = t.content.len();
                         richtext::toggle_list(t, 0..len, kind);
-                        n.size = layout::fit_text(t, n.size);
+                        if is_text {
+                            n.size = layout::fit_text(t, n.size);
+                        }
                     }
                 });
             }
             c => {
                 let f = style_fn(c, Some(&sum));
                 app.edit_nodes(&[id], |n| {
-                    if let NodeKind::Text(t) = &mut n.kind {
+                    let is_text = matches!(n.kind, NodeKind::Text(_));
+                    if let Some(t) = n.kind.any_text_mut() {
                         richtext::apply_all(t, &f);
-                        n.size = layout::fit_text(t, n.size);
+                        if is_text {
+                            n.size = layout::fit_text(t, n.size);
+                        }
                     }
                 });
             }
@@ -591,7 +640,7 @@ pub fn text_keys(app: &mut App, ctx: &Context) {
     }
     let tabs = app.canvas.text.as_mut().map(|s| std::mem::take(&mut s.tabs)).unwrap_or_default();
     for shift in tabs {
-        change_list_level(app, if shift { -1 } else { 1 });
+        tab(app, shift);
     }
     let events = ctx.input(|i| i.events.clone());
     for ev in events {
@@ -648,7 +697,7 @@ fn key_event(app: &mut App, key: egui::Key, m: egui::Modifiers) -> bool {
         K::U if ctrl => text_command(app, TextCmd::Underline),
         K::Period if ctrl && m.shift => text_command(app, TextCmd::SizeUp),
         K::Comma if ctrl && m.shift => text_command(app, TextCmd::SizeDown),
-        K::Tab if !ctrl => change_list_level(app, if m.shift { -1 } else { 1 }),
+        K::Tab if !ctrl => tab(app, m.shift),
         K::Num7 if ctrl && m.shift => text_command(app, TextCmd::List(ListKind::Numbered)),
         K::Num8 if ctrl && m.shift => text_command(app, TextCmd::List(ListKind::Bullet)),
         K::Z if ctrl && !m.shift => undo_step(app, false),
@@ -659,11 +708,24 @@ fn key_event(app: &mut App, key: egui::Key, m: egui::Modifiers) -> bool {
     true
 }
 
+/// Tab: on a sticky note it starts the next one to the right; elsewhere it changes the list level.
+fn tab(app: &mut App, shift: bool) {
+    let on_sticky = app.canvas.text.as_ref().and_then(|s| app.doc.get(s.id)).is_some_and(|n| matches!(n.kind, NodeKind::Sticky(_)));
+    if on_sticky {
+        if !shift {
+            crate::board::create::tab_next(app);
+        }
+    } else {
+        change_list_level(app, if shift { -1 } else { 1 });
+    }
+}
+
 /// Screen rect of the caret (for the IME candidate window), if a session is open.
 pub fn caret_screen_rect(app: &App, origin: egui::Pos2) -> Option<ERect> {
     let sess = app.canvas.text.as_ref()?;
-    let (t, size) = props_of(app)?;
-    let (x, y, h) = tm::caret_rect_hint(&t, size, sess.caret, sess.hint_x);
+    let f = frame_of(app)?;
+    let (x, y, h) = tm::caret_rect_hint(&f.props, f.size, sess.caret, sess.hint_x);
+    let (x, y) = (x + f.origin.x, y + f.origin.y);
     let w = app.doc.world_transform(sess.id);
     let a = app.view.to_screen(origin, w.apply(v2(x, y)));
     let b = app.view.to_screen(origin, w.apply(v2(x, y + h)));

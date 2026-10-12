@@ -101,6 +101,8 @@ pub enum Interaction {
     Builder,
     /// Creating or moving a ruler guide.
     Guide(rulers::GuideDrag),
+    /// Dragging a connector out of a board node (or from empty canvas).
+    Connect(crate::board::connect::ConnectDrag),
 }
 
 pub use textsession::TextSession;
@@ -156,6 +158,10 @@ impl App {
             Interaction::Resize(r) => r.tx.cancel(&mut self.doc),
             Interaction::Rotate(r) => r.tx.cancel(&mut self.doc),
             Interaction::Draw(d) => d.tx.cancel(&mut self.doc),
+            Interaction::Connect(c) => {
+                c.tx.cancel(&mut self.doc);
+                self.board.target = None;
+            }
             Interaction::VectorDrag => {
                 if let Some(v) = self.canvas.vedit.as_mut() {
                     v.marquee = None;
@@ -203,6 +209,10 @@ pub fn show(app: &mut App, ui: &mut Ui, rect: ERect) {
             Some(z) => app.zoom_on_content(z),
             None => app.fit_all(),
         }
+    }
+    if app.is_board() {
+        // the dotted board under the (transparent) page tiles
+        crate::board::canvas::background(app, ui, rect);
     }
     tiles::paint(app, ui, rect);
     let resp = ui.interact(rect, ui.id().with("canvas"), Sense::click_and_drag());

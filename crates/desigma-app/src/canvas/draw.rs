@@ -58,6 +58,13 @@ pub fn label_rects(app: &App, rect: ERect) -> Vec<(NodeId, ERect)> {
 }
 
 fn outline(app: &App, p: &Painter, rect: ERect, id: NodeId, col: Color32, width: f32) {
+    // a connector is outlined along its line, not around its box
+    if let Some(route) = desigma_doc::connector_route(&app.doc, id) {
+        let pw = parent_world(&app.doc, id);
+        let pts: Vec<Pos2> = route.polyline().into_iter().map(|q| app.view.to_screen(rect.min, pw.apply(q))).collect();
+        p.add(egui::Shape::line(pts, Stroke::new(width + 2.0, col.gamma_multiply(0.45))));
+        return;
+    }
     let corners = world_corners(&app.doc, id).map(|c| app.view.to_screen(rect.min, c));
     let is_line = matches!(app.doc.get(id).map(|n| &n.kind), Some(NodeKind::Line));
     if is_line {
@@ -123,7 +130,8 @@ pub fn overlays(app: &App, ui: &Ui, rect: ERect) {
             let small = w.min(h) <= theme::CANVAS_HANDLE_SIZE * 3.0;
             let only_corners = small && !is_line;
             let dvs = corners.map(|c| dv(to_s(c)));
-            if app.canvas.text.is_none() && app.canvas.vedit.is_none() && matches!(app.tool, tools::Tool::Move | tools::Tool::Scale) {
+            let only_connectors = app.selection.iter().all(|id| matches!(app.doc.get(*id).map(|n| &n.kind), Some(NodeKind::Connector(_))));
+            if app.canvas.text.is_none() && app.canvas.vedit.is_none() && matches!(app.tool, tools::Tool::Move | tools::Tool::Scale) && !only_connectors {
                 for hnd in Handle::ALL {
                     if is_line && !matches!(hnd, Handle::L | Handle::R) {
                         continue;
@@ -143,7 +151,7 @@ pub fn overlays(app: &App, ui: &Ui, rect: ERect) {
             } else {
                 union_all(app.selection.iter().map(|i| world_aabb(&app.doc, *i))).map(|b| format!("{} × {}", b.w.round() as i64, b.h.round() as i64))
             };
-            if let Some(label) = label {
+            if let Some(label) = label.filter(|_| !only_connectors) {
                 let bottom = s.iter().map(|c| c.y).fold(f32::MIN, f32::max);
                 let cx = s.iter().map(|c| c.x).sum::<f32>() / 4.0;
                 badge(&p, Pos2::new(cx, bottom + theme::CANVAS_BADGE_OFFSET + 3.0), &label, col);
@@ -207,21 +215,37 @@ pub fn overlays(app: &App, ui: &Ui, rect: ERect) {
     }
     if let Interaction::Pencil(pts) = &app.canvas.inter {
         let line: Vec<Pos2> = pts.iter().map(|q| to_s(*q)).collect();
-        p.add(egui::Shape::line(line, Stroke::new(theme::PEN_LINE_WIDTH, theme::CANVAS_SELECTION)));
+        if app.tool.is_brush() {
+            // a marker stroke is previewed in its own ink and thickness
+            let (w, a) = if app.tool == tools::Tool::Highlighter {
+                (theme::BOARD_HIGHLIGHTER_WIDTH, theme::BOARD_HIGHLIGHTER_ALPHA)
+            } else {
+                (theme::BOARD_MARKER_WIDTH, 1.0)
+            };
+            let ink = crate::board::color32(app.board.ink).gamma_multiply(a);
+            p.add(egui::Shape::line(line, Stroke::new(w * app.view.zoom, ink)));
+        } else {
+            p.add(egui::Shape::line(line, Stroke::new(theme::PEN_LINE_WIDTH, theme::CANVAS_SELECTION)));
+        }
     }
+    crate::board::canvas::overlay(app, &p, rect);
 
     draw_find_matches(app, &p, rect);
 
     // Text caret.
     if let Some(sess) = &app.canvas.text {
         if let Some(n) = app.doc.get(sess.id) {
-            if let NodeKind::Text(t) = &n.kind {
+            // a text layer, or the text area of a sticky, shape or connector label
+            if let Some(f) = crate::board::create::text_frame(&app.doc, n) {
+                let (t, o) = (&f.props, f.origin);
                 let w = app.doc.world_transform(sess.id);
-                for (x, y, rw, rh) in crate::textmeasure::selection_rects(t, n.size, sess.range()) {
+                for (x, y, rw, rh) in crate::textmeasure::selection_rects(t, f.size, sess.range()) {
+                    let (x, y) = (x + o.x, y + o.y);
                     let quad = [v2(x, y), v2(x + rw, y), v2(x + rw, y + rh), v2(x, y + rh)].map(|c| to_s(w.apply(c)));
                     p.add(egui::Shape::convex_polygon(quad.to_vec(), theme::TEXT_SELECTION, Stroke::NONE));
                 }
-                let (x, y, lh) = crate::textmeasure::caret_rect_hint(t, n.size, sess.caret, sess.hint_x);
+                let (x, y, lh) = crate::textmeasure::caret_rect_hint(t, f.size, sess.caret, sess.hint_x);
+                let (x, y) = (x + o.x, y + o.y);
                 let a = to_s(w.apply(v2(x, y)));
                 let b = to_s(w.apply(v2(x, y + lh)));
                 // Tell the platform where the caret is so IME candidate windows follow it.
@@ -258,7 +282,8 @@ fn draw_find_matches(app: &App, p: &Painter, rect: ERect) {
             continue;
         }
         let Some(n) = app.doc.get(m.node) else { continue };
-        let NodeKind::Text(t) = &n.kind else { continue };
+        let Some(f) = crate::board::create::text_frame(&app.doc, n) else { continue };
+        let (t, o) = (&f.props, f.origin);
         if !n.visible || app.doc.page_of(m.node) != Some(app.page) {
             continue;
         }
@@ -270,7 +295,8 @@ fn draw_find_matches(app: &App, p: &Painter, rect: ERect) {
         }
         let w = app.doc.world_transform(m.node);
         drawn += 1;
-        for (x, y, rw, rh) in crate::textmeasure::selection_rects(t, n.size, m.range.clone()) {
+        for (x, y, rw, rh) in crate::textmeasure::selection_rects(t, f.size, m.range.clone()) {
+            let (x, y) = (x + o.x, y + o.y);
             let quad = [v2(x, y), v2(x + rw, y), v2(x + rw, y + rh), v2(x, y + rh)].map(|c| to_s(w.apply(c)));
             let is_current = current == Some(i);
             p.add(egui::Shape::convex_polygon(
