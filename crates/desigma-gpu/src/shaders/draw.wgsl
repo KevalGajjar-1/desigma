@@ -118,9 +118,65 @@ fn hsv_to_rgb(h: f32, s: f32, v: f32) -> vec3<f32> {
     }
 }
 
+// ---- analytic blurred rounded rectangle (Evan Wallace's "fast rounded rectangle shadows")
+
+fn erf2(x: vec2<f32>) -> vec2<f32> {
+    let s = sign(x);
+    let a = abs(x);
+    var y = 1.0 + (0.278393 + (0.230389 + 0.078108 * (a * a)) * a) * a;
+    y = y * y;
+    return s - s / (y * y);
+}
+
+fn gauss(x: f32, sigma: f32) -> f32 {
+    return exp(-(x * x) / (2.0 * sigma * sigma)) / (2.5066282746310002 * sigma);
+}
+
+fn shadow_x(x: f32, y: f32, sigma: f32, corner: f32, half_size: vec2<f32>) -> f32 {
+    let delta = min(half_size.y - corner - abs(y), 0.0);
+    let curved = half_size.x - corner + sqrt(max(0.0, corner * corner - delta * delta));
+    let integral = 0.5 + 0.5 * erf2((x + vec2<f32>(-curved, curved)) * (0.7071067811865476 / sigma));
+    return integral.y - integral.x;
+}
+
+fn rbox_shadow(lower: vec2<f32>, upper: vec2<f32>, pt: vec2<f32>, sigma: f32, corner: f32) -> f32 {
+    let center = (lower + upper) * 0.5;
+    let half_size = (upper - lower) * 0.5;
+    let p = pt - center;
+    let low = p.y - half_size.y;
+    let high = p.y + half_size.y;
+    let start = clamp(-3.0 * sigma, low, high);
+    let end = clamp(3.0 * sigma, low, high);
+    let step = (end - start) / 8.0;
+    var y = start + step * 0.5;
+    var value = 0.0;
+    for (var k = 0; k < 8; k = k + 1) {
+        value = value + shadow_x(p.x, p.y - y, sigma, corner, half_size) * gauss(y, sigma) * step;
+        y = y + step;
+    }
+    return value;
+}
+
+// exact-ish pixel coverage of a rounded rectangle
+fn rrect_cov(pt: vec2<f32>, lower: vec2<f32>, upper: vec2<f32>, r: f32) -> f32 {
+    let center = (lower + upper) * 0.5;
+    let half_size = (upper - lower) * 0.5;
+    let q = abs(pt - center) - (half_size - vec2<f32>(r));
+    let d = length(max(q, vec2<f32>(0.0))) + min(max(q.x, q.y), 0.0) - r;
+    return clamp(0.5 - d, 0.0, 1.0);
+}
+
 // straight-colour paint result for kinds that need no texture
 fn paint(i: VOut, frag: vec2<f32>) -> vec4<f32> {
     let kind = i.q.x;
+    if (kind == 7u) {
+        let pt = frag + g.origin;
+        var a = rbox_shadow(i.c1.xy, i.c1.zw, pt, i.t.z, i.t.w) * i.c0.a;
+        if (i.q.z != 0u) {
+            a = a * (1.0 - rrect_cov(pt, i.c2.xy, i.c2.zw, bitcast<f32>(i.q.w)));
+        }
+        return vec4<f32>(i.c0.rgb * a, a);
+    }
     if (kind == 0u) {
         return vec4<f32>(i.c0.rgb * i.c0.a, i.c0.a);
     }

@@ -91,6 +91,8 @@ pub const KIND_ANGULAR: u32 = 3;
 pub const KIND_DIAMOND: u32 = 4;
 pub const KIND_IMAGE: u32 = 5;
 pub const KIND_NOISE: u32 = 6;
+/// Analytic blurred rounded-rectangle shadow.
+pub const KIND_SHADOW: u32 = 7;
 
 /// Image sampling modes (`Instance::q[2]` for image draws).
 pub const IMG_PAD: u32 = 0;

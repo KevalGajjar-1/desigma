@@ -34,7 +34,10 @@ pub fn out_dir() -> std::path::PathBuf {
 }
 
 pub struct Cmp {
+    /// Strict: every pixel counts.
     pub report: DiffReport,
+    /// With edge pixels that look anti-aliased in either image forgiven.
+    pub report_aa: DiffReport,
     pub cpu: Pixmap,
     pub gpu: Pixmap,
 }
@@ -58,7 +61,10 @@ pub fn compare(g: &mut HeadlessGpu, name: &str, doc: &Document, page: NodeId, vp
         size.0 * size.1,
         report.ssim
     );
-    Cmp { report, cpu, gpu }
+    // the same comparison with desigma-diff's default anti-aliasing forgiveness
+    let aa = desigma_diff::compare(&a, &b, &DiffOptions { tolerance, detect_aa: true, ignore: vec![] });
+    eprintln!("{name}: {:.4}% with AA pixels forgiven ({} px)", aa.ratio * 100.0, aa.mismatched);
+    Cmp { report, report_aa: aa, cpu, gpu }
 }
 
 pub struct T {

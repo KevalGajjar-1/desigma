@@ -81,8 +81,72 @@ Document ──► compile (CPU, per frame) ──► Frame ──► execute (G
   what egui's paint callback runs, so the editor builds the `Frame` while
   painting the UI and hands it to the callback.
 
+Noise, Texture and Glass run as shaders ports of `desigma-render`'s `fx.rs`
+(the same integer hash on the absolute pixel grid, so grain and displacement
+line up with the CPU output). Solid rounded-rectangle shadows use an analytic
+shader (one quad, no layers); every other shadow is a silhouette layer, a
+separable Gaussian blur and a composite.
+
+## Fidelity
+
+`tests/fidelity.rs` renders scenes with both renderers headless and compares
+them with `desigma-diff` at tolerance 8. On an RTX 4070 (Vulkan):
+
+| scene | strict mismatch | AA pixels forgiven |
+|---|---|---|
+| `render_demo` (1560x2000) | 0.99 % | 0.14 % |
+| `render_demo` zoomed 3x and panned | 0.77 % | 0.19 % |
+| effects + blend modes (glass, noise, texture, 6 blend modes, clip, image) | 0.24 % | 0.07 % |
+| same scene with the effects forced through the CPU fallback | 0.24 % | 0.07 % |
+
+Nearly all strict mismatches are edge pixels: tiny-skia computes analytic
+coverage (a few levels per edge pixel) while the GPU path uses 4x MSAA, and
+supersampling does not close the gap (tiny-skia's own coverage is quantised
+too). Tests skip with a printed note when no adapter is available.
+
+## Performance (`cargo run --release -p desigma-gpu --example bench_gpu`)
+
+`bench_big`: 5,051 nodes, 1505x1125 viewport, RTX 4070 Laptop (Vulkan).
+"frame" includes waiting for the GPU to finish; the editor does not block on
+it. CPU numbers are the tile cache (`TileCache`, 6 ms budget, as the editor
+uses it): its pan frames show only what it manages to render inside the budget.
+
+| case | zoom | GPU compile | GPU frame | CPU tiles |
+|---|---|---|---|---|
+| pan (40 px / frame) | 0.25 | 2.8 ms | 4.7 ms | 0.17 ms (p95 7.5, tiles pending) |
+| | 1 | 0.9 ms | 1.4 ms | 2.1 ms |
+| | 4 | 0.04 ms | 0.3 ms | 0.45 ms |
+| zoom gesture (x1.03 / frame) | 0.25 | 6.8 ms | 8.2 ms | 0.00 ms, then 125 ms re-render when it settles |
+| | 1 | 0.13 ms | 0.5 ms | 0.00 ms, then 34 ms |
+| | 4 | 0.04 ms | 0.4 ms | 0.00 ms, then 29 ms |
+| drag one node | 0.25 | 3.5 ms | 5.2 ms | 8.6 ms |
+| | 1 | 0.9 ms | 1.4 ms | 5.7 ms |
+| | 4 | 0.6 ms | 1.0 ms | 1.8 ms |
+| Smart Animate frame (800x600, 100 nodes) | 1 | 10.9 ms | 12.5 ms | 44.6 ms (`render_node`) |
+
+The GPU path always shows the exact frame (nothing is stale or pending); the
+cost it pays is first-visit tessellation (0.25 zoom cold frame: 220 ms for
+~4,000 nodes, 6 ms at zoom 1) and re-flattening curves when the zoom crosses a
+power of two, which the editor spreads over frames with a 6 ms budget.
+
 ## Fallbacks
 
-Anything the GPU path does not draw is rendered by the CPU renderer into a
-texture for just that node and composited at the right place in z-order, so
-content is never dropped. See the list in the crate docs (`Fallback`).
+Anything the GPU path should not draw is rendered by the CPU renderer into a
+texture for just that node (`render_node_into`, same grid anchoring as the GPU
+effects) and composited at the right place in z-order, so content is never
+dropped. Triggered by:
+
+* `CompileOptions::force_fallback` (tests, escape hatch).
+
+Nodes that read their backdrop (background blur, glass) never fall back: the
+CPU image would not see what the GPU drew beneath them.
+
+## Known gaps
+
+* Image fills are sampled bilinearly with mipmaps; the CPU renderer uses
+  bicubic when magnifying, so magnified images differ slightly.
+* Hard-clip frames with axis-aligned rectangles use a scissor (edge pixels are
+  not anti-aliased); other clips are anti-aliased masks.
+* Present mode (including Smart Animate playback) still renders on the CPU;
+  `SceneCompiler::compile_node` is ready for it.
+* Blur radii beyond ~16 px of sigma are computed at reduced resolution.

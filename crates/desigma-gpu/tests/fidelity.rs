@@ -26,7 +26,11 @@ fn render_demo() {
     let (doc, page) = demo::demo_scene();
     let vp = Viewport { offset: Vec2::ZERO, zoom: 1.0, dpr: 2.0 };
     let c = compare(&mut g, "render_demo", &doc, page, vp, (1560, 2000), 8);
-    assert!(c.report.ratio < 0.01, "mismatch {:.3}%", c.report.ratio * 100.0);
+    // target: under 1% at tolerance 8 (strict: every edge pixel counts). The bounds are
+    // a little looser than what the reference machine measures, since MSAA sample
+    // patterns differ between GPUs.
+    assert!(c.report.ratio < 0.02, "strict mismatch {:.3}%", c.report.ratio * 100.0);
+    assert!(c.report_aa.ratio < 0.005, "mismatch with AA forgiven {:.3}%", c.report_aa.ratio * 100.0);
 }
 
 #[test]
@@ -104,4 +108,21 @@ fn cpu_fallback_matches_cpu() {
     let stats = g.compile(&doc, page, 1, &Viewport { offset: Vec2::ZERO, zoom: 1.0, dpr: 2.0 }, (600, 420)).stats();
     assert!(stats.fallback_layers >= 2, "{stats:?}");
     assert!(c.report.ratio < 0.02, "mismatch {:.3}%", c.report.ratio * 100.0);
+}
+
+#[test]
+fn extreme_effects_render() {
+    let Some(mut g) = gpu() else { return };
+    let mut t = T::new();
+    t.rect(None, Rect::new(0.0, 0.0, 200.0, 200.0), Color::rgb(0x20, 0x60, 0xC0));
+    let a = t.rect(None, Rect::new(40.0, 40.0, 80.0, 80.0), Color::rgb(0xF0, 0x40, 0x20));
+    t.node(a).effects = vec![
+        Effect::LayerBlur { radius: 400.0, visible: true },
+        Effect::DropShadow { color: Color::BLACK, offset: Vec2::new(30.0, 30.0), radius: 300.0, spread: 20.0, visible: true, show_behind: true },
+    ];
+    let b = t.rect(None, Rect::new(100.0, 100.0, 90.0, 90.0), Color::rgba(255, 255, 255, 80));
+    t.node(b).effects = vec![Effect::BackgroundBlur { radius: 250.0, visible: true }];
+    let c = compare(&mut g, "extreme", &t.doc, t.page, Viewport { offset: Vec2::ZERO, zoom: 2.0, dpr: 1.0 }, (400, 400), 8);
+    // huge blurs are approximated at reduced resolution; the image must still be close
+    assert!(c.report.ssim > 0.9, "{:?}", c.report);
 }

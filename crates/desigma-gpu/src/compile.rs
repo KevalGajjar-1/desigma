@@ -67,6 +67,7 @@ impl SceneCompiler {
 
     fn compile_with(&mut self, doc: &Document, root_node: NodeId, rev: u64, logical_ts: sk::Transform, size: (u32, u32), single: bool) -> Frame {
         self.geom.trim(rev);
+        self.geom.begin_frame();
         let unit = self.unit_rect.get_or_insert_with(|| Arc::new(Mesh::rect(0.0, 0.0, 1.0, 1.0))).clone();
         let ss = self.opts.supersample.clamp(1, 4);
         let clampi = |v: f32| if v.is_finite() { v.clamp(-1.0e9, 1.0e9) as i32 } else { 0 };
@@ -205,7 +206,13 @@ impl Ctx<'_> {
         self.progs[c].ops.push(op);
     }
 
-    fn new_prog(&mut self, rect: IRect) -> ProgId {
+    fn new_prog(&mut self, mut rect: IRect) -> ProgId {
+        // never ask for a texture bigger than the device allows (extreme blur radii)
+        let max = self.opts.max_texture as i32;
+        if max > 0 {
+            rect.x1 = rect.x1.min(rect.x0 + max);
+            rect.y1 = rect.y1.min(rect.y0 + max);
+        }
         self.progs.push(Program::new(rect));
         (self.progs.len() - 1) as ProgId
     }
@@ -749,6 +756,70 @@ impl Ctx<'_> {
 
     // ----- effects ----------------------------------------------------------------
 
+    /// The shadow of a plain solid rounded rectangle, drawn analytically in one
+    /// quad (the GPU counterpart of the CPU renderer's nine-patch fast path).
+    #[allow(clippy::too_many_arguments)]
+    fn drop_shadow_analytic(
+        &mut self,
+        n: &Node,
+        g: &Rc<NodeGeom>,
+        ts: sk::Transform,
+        clip: ClipId,
+        scale: f32,
+        color: &d::Color,
+        offset: Vec2,
+        radius: f32,
+        spread: f32,
+        show_behind: bool,
+        alpha: f32,
+    ) -> bool {
+        let Some(sh) = &g.shape else { return false };
+        if !sh.is_rect
+            || !sh.fillable
+            || n.fill_geometry.is_some()
+            || !visible_strokes(n).is_empty()
+            || !identity_like(&ts)
+            || (ts.sx - ts.sy).abs() > 1e-4 * ts.sx
+        {
+            return false;
+        }
+        let fills = visible_fills(n);
+        let [fill] = fills[..] else { return false };
+        let d::PaintKind::Solid(c) = &fill.kind else { return false };
+        let radii = if matches!(n.kind, NodeKind::Section) { [0.0; 4] } else { n.corner_radii };
+        if radii.iter().any(|r| (r - radii[0]).abs() > 1e-4) || (radii[0] > 0.0 && n.corner_smoothing > 0.0) {
+            return false;
+        }
+        let sigma = radius.max(0.0) * scale / 2.0;
+        if sigma < 0.3 || (spread != 0.0 && sigma < 8.0) || n.size.x <= 0.0 || n.size.y <= 0.0 {
+            return false;
+        }
+        let rl = radii[0].max(0.0).min(n.size.x.min(n.size.y) / 2.0);
+        let sp = spread * scale;
+        let (x0, y0) = (ts.tx, ts.ty);
+        let (x1, y1) = (ts.tx + n.size.x * ts.sx, ts.ty + n.size.y * ts.sy);
+        let (ox, oy) = (offset.x * scale, offset.y * scale);
+        let (a, b, cc, dd) = (x0 + ox - sp, y0 + oy - sp, x1 + ox + sp, y1 + oy + sp);
+        let r = if rl > 0.0 { (rl * scale + sp).max(0.0) } else { 0.0 }.min((cc - a) / 2.0).min((dd - b) / 2.0);
+        let margin = 3.0 * sigma + 2.0;
+        let quad = IRect::outward((a - margin, b - margin, cc + margin, dd + margin)).intersect(self.visible(clip));
+        if quad.is_empty() {
+            return true;
+        }
+        let fill_alpha = (c.a * fill.opacity).clamp(0.0, 1.0);
+        let col_a = (color.a * alpha).clamp(0.0, 1.0) * fill_alpha;
+        let inst = Instance {
+            t: [0.0, 0.0, sigma, r],
+            c0: [color.r.clamp(0.0, 1.0), color.g.clamp(0.0, 1.0), color.b.clamp(0.0, 1.0), col_a],
+            c1: [a, b, cc, dd],
+            c2: [x0, y0, x1, y1],
+            q: [KIND_SHADOW, 0, (!show_behind) as u32, (rl * scale).to_bits()],
+            ..Default::default()
+        };
+        self.draw_quad(quad, PaintInst { inst, ramp: None, image: None }, DrawBlend::Over, clip);
+        true
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn drop_shadow(
         &mut self,
@@ -765,6 +836,9 @@ impl Ctx<'_> {
         show_behind: bool,
         alpha: f32,
     ) {
+        if self.drop_shadow_analytic(n, g, ts, clip, scale, color, offset, radius, spread, show_behind, alpha) {
+            return;
+        }
         let sigma = radius.max(0.0) * scale / 2.0;
         let (ox, oy) = (offset.x * scale, offset.y * scale);
         let margin = 3.0 * sigma + ox.abs() + oy.abs() + (spread * scale).max(0.0) + 2.0;

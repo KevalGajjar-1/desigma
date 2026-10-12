@@ -20,6 +20,7 @@ pub struct GpuView {
     pub pref: bool,
     /// The device and renderer initialised.
     pub available: bool,
+    max_texture: u32,
     compiler: SceneCompiler,
     /// Milliseconds the last frame took to compile (CPU side).
     pub last_compile_ms: f32,
@@ -28,7 +29,10 @@ pub struct GpuView {
 
 impl Default for GpuView {
     fn default() -> Self {
-        Self { pref: true, available: false, compiler: SceneCompiler::new(), last_compile_ms: 0.0, last_stats: None }
+        let mut compiler = SceneCompiler::new();
+        // re-flattening curves for a new zoom level may take at most this long per frame
+        compiler.geom.budget = Some(std::time::Duration::from_millis(6));
+        Self { pref: true, available: false, max_texture: 0, compiler, last_compile_ms: 0.0, last_stats: None }
     }
 }
 
@@ -41,6 +45,12 @@ impl GpuView {
     /// Forgets cached geometry (the document was replaced).
     pub fn reset(&mut self) {
         self.compiler.geom.clear();
+    }
+
+    /// Largest texture edge the device supports.
+    pub fn set_max_texture(&mut self, max: u32) {
+        self.compiler.opts.max_texture = max;
+        self.max_texture = max;
     }
 }
 
@@ -91,15 +101,16 @@ impl App {
 
 /// Creates the GPU renderer on eframe's device. Returns false (and the app keeps
 /// using the CPU tiles) when that is not possible.
-pub fn init(rs: &egui_wgpu::RenderState) -> bool {
+pub fn init(rs: &egui_wgpu::RenderState) -> Option<u32> {
     match Canvas::new(&rs.device, &rs.queue, rs.target_format, 1) {
         Ok(c) => {
+            let max = c.max_texture_dimension();
             rs.renderer.write().callback_resources.insert(c);
-            true
+            Some(max)
         }
         Err(e) => {
             eprintln!("desigma: GPU rendering unavailable, using the CPU renderer ({e})");
-            false
+            None
         }
     }
 }
@@ -111,7 +122,7 @@ pub fn paint(app: &mut App, ui: &Ui, rect: ERect) -> bool {
     }
     let ppp = ui.ctx().pixels_per_point();
     let size = ((rect.width() * ppp).round().max(1.0) as u32, (rect.height() * ppp).round().max(1.0) as u32);
-    if size.0 > 8192 || size.1 > 8192 {
+    if size.0 > app.canvas.gpu.max_texture.max(1) || size.1 > app.canvas.gpu.max_texture.max(1) {
         return false;
     }
     let rev = super::tiles::take_rev(app);
@@ -122,6 +133,10 @@ pub fn paint(app: &mut App, ui: &Ui, rect: ERect) -> bool {
     let frame = g.compiler.compile(doc, page, rev, &vp, size);
     g.last_stats = Some(frame.stats());
     g.last_compile_ms = start.elapsed().as_secs_f32() * 1000.0;
+    if g.compiler.geom.stale_hits > 0 {
+        // some meshes still have the previous zoom's flattening: refine next frame
+        ui.ctx().request_repaint();
+    }
     ui.painter().with_clip_rect(rect).add(egui_wgpu::Callback::new_paint_callback(rect, Cb { frame: Arc::new(frame) }));
     app.canvas.last_render_ms = start.elapsed().as_secs_f32() * 1000.0;
     true

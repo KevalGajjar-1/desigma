@@ -41,7 +41,10 @@ impl Shell {
         let (gpu_flag, library) = (opts.gpu, opts.library.clone());
         let mut shell = Self::build(&cc.egui_ctx, opts);
         if let Some(rs) = &cc.wgpu_render_state {
-            shell.app.canvas.gpu.available = canvas::gpu::init(rs);
+            if let Some(max) = canvas::gpu::init(rs) {
+                shell.app.canvas.gpu.available = true;
+                shell.app.canvas.gpu.set_max_texture(max);
+            }
         }
         // GPU canvas on by default; screenshots stay on the deterministic CPU path unless --gpu
         let saved = library.as_deref().and_then(|l| crate::comments::settings::load_flag(l, "use_gpu"));

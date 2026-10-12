@@ -216,6 +216,13 @@ pub struct GeomCache {
     /// Statistics: geometry builds since creation.
     pub builds: u64,
     last_trim: u64,
+    /// Time one frame may spend re-flattening geometry for a new zoom bucket;
+    /// past it, nodes keep their previous (coarser or finer) meshes until the
+    /// next frame. `None`: unlimited.
+    pub budget: Option<std::time::Duration>,
+    frame_start: Option<std::time::Instant>,
+    /// Nodes that kept stale-bucket geometry in the current frame.
+    pub stale_hits: u32,
 }
 
 /// Zoom bucket for a device scale: the power of two at or above it.
@@ -237,6 +244,19 @@ impl GeomCache {
         self.entries.clear();
     }
 
+    /// Starts a frame: resets the re-tessellation budget.
+    pub fn begin_frame(&mut self) {
+        self.frame_start = Some(std::time::Instant::now());
+        self.stale_hits = 0;
+    }
+
+    fn over_budget(&self) -> bool {
+        match (self.budget, self.frame_start) {
+            (Some(b), Some(s)) => s.elapsed() > b,
+            _ => false,
+        }
+    }
+
     pub fn len(&self) -> usize {
         self.entries.len()
     }
@@ -249,13 +269,26 @@ impl GeomCache {
     /// `rev` is the document revision: unchanged entries are not re-checked
     /// within the same revision.
     pub fn get(&mut self, doc: &Document, n: &Node, bucket: i32, rev: u64) -> Rc<NodeGeom> {
+        let over = self.over_budget();
         if let Some(e) = self.entries.get_mut(&n.id) {
             if e.bucket == bucket && e.rev == rev {
                 return e.geom.clone();
             }
-            if e.bucket == bucket && e.src.same(doc, n, false) {
-                e.rev = rev;
+            if e.bucket != bucket && e.rev == rev && over {
+                // same document state, only the zoom bucket moved: reuse until budget allows
+                self.stale_hits += 1;
                 return e.geom.clone();
+            }
+            if e.src.same(doc, n, false) {
+                if e.bucket == bucket {
+                    e.rev = rev;
+                    return e.geom.clone();
+                }
+                if over {
+                    e.rev = rev;
+                    self.stale_hits += 1;
+                    return e.geom.clone();
+                }
             }
         }
         self.builds += 1;
