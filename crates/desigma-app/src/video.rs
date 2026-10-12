@@ -70,18 +70,22 @@ pub struct VideoInfo {
     pub width: u32,
     pub height: u32,
     pub duration: f64,
+    /// This build has a decoder for the video (and the file carries what it needs).
+    pub decodable: bool,
 }
 
 impl VideoInfo {
     /// Whether this build can play the video.
     pub fn playable(&self) -> bool {
-        self.container == VideoContainer::Mp4 && self.codec == Codec::MotionJpeg
+        self.decodable
     }
 
     /// Why the video does not play, for the badge.
     pub fn unsupported_reason(&self) -> Option<String> {
-        if self.playable() {
+        if self.decodable {
             None
+        } else if self.codec == Codec::H264 && self.container == VideoContainer::Mp4 && !cfg!(feature = "video") {
+            Some("Unsupported codec: H.264 (needs the video feature)".into())
         } else {
             Some(format!("Unsupported codec: {}", self.codec.name()))
         }
@@ -103,6 +107,35 @@ struct Track {
     height: u32,
     timescale: u32,
     samples: Vec<Sample>,
+    /// Sample numbers (0-based) a decoder can start at; empty means every sample. Only inter-frame
+    /// codecs (H.264, behind the `video` feature) need it.
+    #[cfg_attr(not(feature = "video"), allow(dead_code))]
+    sync: Vec<usize>,
+    /// The `avcC` configuration record of an H.264 track.
+    avcc: Option<Vec<u8>>,
+}
+
+impl Track {
+    /// Whether this build can decode the track.
+    fn decodable(&self) -> bool {
+        match self.codec {
+            Codec::MotionJpeg => true,
+            Codec::H264 => cfg!(feature = "video") && self.avcc.is_some(),
+            _ => false,
+        }
+    }
+
+    fn duration(&self) -> f64 {
+        let last = self.samples.last().map(|s| s.start).unwrap_or(0);
+        let per = if self.samples.len() > 1 { last / (self.samples.len() as u64 - 1) } else { 0 };
+        (last + per) as f64 / self.timescale as f64
+    }
+
+    /// Index of the sample shown at `t` seconds.
+    fn sample_at(&self, t: f64) -> usize {
+        let ticks = (t.max(0.0) * self.timescale as f64) as u64;
+        self.samples.partition_point(|s| s.start <= ticks).saturating_sub(1)
+    }
 }
 
 fn be32(b: &[u8], at: usize) -> Option<u32> {
@@ -165,6 +198,17 @@ fn video_track(file: &[u8]) -> Option<Track> {
         let fourcc = entry.get(4..8)?;
         let codec = Codec::from_fourcc(fourcc);
         let (width, height) = (be16(entry, 32)? as u32, be16(entry, 34)? as u32);
+        // A visual sample entry is 86 bytes (box header and fixed fields), then child boxes such as avcC.
+        let entry_len = (be32(entry, 0)? as usize).min(entry.len());
+        let avcc = entry.get(86..entry_len).and_then(|kids| child(kids, b"avcC")).map(|b| b.to_vec());
+        // stss: sync samples (1-based); absent means all are
+        let sync: Vec<usize> = match child(stbl, b"stss") {
+            Some(s) => {
+                let n = (be32(s, 4)? as usize).min(1 << 22);
+                (0..n).filter_map(|i| be32(s, 8 + i * 4)).map(|v| (v as usize).saturating_sub(1)).collect()
+            }
+            None => Vec::new(),
+        };
         // stts: durations
         let stts = child(stbl, b"stts")?;
         let n = be32(stts, 4)? as usize;
@@ -218,7 +262,7 @@ fn video_track(file: &[u8]) -> Option<Track> {
         if samples.is_empty() || timescale == 0 {
             return None;
         }
-        return Some(Track { codec, width, height, timescale, samples });
+        return Some(Track { codec, width, height, timescale, samples, sync, avcc });
     }
     None
 }
@@ -232,13 +276,19 @@ pub fn probe(bytes: &[u8]) -> Option<VideoInfo> {
                 Some(t) => t,
                 // an MP4 whose tables we cannot read (fragmented, moov at the end beyond the buffer...)
                 None => {
-                    return Some(VideoInfo { container: VideoContainer::Mp4, codec: Codec::Other("unreadable".into()), width: 0, height: 0, duration: 0.0 })
+                    return Some(VideoInfo {
+                        container: VideoContainer::Mp4,
+                        codec: Codec::Other("unreadable".into()),
+                        width: 0,
+                        height: 0,
+                        duration: 0.0,
+                        decodable: false,
+                    })
                 }
             };
-            let last = t.samples.last().map(|s| s.start).unwrap_or(0);
-            let per = if t.samples.len() > 1 { last / (t.samples.len() as u64 - 1) } else { 0 };
-            let duration = (last + per) as f64 / t.timescale as f64;
-            Some(VideoInfo { container: VideoContainer::Mp4, codec: t.codec, width: t.width, height: t.height, duration })
+            let decodable = t.decodable();
+            let duration = t.duration();
+            Some(VideoInfo { container: VideoContainer::Mp4, codec: t.codec, width: t.width, height: t.height, duration, decodable })
         }
         VideoContainer::WebM => {
             // Matroska names the codec in the Tracks header near the start of the file.
@@ -257,7 +307,7 @@ pub fn probe(bytes: &[u8]) -> Option<VideoInfo> {
             } else {
                 Codec::Other("unknown".into())
             };
-            Some(VideoInfo { container: VideoContainer::WebM, codec, width: 0, height: 0, duration: 0.0 })
+            Some(VideoInfo { container: VideoContainer::WebM, codec, width: 0, height: 0, duration: 0.0, decodable: false })
         }
     }
 }
@@ -265,6 +315,7 @@ pub fn probe(bytes: &[u8]) -> Option<VideoInfo> {
 // ------------------------------------------------------------------- decoding
 
 /// A decoded frame: straight RGBA.
+#[derive(Clone)]
 pub struct Frame {
     pub index: usize,
     pub width: u32,
@@ -286,15 +337,11 @@ struct MotionJpeg {
 
 impl VideoSource for MotionJpeg {
     fn duration(&self) -> f64 {
-        let s = &self.track.samples;
-        let last = s.last().map(|x| x.start).unwrap_or(0);
-        let per = if s.len() > 1 { last / (s.len() as u64 - 1) } else { 0 };
-        (last + per) as f64 / self.track.timescale as f64
+        self.track.duration()
     }
 
     fn frame_at(&mut self, t: f64) -> Result<Frame, String> {
-        let ticks = (t.max(0.0) * self.track.timescale as f64) as u64;
-        let i = self.track.samples.partition_point(|s| s.start <= ticks).saturating_sub(1);
+        let i = self.track.sample_at(t);
         let s = &self.track.samples[i];
         let (a, b) = (s.offset as usize, s.offset as usize + s.size as usize);
         let bytes = self.data.get(a..b).ok_or("Video sample is outside the file")?;
@@ -310,7 +357,165 @@ pub fn open(data: Arc<Vec<u8>>) -> Result<(VideoInfo, Box<dyn VideoSource>), Str
         return Err(r);
     }
     let track = video_track(&data).ok_or("Unsupported codec: unreadable")?;
-    Ok((info, Box::new(MotionJpeg { data, track })))
+    match track.codec {
+        Codec::MotionJpeg => Ok((info, Box::new(MotionJpeg { data, track }))),
+        #[cfg(feature = "video")]
+        Codec::H264 => {
+            let src = h264::H264::new(data, track)?;
+            Ok((info, Box::new(src)))
+        }
+        _ => Err(info.unsupported_reason().unwrap_or_else(|| "Unsupported codec".into())),
+    }
+}
+
+/// H.264 through Cisco's OpenH264 (the `video` feature).
+#[cfg(feature = "video")]
+mod h264 {
+    use super::{Frame, Track, VideoSource};
+    use openh264::decoder::Decoder;
+    use openh264::formats::YUVSource;
+    use std::sync::Arc;
+
+    pub struct H264 {
+        data: Arc<Vec<u8>>,
+        track: Track,
+        decoder: Decoder,
+        /// SPS and PPS as Annex B, sent before every keyframe.
+        params: Vec<u8>,
+        /// Bytes of the NAL length prefix (1..=4).
+        nal_len: usize,
+        /// The next sample the decoder expects.
+        next: usize,
+        last: Option<Frame>,
+    }
+
+    /// `avcC` -> (SPS+PPS in Annex B, NAL length size).
+    pub fn parse_avcc(avcc: &[u8]) -> Option<(Vec<u8>, usize)> {
+        let nal_len = (*avcc.get(4)? & 3) as usize + 1;
+        let mut p = 5;
+        let mut out = Vec::new();
+        let n_sps = (*avcc.get(p)? & 0x1F) as usize;
+        p += 1;
+        for _ in 0..n_sps {
+            let len = u16::from_be_bytes([*avcc.get(p)?, *avcc.get(p + 1)?]) as usize;
+            out.extend_from_slice(&[0, 0, 0, 1]);
+            out.extend_from_slice(avcc.get(p + 2..p + 2 + len)?);
+            p += 2 + len;
+        }
+        let n_pps = *avcc.get(p)? as usize;
+        p += 1;
+        for _ in 0..n_pps {
+            let len = u16::from_be_bytes([*avcc.get(p)?, *avcc.get(p + 1)?]) as usize;
+            out.extend_from_slice(&[0, 0, 0, 1]);
+            out.extend_from_slice(avcc.get(p + 2..p + 2 + len)?);
+            p += 2 + len;
+        }
+        Some((out, nal_len))
+    }
+
+    /// Length-prefixed NAL units -> Annex B (start codes).
+    pub fn to_annex_b(sample: &[u8], nal_len: usize, out: &mut Vec<u8>) -> bool {
+        let mut p = 0;
+        while p + nal_len <= sample.len() {
+            let len = sample[p..p + nal_len].iter().fold(0usize, |a, b| (a << 8) | *b as usize);
+            p += nal_len;
+            let Some(nal) = sample.get(p..p + len) else { return false };
+            out.extend_from_slice(&[0, 0, 0, 1]);
+            out.extend_from_slice(nal);
+            p += len;
+        }
+        true
+    }
+
+    impl H264 {
+        pub fn new(data: Arc<Vec<u8>>, track: Track) -> Result<Self, String> {
+            let (params, nal_len) = track.avcc.as_deref().and_then(parse_avcc).ok_or("Unsupported codec: H.264 (bad avcC)")?;
+            let decoder = Decoder::new().map_err(|e| format!("H.264 decoder: {e}"))?;
+            Ok(H264 { data, track, decoder, params, nal_len, next: 0, last: None })
+        }
+
+        /// The sample to restart decoding from: the last keyframe at or before `i`.
+        fn keyframe_before(&self, i: usize) -> usize {
+            if self.track.sync.is_empty() {
+                return i;
+            }
+            let at = self.track.sync.partition_point(|s| *s <= i);
+            if at == 0 {
+                0
+            } else {
+                self.track.sync[at - 1]
+            }
+        }
+
+        fn is_sync(&self, i: usize) -> bool {
+            self.track.sync.is_empty() || self.track.sync.binary_search(&i).is_ok() || i == 0
+        }
+
+        /// Feeds sample `i` to the decoder; the frame it produced, if any.
+        fn feed(&mut self, i: usize) -> Result<Option<Frame>, String> {
+            let s = &self.track.samples[i];
+            let (a, b) = (s.offset as usize, s.offset as usize + s.size as usize);
+            let bytes = self.data.get(a..b).ok_or("Video sample is outside the file")?;
+            let mut packet = Vec::with_capacity(bytes.len() + self.params.len() + 16);
+            if self.is_sync(i) {
+                packet.extend_from_slice(&self.params);
+            }
+            if !to_annex_b(bytes, self.nal_len, &mut packet) {
+                return Err("Corrupt H.264 sample".into());
+            }
+            let decoded = self.decoder.decode(&packet).map_err(|e| format!("Cannot decode frame: {e}"))?;
+            let Some(yuv) = decoded else { return Ok(None) };
+            let (w, h) = yuv.dimensions();
+            let mut rgba = vec![255u8; w * h * 4];
+            yuv.write_rgba8(&mut rgba);
+            Ok(Some(Frame { index: i, width: w as u32, height: h as u32, rgba }))
+        }
+    }
+
+    impl VideoSource for H264 {
+        fn duration(&self) -> f64 {
+            self.track.duration()
+        }
+
+        fn frame_at(&mut self, t: f64) -> Result<Frame, String> {
+            let target = self.track.sample_at(t);
+            if let Some(f) = self.last.as_ref().filter(|f| f.index == target) {
+                return Ok(f.clone());
+            }
+            // continue from where the decoder is, unless that is behind the last keyframe before the
+            // target (jumping to it decodes less) or ahead of the target (seeking back)
+            let key = self.keyframe_before(target);
+            let start = if self.last.is_some() && self.next > 0 && self.next <= target && self.next >= key {
+                self.next
+            } else {
+                if let Ok(d) = Decoder::new() {
+                    self.decoder = d;
+                }
+                key
+            };
+            let mut shown = None;
+            for i in start..=target {
+                if let Some(f) = self.feed(i)? {
+                    shown = Some(f);
+                }
+                self.next = i + 1;
+            }
+            // a decoder with delay may hold the last frame back: show the newest one it gave us
+            let frame = match shown {
+                Some(mut f) => {
+                    f.index = target;
+                    f
+                }
+                None => {
+                    let mut f = self.last.clone().ok_or("The decoder produced no frame yet")?;
+                    f.index = target;
+                    f
+                }
+            };
+            self.last = Some(frame.clone());
+            Ok(frame)
+        }
+    }
 }
 
 /// PNG bytes of an RGBA frame (fast compression: it is encoded every frame while playing).
@@ -430,6 +635,13 @@ impl VideoRuntime {
 /// Builds a minimal MP4 with one Motion JPEG track (used by tests and fixtures).
 #[cfg(test)]
 pub fn build_mjpeg_mp4(frames: &[Vec<u8>], width: u16, height: u16, fps: u32) -> Vec<u8> {
+    build_mp4(b"jpeg", &[], frames, None, width, height, fps)
+}
+
+/// Builds a minimal MP4 with one video track: sample entry `fourcc` followed by `entry_kids`
+/// (child boxes such as `avcC`), one sample per frame, optional sync sample list (1-based).
+#[cfg(test)]
+pub fn build_mp4(fourcc: &[u8; 4], entry_kids: &[u8], frames: &[Vec<u8>], sync: Option<&[u32]>, width: u16, height: u16, fps: u32) -> Vec<u8> {
     fn bx(ty: &[u8; 4], payload: &[u8]) -> Vec<u8> {
         let mut v = ((payload.len() + 8) as u32).to_be_bytes().to_vec();
         v.extend_from_slice(ty);
@@ -446,18 +658,22 @@ pub fn build_mjpeg_mp4(frames: &[Vec<u8>], width: u16, height: u16, fps: u32) ->
     hdlr.extend_from_slice(&[0; 13]);
     let mut mdhd = vec![0; 4];
     mdhd.extend([u32b(0), u32b(0), u32b(fps), u32b(frames.len() as u32), vec![0, 0, 0, 0]].concat());
-    let mut entry = vec![0u8; 78];
-    entry[4..8].copy_from_slice(b"jpeg");
+    // a visual sample entry: 86 bytes of box header and fixed fields, then child boxes
+    let mut entry = vec![0u8; 86];
+    entry[4..8].copy_from_slice(fourcc);
     entry[32..34].copy_from_slice(&width.to_be_bytes());
     entry[34..36].copy_from_slice(&height.to_be_bytes());
-    entry[0..4].copy_from_slice(&78u32.to_be_bytes());
+    entry.extend_from_slice(entry_kids);
+    let len = entry.len() as u32;
+    entry[0..4].copy_from_slice(&len.to_be_bytes());
     let stsd = bx(b"stsd", &[vec![0; 4], u32b(1), entry].concat());
     let stts = bx(b"stts", &[vec![0; 4], u32b(1), u32b(frames.len() as u32), u32b(1)].concat());
     let stsc = bx(b"stsc", &[vec![0; 4], u32b(1), u32b(1), u32b(frames.len() as u32), u32b(1)].concat());
     let sizes: Vec<u8> = frames.iter().flat_map(|f| u32b(f.len() as u32)).collect();
     let stsz = bx(b"stsz", &[vec![0; 4], u32b(0), u32b(frames.len() as u32), sizes].concat());
     let stco = bx(b"stco", &[vec![0; 4], u32b(1), u32b(mdat_start as u32)].concat());
-    let stbl = bx(b"stbl", &[stsd, stts, stsc, stsz, stco].concat());
+    let stss = sync.map(|s| bx(b"stss", &[vec![0; 4], u32b(s.len() as u32), s.iter().flat_map(|v| u32b(*v)).collect()].concat())).unwrap_or_default();
+    let stbl = bx(b"stbl", &[stsd, stts, stsc, stsz, stco, stss].concat());
     let minf = bx(b"minf", &stbl);
     let mdia = bx(b"mdia", &[bx(b"mdhd", &mdhd), bx(b"hdlr", &hdlr), minf].concat());
     let moov = bx(b"moov", &bx(b"trak", &mdia));
@@ -513,7 +729,7 @@ mod tests {
         mp4[at..at + 4].copy_from_slice(b"avc1");
         let info = probe(&mp4).unwrap();
         assert_eq!(info.codec, Codec::H264);
-        assert_eq!(info.unsupported_reason().as_deref(), Some("Unsupported codec: H.264"));
+        assert!(info.unsupported_reason().unwrap().starts_with("Unsupported codec: H.264"));
         assert!(open(Arc::new(mp4)).err().unwrap().contains("H.264"));
         // WebM: codec id found in the header
         let mut webm = vec![0x1A, 0x45, 0xDF, 0xA3, 0x80];
@@ -655,6 +871,135 @@ mod tests {
         let mut rt = VideoRuntime::default();
         rt.update(&mut p, 0.0);
         assert_eq!(rt.unsupported_nodes(), vec![(clip_node, "Video file is missing".to_string())]);
+    }
+
+    /// Splits an Annex B stream into NAL units (start codes removed).
+    #[cfg(feature = "video")]
+    fn split_annex_b(s: &[u8]) -> Vec<&[u8]> {
+        let mut starts = Vec::new();
+        let mut i = 0;
+        while i + 3 <= s.len() {
+            if s[i..i + 3] == [0, 0, 1] {
+                starts.push(i + 3);
+                i += 3;
+            } else {
+                i += 1;
+            }
+        }
+        let mut out = Vec::new();
+        for (k, a) in starts.iter().enumerate() {
+            let mut b = starts.get(k + 1).map(|n| n - 3).unwrap_or(s.len());
+            while b > *a && s[b - 1] == 0 {
+                b -= 1;
+            }
+            out.push(&s[*a..b]);
+        }
+        out
+    }
+
+    /// Encodes solid-colour frames with OpenH264 and wraps them in an MP4 (avc1 + avcC + stss).
+    #[cfg(feature = "video")]
+    fn h264_clip(colors: &[(u8, u8, u8)]) -> Vec<u8> {
+        use openh264::encoder::Encoder;
+        use openh264::formats::{RgbSliceU8, YUVBuffer};
+        let (w, h) = (64usize, 64usize);
+        let mut enc = Encoder::new().unwrap();
+        let (mut sps, mut pps) = (Vec::new(), Vec::new());
+        let (mut samples, mut sync) = (Vec::new(), Vec::new());
+        for (n, c) in colors.iter().enumerate() {
+            let rgb: Vec<u8> = (0..w * h).flat_map(|_| [c.0, c.1, c.2]).collect();
+            let yuv = YUVBuffer::from_rgb8_source(RgbSliceU8::new(&rgb, (w, h)));
+            let stream = enc.encode(&yuv).unwrap().to_vec();
+            let mut sample = Vec::new();
+            let mut is_idr = false;
+            for nal in split_annex_b(&stream) {
+                match nal[0] & 0x1F {
+                    7 => sps = nal.to_vec(),
+                    8 => pps = nal.to_vec(),
+                    t => {
+                        is_idr |= t == 5;
+                        sample.extend_from_slice(&(nal.len() as u32).to_be_bytes());
+                        sample.extend_from_slice(nal);
+                    }
+                }
+            }
+            if is_idr {
+                sync.push(n as u32 + 1);
+            }
+            samples.push(sample);
+        }
+        assert!(!sps.is_empty() && !pps.is_empty() && !sync.is_empty());
+        let mut avcc = vec![1, sps[1], sps[2], sps[3], 0xFF, 0xE1];
+        avcc.extend_from_slice(&(sps.len() as u16).to_be_bytes());
+        avcc.extend_from_slice(&sps);
+        avcc.push(1);
+        avcc.extend_from_slice(&(pps.len() as u16).to_be_bytes());
+        avcc.extend_from_slice(&pps);
+        let mut avcc_box = ((avcc.len() + 8) as u32).to_be_bytes().to_vec();
+        avcc_box.extend_from_slice(b"avcC");
+        avcc_box.extend_from_slice(&avcc);
+        build_mp4(b"avc1", &avcc_box, &samples, Some(&sync), w as u16, h as u16, 2)
+    }
+
+    #[cfg(feature = "video")]
+    #[test]
+    fn h264_plays_through_openh264() {
+        let mp4 = h264_clip(&[(230, 20, 20), (20, 230, 20), (20, 20, 230)]);
+        let info = probe(&mp4).unwrap();
+        assert_eq!((info.codec.clone(), info.decodable), (Codec::H264, true));
+        assert_eq!((info.width, info.height), (64, 64));
+        assert!(info.unsupported_reason().is_none());
+        let (_, mut src) = open(Arc::new(mp4.clone())).unwrap();
+        let dominant = |f: &Frame| {
+            let p = &f.rgba[(32 * 64 + 32) * 4..(32 * 64 + 32) * 4 + 3];
+            (p[0] > 150, p[1] > 150, p[2] > 150)
+        };
+        assert_eq!(dominant(&src.frame_at(0.0).unwrap()), (true, false, false));
+        assert_eq!(dominant(&src.frame_at(0.6).unwrap()), (false, true, false));
+        assert_eq!(dominant(&src.frame_at(1.2).unwrap()), (false, false, true));
+        // seeking back restarts at a keyframe
+        let f = src.frame_at(0.0).unwrap();
+        assert_eq!((f.index, dominant(&f)), (0, (true, false, false)));
+        assert!((src.duration() - 1.5).abs() < 1e-6);
+        // the poster is the first frame
+        let (png, w, h) = poster_png(&mp4).unwrap();
+        assert_eq!((w, h), (64, 64));
+        assert!(image::load_from_memory(&png).unwrap().to_rgba8().get_pixel(32, 32)[0] > 150);
+    }
+
+    #[cfg(feature = "video")]
+    #[test]
+    fn h264_without_its_configuration_is_reported_not_played() {
+        let mut mp4 = h264_clip(&[(230, 20, 20)]);
+        let at = mp4.windows(4).position(|w| w == b"avcC").unwrap();
+        mp4[at..at + 4].copy_from_slice(b"free");
+        let info = probe(&mp4).unwrap();
+        assert!(!info.decodable);
+        assert!(open(Arc::new(mp4)).is_err());
+    }
+
+    #[cfg(not(feature = "video"))]
+    #[test]
+    fn h264_says_it_needs_the_video_feature_in_the_default_build() {
+        let mut mp4 = clip();
+        let at = mp4.windows(4).position(|w| w == b"jpeg").unwrap();
+        mp4[at..at + 4].copy_from_slice(b"avc1");
+        let info = probe(&mp4).unwrap();
+        assert_eq!(info.unsupported_reason().as_deref(), Some("Unsupported codec: H.264 (needs the video feature)"));
+    }
+
+    #[cfg(feature = "video")]
+    #[test]
+    fn avcc_and_nal_conversion() {
+        let avcc = [1, 66, 0, 30, 0xFF, 0xE1, 0, 3, 0x67, 1, 2, 1, 0, 2, 0x68, 9];
+        let (params, n) = super::h264::parse_avcc(&avcc).unwrap();
+        assert_eq!(n, 4);
+        assert_eq!(params, [0, 0, 0, 1, 0x67, 1, 2, 0, 0, 0, 1, 0x68, 9]);
+        let mut out = Vec::new();
+        assert!(super::h264::to_annex_b(&[0, 0, 0, 2, 0x65, 7, 0, 0, 0, 1, 0x41], 4, &mut out));
+        assert_eq!(out, [0, 0, 0, 1, 0x65, 7, 0, 0, 0, 1, 0x41]);
+        assert!(!super::h264::to_annex_b(&[0, 0, 0, 9, 1], 4, &mut Vec::new()), "a length past the end is corrupt");
+        assert!(super::h264::parse_avcc(&avcc[..8]).is_none());
     }
 
     #[test]
