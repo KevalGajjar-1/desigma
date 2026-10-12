@@ -4,7 +4,14 @@
 
 use super::{easing, geom};
 use desigma_doc::*;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet, HashSet};
+
+/// Most nested actions (conditionals inside conditionals) run in one go.
+const MAX_ACTION_DEPTH: usize = 8;
+/// Most actions one trigger may run (guards runaway conditional nesting).
+const MAX_ACTIONS_PER_TRIGGER: usize = 256;
+/// Most error lines kept for the debug panel.
+const MAX_ERRORS: usize = 20;
 
 /// Things the host must do outside the player (the player never touches the OS).
 #[derive(Clone, Debug, PartialEq)]
@@ -51,10 +58,23 @@ fn trigger_delay_ms(t: &Trigger) -> u32 {
 }
 
 /// Order-insensitive, case-insensitive comparison of "Ctrl+K" style key strings.
+/// Command, Cmd, Meta and Control are all "ctrl" (the host maps the platform
+/// command key to Ctrl).
 pub fn keys_match(a: &str, b: &str) -> bool {
     let norm = |s: &str| {
-        let mut v: Vec<String> = s.split('+').map(|k| k.trim().to_ascii_lowercase()).filter(|k| !k.is_empty()).collect();
+        let mut v: Vec<String> = s
+            .split('+')
+            .map(|k| k.trim().to_ascii_lowercase())
+            .filter(|k| !k.is_empty())
+            .map(|k| match k.as_str() {
+                "cmd" | "command" | "meta" | "control" | "ctl" => "ctrl".to_string(),
+                "esc" => "escape".to_string(),
+                "return" => "enter".to_string(),
+                _ => k,
+            })
+            .collect();
         v.sort();
+        v.dedup();
         v
     };
     let (x, y) = (norm(a), norm(b));
@@ -117,6 +137,8 @@ pub struct Overlay {
     pub offset: Vec2,
     pub transition: Option<Transition>,
     pub anim: Option<OverlayAnim>,
+    /// Extra offset while the overlay is dragged (On drag).
+    pub drag: Vec2,
 }
 
 impl Overlay {
@@ -155,14 +177,72 @@ struct Timer {
 }
 
 enum Undo {
-    RestoreComponent { inst: NodeId, comp: NodeId },
-    CloseOverlay { frame: NodeId },
+    /// Revert an instance to its previous variant, animating with the same transition.
+    RestoreComponent {
+        inst: NodeId,
+        comp: NodeId,
+        transition: Option<Transition>,
+    },
+    CloseOverlay {
+        frame: NodeId,
+    },
 }
 
 struct Active {
     node: NodeId,
     when: When,
     undo: Vec<Undo>,
+}
+
+/// Playback state of one video layer. Positions are seconds.
+#[derive(Clone, Debug, PartialEq)]
+pub struct MediaState {
+    pub playing: bool,
+    pub muted: bool,
+    pub looping: bool,
+    /// Position at `since` (the player clock).
+    pub base: f64,
+    pub since: f64,
+    /// Length of the video, once the host has opened it.
+    pub duration: Option<f64>,
+}
+
+impl MediaState {
+    /// Current position at clock `now`, wrapped for looping videos and held at
+    /// the end otherwise.
+    pub fn position(&self, now: f64) -> f64 {
+        let raw = if self.playing { self.base + (now - self.since).max(0.0) } else { self.base };
+        match self.duration {
+            Some(d) if d > 0.0 => {
+                if self.looping {
+                    raw.rem_euclid(d)
+                } else {
+                    raw.clamp(0.0, d)
+                }
+            }
+            _ => raw.max(0.0),
+        }
+    }
+}
+
+/// What an On drag gesture does, decided when the drag starts.
+enum DragKind {
+    /// Drags `overlays[frame]`; releasing far enough runs the reaction (Close overlay).
+    Overlay { node: NodeId, frame: NodeId, reaction: Reaction },
+    /// Scrolls `frame` with the pointer (the reaction's Scroll to).
+    Scroll { frame: NodeId },
+}
+
+/// A row of the Present variables panel.
+#[derive(Clone, Debug, PartialEq)]
+pub struct VarRow {
+    pub id: String,
+    pub name: String,
+    pub collection: String,
+    pub mode: String,
+    pub value: String,
+    /// Changed by an action since the presentation started.
+    pub changed: bool,
 }
 
 pub struct Player {
@@ -177,11 +257,18 @@ pub struct Player {
     pub rev: BTreeMap<NodeId, u64>,
     pub effects: Vec<Effect>,
     pub now: f64,
+    /// Variables (ids) changed by actions since the presentation started.
+    pub changed_vars: BTreeSet<String>,
+    /// Problems met while running actions (bad expressions...), newest last.
+    pub errors: Vec<String>,
+    /// Playback state of video layers that have been shown.
+    pub media: BTreeMap<NodeId, MediaState>,
     scroll_anim: Option<ScrollAnim>,
     timers: Vec<Timer>,
     hover: Vec<NodeId>,
     actives: Vec<Active>,
     press_target: Option<NodeId>,
+    drag: Option<DragKind>,
     snapshots: u64,
 }
 
@@ -197,13 +284,18 @@ impl Player {
             rev: BTreeMap::new(),
             effects: Vec::new(),
             now: 0.0,
+            changed_vars: BTreeSet::new(),
+            errors: Vec::new(),
+            media: BTreeMap::new(),
             scroll_anim: None,
             timers: Vec::new(),
             hover: Vec::new(),
             actives: Vec::new(),
             press_target: None,
+            drag: None,
             snapshots: 0,
         };
+        inherit_variant_reactions(&mut p.doc);
         p.current = p.top_frame_of(start).unwrap_or(start);
         p.on_shown(p.current);
         p
@@ -246,6 +338,13 @@ impl Player {
         *self.rev.entry(frame).or_insert(0) += 1;
     }
 
+    /// The content of `node` changed (a new video frame): redraw the frame it is in.
+    pub fn invalidate(&mut self, node: NodeId) {
+        if let Some(f) = self.top_frame_of(node) {
+            self.bump(f);
+        }
+    }
+
     /// Frames currently on screen from bottom to top.
     pub fn visible_frames(&self) -> Vec<NodeId> {
         let mut v = vec![self.current];
@@ -258,7 +357,11 @@ impl Player {
     }
 
     pub fn is_animating(&self) -> bool {
-        self.anim.is_some() || self.scroll_anim.is_some() || self.overlays.iter().any(|o| o.anim.is_some()) || !self.timers.is_empty()
+        self.anim.is_some()
+            || self.scroll_anim.is_some()
+            || self.overlays.iter().any(|o| o.anim.is_some())
+            || !self.timers.is_empty()
+            || self.media.values().any(|m| m.playing)
     }
 
     /// Whether anything at or above `target` reacts to the pointer (for the hand cursor).
@@ -386,6 +489,79 @@ impl Player {
         for (node, reaction, ms) in found {
             self.timers.push(Timer { at: self.now + ms as f64 / 1000.0, node, reaction, frame });
         }
+        self.init_media(frame);
+    }
+
+    /// Creates the playback state of video layers in `frame` the first time it is shown.
+    fn init_media(&mut self, frame: NodeId) {
+        let mut stack = vec![frame];
+        let mut found = Vec::new();
+        while let Some(id) = stack.pop() {
+            let Some(n) = self.doc.get(id) else { continue };
+            if let Some(v) = n.prototype.videos.first() {
+                found.push((id, v.autoplay, v.muted, v.looping));
+            }
+            stack.extend(n.children.iter().copied());
+        }
+        for (id, autoplay, muted, looping) in found {
+            let now = self.now;
+            self.media.entry(id).or_insert(MediaState { playing: autoplay, muted, looping, base: 0.0, since: now, duration: None });
+        }
+    }
+
+    /// Sets the length of a video once the host has opened it.
+    pub fn set_media_duration(&mut self, node: NodeId, seconds: f64) {
+        if let Some(m) = self.media.get_mut(&node) {
+            m.duration = Some(seconds).filter(|d| *d > 0.0);
+        }
+    }
+
+    /// Applies a media action to the video layer `dest`.
+    pub(crate) fn media_control(&mut self, dest: NodeId, op: MediaOp) {
+        if self.doc.get(dest).is_none_or(|n| n.prototype.videos.is_empty()) {
+            return;
+        }
+        if !self.media.contains_key(&dest) {
+            let v = self.doc.get(dest).and_then(|n| n.prototype.videos.first().cloned());
+            let Some(v) = v else { return };
+            self.media.insert(dest, MediaState { playing: false, muted: v.muted, looping: v.looping, base: 0.0, since: self.now, duration: None });
+        }
+        let now = self.now;
+        let Some(m) = self.media.get_mut(&dest) else { return };
+        let pos = m.position(now);
+        match op {
+            MediaOp::Play => {
+                if !m.playing {
+                    m.base = if m.duration.is_some_and(|d| !m.looping && pos >= d) { 0.0 } else { pos };
+                    m.playing = true;
+                    m.since = now;
+                }
+            }
+            MediaOp::Pause => {
+                m.base = pos;
+                m.playing = false;
+            }
+            MediaOp::TogglePlay => {
+                let next = if m.playing { MediaOp::Pause } else { MediaOp::Play };
+                self.media_control(dest, next);
+            }
+            MediaOp::Mute => m.muted = true,
+            MediaOp::Unmute => m.muted = false,
+            MediaOp::ToggleMute => m.muted = !m.muted,
+            MediaOp::SkipBy(s) => {
+                m.base = (pos + s as f64).max(0.0);
+                m.since = now;
+            }
+            MediaOp::SeekTo(s) => {
+                m.base = (s as f64).max(0.0);
+                m.since = now;
+            }
+            MediaOp::SetLoop(l) => {
+                m.base = pos;
+                m.since = now;
+                m.looping = l;
+            }
+        }
     }
 
     fn schedule(&mut self, node: NodeId, r: &Reaction) {
@@ -415,7 +591,10 @@ impl Player {
             if self.doc.get(id).is_none() {
                 break;
             }
-            let reactive = [When::Enter, When::Leave, When::HoverOn].iter().any(|w| !self.reactions_on(id, *w).is_empty());
+            // A node whose While hovering is active stays hovered while the pointer is over it, even
+            // when the state it switched to (another variant) has no hover reaction of its own.
+            let hovered_now = self.actives.iter().any(|a| a.node == id && a.when == When::HoverOn);
+            let reactive = hovered_now || [When::Enter, When::Leave, When::HoverOn].iter().any(|w| !self.reactions_on(id, *w).is_empty());
             if reactive {
                 chain.push(id);
             }
@@ -460,6 +639,7 @@ impl Player {
     /// Pointer released. `dragged` is true when the press turned into a drag/scroll.
     pub fn pointer_up(&mut self, target: Option<NodeId>, dragged: bool) {
         self.finish_anim();
+        self.drag_end();
         while let Some(i) = self.actives.iter().position(|a| a.when == When::PressOn) {
             let a = self.actives.remove(i);
             self.undo(a.undo);
@@ -475,12 +655,68 @@ impl Player {
         }
     }
 
-    /// A drag gesture started on `target`: fires On drag once.
+    /// A drag gesture started on `target`. Returns whether an On drag reaction took it.
+    ///
+    /// - On drag -> Close overlay on a layer inside an overlay: the overlay follows the pointer
+    ///   ([`Player::drag_by`]); releasing it far enough ([`Player::drag_end`]) closes it, else it
+    ///   snaps back (swipe to dismiss).
+    /// - On drag -> Scroll to: the frame holding the destination scrolls with the pointer.
+    /// - Anything else fires once, right away.
     pub fn drag(&mut self, target: Option<NodeId>) -> bool {
         let Some(n) = target.and_then(|t| self.find_reactive(t, When::Drag)) else { return false };
         self.finish_anim();
+        let reaction = self.reactions_on(n, When::Drag).into_iter().next();
+        if let Some(r) = reaction.filter(|r| !r.actions.is_empty() && trigger_delay_ms(&r.trigger) == 0) {
+            if r.actions.iter().all(|a| matches!(a, Action::CloseOverlay)) {
+                let owner = self.top_frame_of(n);
+                if let Some(frame) = owner.filter(|f| self.overlays.iter().any(|o| o.frame == *f && !o.closing())) {
+                    self.drag = Some(DragKind::Overlay { node: n, frame, reaction: r });
+                    return true;
+                }
+            }
+            if let [Action::ScrollTo { dest, .. }] = r.actions.as_slice() {
+                if let Some(frame) = self.top_frame_of(*dest).filter(|f| self.frame_visible(*f)) {
+                    self.drag = Some(DragKind::Scroll { frame });
+                    return true;
+                }
+            }
+        }
         self.fire(n, When::Drag, None);
         true
+    }
+
+    /// The pointer moved `delta` (frame units, `last - now` like the wheel: positive = content
+    /// moves up/left) during a drag started with [`Player::drag`].
+    pub fn drag_by(&mut self, delta: Vec2) {
+        match &self.drag {
+            Some(DragKind::Scroll { frame }) => {
+                let f = *frame;
+                self.scroll_by(f, delta);
+            }
+            Some(DragKind::Overlay { frame, .. }) => {
+                let f = *frame;
+                if let Some(o) = self.overlays.iter_mut().find(|o| o.frame == f) {
+                    o.drag = Vec2::new(o.drag.x - delta.x, o.drag.y - delta.y);
+                }
+            }
+            None => {}
+        }
+    }
+
+    /// The drag ended: a dragged overlay that moved far enough runs its reaction.
+    pub fn drag_end(&mut self) {
+        let Some(kind) = self.drag.take() else { return };
+        if let DragKind::Overlay { node, frame, reaction } = kind {
+            let Some(i) = self.overlays.iter().position(|o| o.frame == frame) else { return };
+            let size = self.size_of(frame);
+            let moved = self.overlays[i].drag;
+            let threshold = (size.x.min(size.y) * 0.25).max(40.0);
+            if (moved.x * moved.x + moved.y * moved.y).sqrt() >= threshold {
+                self.run(node, &reaction, None);
+            } else {
+                self.overlays[i].drag = Vec2::ZERO;
+            }
+        }
     }
 
     fn click(&mut self, target: Option<NodeId>) {
@@ -519,10 +755,34 @@ impl Player {
         }
     }
 
+    /// Gamepad button chord like "A" or "DPadUp+A" from `device`. A trigger set to the generic
+    /// device matches any controller; a specific one only matches its own.
+    pub fn gamepad(&mut self, device: GamepadDevice, pressed: &str) {
+        self.finish_anim();
+        let mut hits = Vec::new();
+        for f in self.visible_frames() {
+            let mut stack = vec![f];
+            while let Some(id) = stack.pop() {
+                let Some(n) = self.doc.get(id) else { continue };
+                for r in &n.prototype.reactions {
+                    if matches!(&r.trigger, Trigger::GamepadPress { device: d, buttons }
+                        if (*d == device || *d == GamepadDevice::Generic || device == GamepadDevice::Generic) && keys_match(buttons, pressed))
+                    {
+                        hits.push((id, r.clone()));
+                    }
+                }
+                stack.extend(n.children.iter().rev().copied());
+            }
+        }
+        for (id, r) in hits {
+            self.run(id, &r, None);
+        }
+    }
+
     fn undo(&mut self, list: Vec<Undo>) {
         for u in list {
             match u {
-                Undo::RestoreComponent { inst, comp } => self.change_to(inst, comp, None, None),
+                Undo::RestoreComponent { inst, comp, transition } => self.change_to(inst, comp, transition, None),
                 Undo::CloseOverlay { frame } => {
                     if let Some(i) = self.overlays.iter().rposition(|o| o.frame == frame && !o.closing()) {
                         self.close_overlay_at(i);
@@ -534,25 +794,184 @@ impl Player {
 
     // ------------------------------------------------------------- actions
 
-    fn run(&mut self, source: NodeId, r: &Reaction, mut undo: Option<&mut Vec<Undo>>) {
-        for a in &r.actions {
+    fn run(&mut self, source: NodeId, r: &Reaction, undo: Option<&mut Vec<Undo>>) {
+        let mut budget = MAX_ACTIONS_PER_TRIGGER;
+        self.run_actions(source, &r.actions, r.transition, undo, 0, &mut budget);
+    }
+
+    /// Runs `actions` in order. Conditionals pick a branch and run its actions in place.
+    fn run_actions(
+        &mut self,
+        source: NodeId,
+        actions: &[Action],
+        transition: Option<Transition>,
+        mut undo: Option<&mut Vec<Undo>>,
+        depth: usize,
+        budget: &mut usize,
+    ) {
+        for a in actions {
+            if *budget == 0 {
+                self.error("Too many actions in one trigger; the rest were skipped");
+                return;
+            }
+            *budget -= 1;
             match a {
-                Action::Navigate { dest, preserve_scroll } => self.navigate(*dest, r.transition, *preserve_scroll, true),
+                Action::Navigate { dest, preserve_scroll } => self.navigate(*dest, transition, *preserve_scroll, true),
                 Action::Back => self.go_back(),
                 Action::OpenOverlay { dest, position, offset, close_on_click_outside, background } => {
-                    if let Some(frame) = self.open_overlay(source, *dest, *position, *offset, *close_on_click_outside, *background, r.transition) {
+                    if let Some(frame) = self.open_overlay(source, *dest, *position, *offset, *close_on_click_outside, *background, transition) {
                         if let Some(u) = undo.as_deref_mut() {
                             u.push(Undo::CloseOverlay { frame });
                         }
                     }
                 }
-                Action::SwapOverlay { dest } => self.swap_overlay(source, *dest, r.transition),
+                Action::SwapOverlay { dest } => self.swap_overlay(source, *dest, transition),
                 Action::CloseOverlay => self.close_overlay(source),
-                Action::ScrollTo { dest, offset } => self.scroll_to(*dest, *offset, r.transition),
+                Action::ScrollTo { dest, offset } => self.scroll_to(*dest, *offset, transition),
                 Action::OpenUrl { url, new_tab } => self.effects.push(Effect::OpenUrl { url: url.clone(), new_tab: *new_tab }),
-                Action::ChangeTo { dest } => self.change_to(source, *dest, r.transition, undo.as_deref_mut()),
+                Action::ChangeTo { dest } => self.change_to(source, *dest, transition, undo.as_deref_mut()),
+                Action::SetVariable { variable, value } => self.set_variable(source, variable, value),
+                Action::SetVariableMode { collection, mode } => self.set_variable_mode(collection, mode),
+                Action::MediaControl { dest, op } => self.media_control(*dest, *op),
+                Action::Conditional { branches, otherwise } => {
+                    if depth >= MAX_ACTION_DEPTH {
+                        self.error("Conditionals are nested too deeply");
+                        continue;
+                    }
+                    let mut chosen: Option<&[Action]> = None;
+                    for (cond, acts) in branches {
+                        let verdict = cond.eval_bool(&self.env(source));
+                        match verdict {
+                            Ok(true) => {
+                                chosen = Some(acts);
+                                break;
+                            }
+                            Ok(false) => {}
+                            Err(e) => self.error(format!("Condition: {e}")),
+                        }
+                    }
+                    let acts = chosen.unwrap_or(otherwise);
+                    self.run_actions(source, acts, transition, undo.as_deref_mut(), depth + 1, budget);
+                }
             }
         }
+    }
+
+    fn error(&mut self, m: impl Into<String>) {
+        if self.errors.len() >= MAX_ERRORS {
+            self.errors.remove(0);
+        }
+        self.errors.push(m.into());
+    }
+
+    // ----------------------------------------------------------- variables
+
+    /// Variable lookup for expressions: the value `node` sees (its mode, aliases followed).
+    fn env(&self, node: NodeId) -> impl Fn(&str) -> Option<ExprValue> + '_ {
+        move |id| self.doc.resolve_variable(node, id).as_ref().map(ExprValue::from)
+    }
+
+    /// The runtime value of a variable as seen from the current frame.
+    pub fn variable_value(&self, id: &str) -> Option<VariableValue> {
+        self.doc.resolve_variable(self.current, id)
+    }
+
+    /// Set variable: evaluates `value` and stores it for the mode `source` sees. The scratch
+    /// document changes, the user's never does. Bound layers are re-resolved and redrawn.
+    fn set_variable(&mut self, source: NodeId, variable: &str, value: &Expression) {
+        let Some(v) = self.doc.variables.get(variable) else {
+            self.error(format!("Set variable: unknown variable {variable}"));
+            return;
+        };
+        let (kind, collection, name) = (v.kind, v.collection.clone(), v.name.clone());
+        let evaluated = value.eval(&self.env(source));
+        let result = match evaluated {
+            Ok(r) => r,
+            Err(e) => {
+                self.error(format!("Set {name}: {e}"));
+                return;
+            }
+        };
+        let Some(new) = result.to_variable_value(kind) else {
+            self.error(format!("Set {name}: cannot store a {} in a {} variable", result.ty().name(), ExprType::from(kind).name()));
+            return;
+        };
+        let Some(mode) = self.doc.variable_mode(source, &collection) else { return };
+        if let Some(v) = self.doc.variables.get_mut(variable) {
+            v.values.insert(mode, new);
+        }
+        self.changed_vars.insert(variable.to_string());
+        self.refresh_bound(&[variable.to_string()]);
+    }
+
+    /// Set variable mode: switches `collection` to `mode` everywhere (explicit per-layer choices
+    /// of that collection are dropped) for the rest of the session.
+    fn set_variable_mode(&mut self, collection: &str, mode: &str) {
+        let valid = self.doc.variable_collections.get(collection).is_some_and(|c| c.modes.iter().any(|m| m.id == mode));
+        if !valid {
+            self.error(format!("Set mode: unknown mode {mode} in {collection}"));
+            return;
+        }
+        if let Some(c) = self.doc.variable_collections.get_mut(collection) {
+            c.default_mode = mode.to_string();
+        }
+        for n in self.doc.nodes.values_mut() {
+            n.variables.modes.remove(collection);
+        }
+        let vars: Vec<String> = self.doc.variable_collections.get(collection).map(|c| c.variables.clone()).unwrap_or_default();
+        self.refresh_bound(&vars);
+    }
+
+    /// Re-resolves the layers bound to `vars` (and to variables aliasing them), re-fits auto-sized
+    /// text, re-runs auto layout and invalidates the frames' textures.
+    fn refresh_bound(&mut self, vars: &[String]) {
+        let mut set: HashSet<String> = vars.iter().cloned().collect();
+        loop {
+            let more: Vec<String> = self
+                .doc
+                .variables
+                .iter()
+                .filter(|(id, v)| !set.contains(*id) && v.values.values().any(|x| matches!(x, VariableValue::Alias(a) if set.contains(a))))
+                .map(|(id, _)| id.clone())
+                .collect();
+            if more.is_empty() {
+                break;
+            }
+            set.extend(more);
+        }
+        let nodes = crate::variables::bound_nodes(&self.doc, &set);
+        if nodes.is_empty() {
+            return;
+        }
+        crate::variables::reflow_bound(&mut self.doc, &set, &nodes);
+        let mut frames: Vec<NodeId> = nodes.iter().filter_map(|n| self.top_frame_of(*n)).collect();
+        frames.sort();
+        frames.dedup();
+        for f in frames {
+            self.bump(f);
+        }
+    }
+
+    /// Rows for the variables panel: every variable with its current value.
+    pub fn variable_rows(&self) -> Vec<VarRow> {
+        let mut rows = Vec::new();
+        for c in self.doc.variable_collections.values() {
+            for id in &c.variables {
+                let Some(v) = self.doc.variables.get(id) else { continue };
+                let mode =
+                    self.doc.variable_mode(self.current, &c.id).and_then(|m| c.modes.iter().find(|x| x.id == m).map(|x| x.name.clone())).unwrap_or_default();
+                let value = match self.variable_value(id) {
+                    Some(VariableValue::Number(n)) => format_number(n as f64),
+                    Some(VariableValue::String(s)) => format!("\"{s}\""),
+                    Some(VariableValue::Boolean(b)) => b.to_string(),
+                    Some(VariableValue::Color(col)) => format!("#{}", col.to_hex()),
+                    Some(VariableValue::Alias(a)) => format!("-> {a}"),
+                    None => "-".into(),
+                };
+                rows.push(VarRow { id: id.clone(), name: v.name.clone(), collection: c.name.clone(), mode, value, changed: self.changed_vars.contains(id) });
+            }
+        }
+        rows
     }
 
     fn start_anim(&mut self, from: NodeId, to: NodeId, t: Transition, snapshot: Option<Snapshot>) {
@@ -629,7 +1048,7 @@ impl Player {
         let origin = geom::overlay_origin(position, offset, self.size_of(frame), base, trigger);
         let t = transition.filter(|t| easing::effective_duration_ms(&t.easing, t.duration_ms) > 0);
         let anim = t.map(|t| OverlayAnim { start: self.now, dur: easing::effective_duration_ms(&t.easing, t.duration_ms) as f64 / 1000.0, opening: true });
-        self.overlays.push(Overlay { frame, origin, background, close_outside, position, offset, transition: t, anim });
+        self.overlays.push(Overlay { frame, origin, background, close_outside, position, offset, transition: t, anim, drag: Vec2::ZERO });
         if anim.is_none() {
             self.on_shown(frame);
         }
@@ -658,6 +1077,7 @@ impl Player {
                 offset: old.offset,
                 transition: t,
                 anim,
+                drag: Vec2::ZERO,
             },
         );
         if anim.is_none() {
@@ -752,6 +1172,10 @@ impl Player {
                 self.snapshots += 1;
                 (t, Snapshot { id: self.snapshots, doc: super::smart::subtree_doc(&self.doc, frame) })
             });
+        // Interactions live in the variants: when the instance still carries its variant's own
+        // reactions (no override of its own), it takes the new variant's.
+        let old_own = self.doc.get(prev).map(|c| c.prototype.reactions.clone());
+        let inst_own = self.doc.get(inst).map(|i| i.prototype.reactions.clone());
         let cmd = swap_instance(&mut self.doc, inst, dest);
         if cmd.apply(&mut self.doc).is_err() {
             return;
@@ -759,9 +1183,16 @@ impl Player {
         if self.doc.get(inst).and_then(instance_component) == Some(prev) {
             return;
         }
+        if old_own == inst_own {
+            if let Some(new_rs) = self.doc.get(dest).map(|c| c.prototype.reactions.clone()) {
+                if let Some(i) = self.doc.get_mut(inst) {
+                    i.prototype.reactions = new_rs;
+                }
+            }
+        }
         self.bump(frame);
         if let Some(u) = undo {
-            u.push(Undo::RestoreComponent { inst, comp: prev });
+            u.push(Undo::RestoreComponent { inst, comp: prev, transition: transition.map(|t| Transition { kind: geom::reverse(t.kind), ..t }) });
         }
         if let Some((t, snap)) = snapshot {
             if self.anim.is_none() && frame == self.current {
@@ -772,6 +1203,32 @@ impl Player {
 }
 
 // ------------------------------------------------------------- free helpers
+
+/// Interactive components: interactions are defined on the variants of a component, and every
+/// instance (and layer inside one) runs those of the variant it shows. Instances made before an
+/// interaction was added to the variant have none of their own, so they take the variant's here
+/// (on the presentation's scratch copy only). A layer with reactions of its own keeps them.
+fn inherit_variant_reactions(doc: &mut Document) {
+    let todo: Vec<(NodeId, Vec<Reaction>)> = doc
+        .nodes
+        .values()
+        .filter(|n| n.prototype.reactions.is_empty())
+        .filter_map(|n| {
+            let rs = &doc.get(n.component.source?)?.prototype.reactions;
+            (!rs.is_empty()).then(|| (n.id, rs.clone()))
+        })
+        .collect();
+    for (id, rs) in todo {
+        if let Some(n) = doc.get_mut(id) {
+            n.prototype.reactions = rs;
+        }
+    }
+}
+
+/// Whether the layer is shown, with a bound `visible` variable applied.
+fn is_visible(doc: &Document, n: &Node) -> bool {
+    resolve_node(doc, n).visible
+}
 
 /// Bounding box of `node` in the coordinate space of its ancestor `frame`.
 pub fn rect_in_frame(doc: &Document, node: NodeId, frame: NodeId) -> Rect {
@@ -798,7 +1255,7 @@ pub fn content_extent(doc: &Document, frame: NodeId) -> Vec2 {
             continue;
         }
         let Some(n) = doc.get(*c) else { continue };
-        if !n.visible {
+        if !is_visible(doc, n) {
             continue;
         }
         let r = rect_in_frame(doc, *c, frame);
@@ -827,7 +1284,7 @@ pub fn hit_layer(doc: &Document, frame: NodeId, p: Vec2, scroll: Vec2) -> Option
 
 fn hit_in(doc: &Document, id: NodeId, p: Vec2) -> Option<NodeId> {
     let n = doc.get(id)?;
-    if !n.visible {
+    if !is_visible(doc, n) {
         return None;
     }
     let local = n.transform.invert()?.apply(p);
@@ -1476,5 +1933,618 @@ mod tests {
         f.doc.get_mut(f.c).unwrap().visible = false;
         let page = f.doc.pages[0];
         assert_eq!(top_level_frames(&f.doc, page), vec![f.a, f.b]);
+    }
+
+    // ------------------------------------------------ variables in Present
+
+    struct Vars {
+        count: String,
+        label: String,
+        flag: String,
+        color: String,
+        coll: String,
+        dark: String,
+        light: String,
+    }
+
+    /// Adds a collection "State" (Light/Dark) with count, label, flag and color variables.
+    fn add_vars(doc: &mut Document) -> Vars {
+        let mut s = VariableStore::from_doc(doc);
+        let coll = s.add_collection("State");
+        let light = s.collections[&coll].default_mode.clone();
+        let dark = s.add_mode(&coll, "Dark").unwrap();
+        let count = s.add_variable(&coll, "count", VariableKind::Number).unwrap();
+        let label = s.add_variable(&coll, "label", VariableKind::String).unwrap();
+        let flag = s.add_variable(&coll, "flag", VariableKind::Boolean).unwrap();
+        let color = s.add_variable(&coll, "color", VariableKind::Color).unwrap();
+        s.set_value(&label, &light, VariableValue::String("zero".into()));
+        s.set_value(&label, &dark, VariableValue::String("zero".into()));
+        s.set_value(&color, &light, VariableValue::Color(Color::rgb(255, 0, 0)));
+        s.set_value(&color, &dark, VariableValue::Color(Color::rgb(0, 0, 255)));
+        let _ = s.command().apply(doc);
+        Vars { count, label, flag, color, coll, dark, light }
+    }
+
+    fn var(id: &str) -> Expression {
+        Expression::var(id)
+    }
+
+    fn num_of(p: &Player, id: &str) -> f32 {
+        match p.variable_value(id) {
+            Some(VariableValue::Number(n)) => n,
+            other => panic!("{other:?}"),
+        }
+    }
+
+    fn text_node(doc: &mut Document, parent: NodeId, s: &str) -> NodeId {
+        let id = doc.alloc_id();
+        doc.insert(parent, Node::text(id, Rect::new(10.0, 10.0, 100.0, 20.0), s, TextStyle::default())).unwrap()
+    }
+
+    fn content_of(p: &Player, id: NodeId) -> String {
+        match &resolve_node(&p.doc, p.doc.get(id).unwrap()).kind {
+            NodeKind::Text(t) => t.content.clone(),
+            _ => panic!("not text"),
+        }
+    }
+
+    fn counter() -> (Fx, Vars) {
+        let mut f = fixture();
+        let v = add_vars(&mut f.doc);
+        let cond = Action::Conditional {
+            branches: vec![(
+                Expression::binary(BinaryOp::Ge, var(&v.count), Expression::number(3.0)),
+                vec![Action::Navigate { dest: f.b, preserve_scroll: false }],
+            )],
+            otherwise: vec![Action::SetVariable {
+                variable: v.label.clone(),
+                value: Expression::binary(BinaryOp::Add, Expression::text("count="), var(&v.count)),
+            }],
+        };
+        let inc = Action::SetVariable { variable: v.count.clone(), value: Expression::binary(BinaryOp::Add, var(&v.count), Expression::number(1.0)) };
+        f.doc.get_mut(f.btn).unwrap().prototype.reactions.push(Reaction { trigger: Trigger::OnClick, actions: vec![inc, cond], transition: None });
+        (f, v)
+    }
+
+    #[test]
+    fn set_variable_then_conditional_navigates_on_the_third_click() {
+        let (f, v) = counter();
+        let mut p = Player::new(&f.doc, f.a);
+        assert_eq!(num_of(&p, &v.count), 0.0, "starts from the document value");
+        p.pointer_up(Some(f.btn), false);
+        p.pointer_up(Some(f.btn), false);
+        assert_eq!(num_of(&p, &v.count), 2.0);
+        assert_eq!(p.current, f.a, "the else branch ran: no navigation yet");
+        assert_eq!(p.variable_value(&v.label), Some(VariableValue::String("count=2".into())));
+        p.pointer_up(Some(f.btn), false);
+        assert_eq!(num_of(&p, &v.count), 3.0);
+        assert_eq!(p.current, f.b, "count >= 3 took the first branch");
+        assert_eq!(p.variable_value(&v.label), Some(VariableValue::String("count=2".into())), "the else branch did not run");
+        assert!(p.errors.is_empty(), "{:?}", p.errors);
+    }
+
+    #[test]
+    fn variable_state_is_never_written_back_to_the_document() {
+        let (f, v) = counter();
+        let before = f.doc.variables.clone();
+        let mut p = Player::new(&f.doc, f.a);
+        p.pointer_up(Some(f.btn), false);
+        p.pointer_up(Some(f.btn), false);
+        assert_eq!(f.doc.variables, before);
+        // a restart goes back to the document's values
+        p.restart(&f.doc, f.a);
+        assert_eq!(num_of(&p, &v.count), 0.0);
+        assert!(p.changed_vars.is_empty());
+    }
+
+    #[test]
+    fn bound_text_and_visibility_follow_the_variables() {
+        let (mut f, v) = counter();
+        let t = text_node(&mut f.doc, f.a, "zero");
+        f.doc.get_mut(t).unwrap().variables.bindings.insert("characters".into(), v.label.clone());
+        let hidden = f.doc.alloc_id();
+        let flagged = f.doc.insert(f.a, Node::rectangle(hidden, Rect::new(0.0, 0.0, 300.0, 300.0))).unwrap();
+        f.doc.get_mut(flagged).unwrap().variables.bindings.insert("visible".into(), v.flag.clone());
+        f.doc.get_mut(flagged).unwrap().visible = false;
+        add(&mut f.doc, f.btn_b, react(Trigger::OnClick, Action::SetVariable { variable: v.flag.clone(), value: Expression::logical_not(var(&v.flag)) }, None));
+        f.doc.get_mut(f.a).unwrap().prototype.reactions.clear();
+        let mut p = Player::new(&f.doc, f.a);
+        assert_eq!(content_of(&p, t), "zero");
+        let rev = p.frame_rev(f.a);
+        p.pointer_up(Some(f.btn), false);
+        assert_eq!(content_of(&p, t), "count=1", "text characters re-resolve");
+        assert!(p.frame_rev(f.a) > rev, "the frame's texture is invalidated");
+        assert_eq!(f.doc.get(t).and_then(|n| if let NodeKind::Text(t) = &n.kind { Some(t.content.clone()) } else { None }).as_deref(), Some("zero"));
+        // visibility binding: hidden layers are not hit, shown ones are
+        assert_eq!(hit_layer(&p.doc, f.a, Vec2::new(150.0, 150.0), Vec2::ZERO), Some(f.a));
+        let mut q = Player::new(&f.doc, f.b);
+        q.pointer_up(Some(f.btn_b), false);
+        assert_eq!(q.variable_value(&v.flag), Some(VariableValue::Boolean(true)));
+        q.current = f.a;
+        assert_eq!(hit_layer(&q.doc, f.a, Vec2::new(150.0, 150.0), Vec2::ZERO), Some(flagged));
+    }
+
+    #[test]
+    fn set_variable_mode_switches_modes_for_every_layer() {
+        let (mut f, v) = counter();
+        let id = f.doc.alloc_id();
+        let swatch = f.doc.insert(f.a, Node::rectangle(id, Rect::new(0.0, 0.0, 50.0, 50.0))).unwrap();
+        f.doc.get_mut(swatch).unwrap().variables.bindings.insert("fills/0".into(), v.color.clone());
+        f.doc.get_mut(swatch).unwrap().fills = vec![Paint::solid(Color::WHITE)];
+        // an explicit per-layer choice must not stop the switch
+        f.doc.get_mut(swatch).unwrap().variables.modes.insert(v.coll.clone(), v.light.clone());
+        add(&mut f.doc, f.btn_b, react(Trigger::OnClick, Action::SetVariableMode { collection: v.coll.clone(), mode: v.dark.clone() }, None));
+        let mut p = Player::new(&f.doc, f.b);
+        let fill = |p: &Player| match &resolve_node(&p.doc, p.doc.get(swatch).unwrap()).fills[0].kind {
+            PaintKind::Solid(c) => c.to_hex(),
+            _ => panic!(),
+        };
+        assert_eq!(fill(&p), "FF0000");
+        p.pointer_up(Some(f.btn_b), false);
+        assert_eq!(fill(&p), "0000FF");
+        assert!(p.errors.is_empty());
+        assert_eq!(f.doc.variable_collections[&v.coll].default_mode, v.light, "the document keeps its mode");
+        // unknown modes are reported, not applied
+        add(&mut f.doc, f.btn_b, react(Trigger::OnClick, Action::SetVariableMode { collection: v.coll.clone(), mode: "nope".into() }, None));
+        let mut q = Player::new(&f.doc, f.b);
+        q.pointer_up(Some(f.btn_b), false);
+        assert_eq!(q.errors.len(), 1);
+        assert!(q.errors[0].contains("unknown mode"));
+    }
+
+    #[test]
+    fn bad_expressions_are_reported_and_leave_state_alone() {
+        let (mut f, v) = counter();
+        f.doc.get_mut(f.btn).unwrap().prototype.reactions.clear();
+        let bad = vec![
+            Action::SetVariable { variable: v.count.clone(), value: Expression::binary(BinaryOp::Div, Expression::number(1.0), Expression::number(0.0)) },
+            Action::SetVariable { variable: v.count.clone(), value: Expression::text("seven") },
+            Action::SetVariable { variable: "VariableID:missing".into(), value: Expression::number(1.0) },
+            Action::SetVariable { variable: v.count.clone(), value: var("also-missing") },
+            Action::Conditional { branches: vec![(Expression::number(1.0), vec![Action::Back])], otherwise: vec![] },
+            Action::SetVariable { variable: v.count.clone(), value: Expression::number(9.0) },
+        ];
+        f.doc.get_mut(f.btn).unwrap().prototype.reactions.push(Reaction { trigger: Trigger::OnClick, actions: bad, transition: None });
+        let mut p = Player::new(&f.doc, f.a);
+        p.pointer_up(Some(f.btn), false);
+        assert_eq!(p.errors.len(), 5, "{:?}", p.errors);
+        assert_eq!(num_of(&p, &v.count), 9.0, "the actions after the failures still run");
+        assert!(p.errors[0].contains("Division by zero"));
+        assert!(p.errors[1].contains("cannot store"));
+    }
+
+    #[test]
+    fn actions_run_in_order_and_nested_conditionals_are_bounded() {
+        let (mut f, v) = counter();
+        f.doc.get_mut(f.btn).unwrap().prototype.reactions.clear();
+        let set = |e: Expression| Action::SetVariable { variable: v.count.clone(), value: e };
+        let mut deep = vec![set(Expression::number(-1.0))];
+        for _ in 0..20 {
+            deep = vec![Action::Conditional { branches: vec![(Expression::boolean(true), deep)], otherwise: vec![] }];
+        }
+        let mut actions = vec![
+            set(Expression::number(1.0)),
+            set(Expression::binary(BinaryOp::Add, Expression::binary(BinaryOp::Mul, var(&v.count), Expression::number(10.0)), Expression::number(2.0))),
+        ];
+        actions.extend(deep);
+        f.doc.get_mut(f.btn).unwrap().prototype.reactions.push(Reaction { trigger: Trigger::OnClick, actions, transition: None });
+        let mut p = Player::new(&f.doc, f.a);
+        p.pointer_up(Some(f.btn), false);
+        assert_eq!(num_of(&p, &v.count), 12.0, "1, then 1*10+2; the 20-deep conditional never reaches its leaf");
+        assert!(p.errors.iter().any(|e| e.contains("nested too deeply")));
+    }
+
+    #[test]
+    fn variable_rows_mark_changed_values() {
+        let (f, v) = counter();
+        let mut p = Player::new(&f.doc, f.a);
+        let rows = p.variable_rows();
+        assert_eq!(rows.len(), 4);
+        assert!(rows.iter().all(|r| !r.changed && r.collection == "State" && r.mode == "Mode 1" || r.mode == "Light" || !r.mode.is_empty()));
+        p.pointer_up(Some(f.btn), false);
+        let rows = p.variable_rows();
+        let count = rows.iter().find(|r| r.id == v.count).unwrap();
+        assert_eq!((count.value.as_str(), count.changed), ("1", true));
+        let label = rows.iter().find(|r| r.id == v.label).unwrap();
+        assert_eq!((label.value.as_str(), label.changed), ("\"count=1\"", true));
+        assert!(!rows.iter().find(|r| r.id == v.flag).unwrap().changed);
+        assert_eq!(rows.iter().find(|r| r.id == v.color).unwrap().value, "#FF0000");
+    }
+
+    // ------------------------------------------- interactive components
+
+    /// A set with Default (red) and Hover (blue) variants, two instances on a screen. The
+    /// interactions live on the Default variant only, as in Figma.
+    fn interactive() -> (Document, NodeId, NodeId, NodeId, NodeId, NodeId) {
+        let (mut d, screen, inst1, c1, c2) = variant_fixture();
+        let cmd = create_instance(&mut d, c1, screen, Vec2::new(10.0, 200.0));
+        let Command::Insert { nodes, .. } = &cmd else { panic!() };
+        let inst2 = nodes[0].id;
+        cmd.apply(&mut d).unwrap();
+        // interactions defined on the variant AFTER the instances were made
+        add(&mut d, c1, react(Trigger::WhileHovering, Action::ChangeTo { dest: c2 }, tr(TransitionKind::SmartAnimate, 200)));
+        add(&mut d, c1, react(Trigger::OnClick, Action::Navigate { dest: screen, preserve_scroll: false }, None));
+        (d, screen, inst1, inst2, c1, c2)
+    }
+
+    fn comp_of(p: &Player, inst: NodeId) -> Option<NodeId> {
+        p.doc.get(inst).and_then(instance_component)
+    }
+
+    #[test]
+    fn instances_run_the_interactions_of_their_variant() {
+        let (d, screen, inst1, _inst2, c1, c2) = interactive();
+        assert!(d.get(inst1).unwrap().prototype.reactions.is_empty(), "instances made before the interaction have none stored");
+        let mut p = Player::new(&d, screen);
+        assert!(!p.doc.get(inst1).unwrap().prototype.reactions.is_empty(), "the player inherits the variant's");
+        p.tick(0.0);
+        p.pointer_move(Some(inst1));
+        assert_eq!(comp_of(&p, inst1), Some(c2));
+        p.tick(0.3);
+        p.pointer_move(None);
+        assert_eq!(comp_of(&p, inst1), Some(c1));
+        assert!(d.get(inst1).unwrap().prototype.reactions.is_empty(), "the user's document is untouched");
+    }
+
+    #[test]
+    fn while_hovering_stays_in_the_hover_variant_until_the_pointer_leaves() {
+        let (d, screen, inst1, _inst2, c1, c2) = interactive();
+        let mut p = Player::new(&d, screen);
+        p.tick(0.0);
+        p.pointer_move(Some(inst1));
+        assert_eq!(comp_of(&p, inst1), Some(c2));
+        // the Hover variant has no hover reaction of its own; staying over it must not flicker back
+        for t in [0.05, 0.1, 0.5, 1.0, 1.1] {
+            p.tick(t);
+            p.pointer_move(Some(inst1));
+            assert_eq!(comp_of(&p, inst1), Some(c2), "t={t}");
+        }
+        p.pointer_move(None);
+        assert_eq!(comp_of(&p, inst1), Some(c1));
+        // and it works again the next time
+        p.tick(2.0);
+        p.pointer_move(Some(inst1));
+        assert_eq!(comp_of(&p, inst1), Some(c2));
+    }
+
+    #[test]
+    fn leaving_during_the_change_animation_takes_effect_once_it_ends() {
+        let (d, screen, inst1, _inst2, c1, c2) = interactive();
+        let mut p = Player::new(&d, screen);
+        p.tick(0.0);
+        p.pointer_move(Some(inst1));
+        p.tick(0.1);
+        p.pointer_move(None);
+        assert_eq!(comp_of(&p, inst1), Some(c2), "deferred while the animation runs");
+        p.tick(0.3);
+        p.pointer_move(None);
+        assert_eq!(comp_of(&p, inst1), Some(c1));
+    }
+
+    #[test]
+    fn each_instance_keeps_its_own_variant_state() {
+        let (d, screen, inst1, inst2, c1, c2) = interactive();
+        let mut p = Player::new(&d, screen);
+        p.tick(0.0);
+        p.pointer_move(Some(inst1));
+        assert_eq!((comp_of(&p, inst1), comp_of(&p, inst2)), (Some(c2), Some(c1)));
+        p.tick(0.3);
+        p.pointer_move(Some(inst2));
+        assert_eq!((comp_of(&p, inst1), comp_of(&p, inst2)), (Some(c1), Some(c2)), "moving to the second reverts the first");
+        p.tick(0.6);
+        let rev = p.frame_rev(screen);
+        p.pointer_move(None);
+        assert_eq!((comp_of(&p, inst1), comp_of(&p, inst2)), (Some(c1), Some(c1)));
+        assert!(p.frame_rev(screen) > rev);
+    }
+
+    #[test]
+    fn variant_changes_smart_animate_both_ways() {
+        let (d, screen, inst1, _inst2, c1, c2) = interactive();
+        let mut p = Player::new(&d, screen);
+        p.tick(0.0);
+        p.pointer_move(Some(inst1));
+        let a = p.anim.as_ref().expect("changing to the hover variant animates");
+        assert_eq!((a.kind, a.from, a.to), (TransitionKind::SmartAnimate, screen, screen));
+        assert!(a.snapshot.is_some());
+        p.tick(0.3);
+        assert!(p.anim.is_none());
+        assert_eq!(comp_of(&p, inst1), Some(c2));
+        p.pointer_move(None);
+        let a = p.anim.as_ref().expect("the automatic revert animates too");
+        assert_eq!(a.kind, TransitionKind::SmartAnimate);
+        assert_eq!(comp_of(&p, inst1), Some(c1));
+    }
+
+    #[test]
+    fn while_pressing_changes_and_reverts_on_release() {
+        let (mut d, screen, inst, c1, c2) = variant_fixture();
+        add(&mut d, inst, react(Trigger::WhilePressing, Action::ChangeTo { dest: c2 }, None));
+        let mut p = Player::new(&d, screen);
+        p.pointer_down(Some(inst));
+        assert_eq!(comp_of(&p, inst), Some(c2));
+        p.pointer_up(Some(inst), false);
+        assert_eq!(comp_of(&p, inst), Some(c1));
+    }
+
+    #[test]
+    fn click_on_an_instance_swaps_it_and_stays_swapped() {
+        let (mut d, screen, inst, c1, c2) = variant_fixture();
+        add(&mut d, c1, react(Trigger::OnClick, Action::ChangeTo { dest: c2 }, None));
+        let mut p = Player::new(&d, screen);
+        p.pointer_up(Some(inst), false);
+        assert_eq!(comp_of(&p, inst), Some(c2));
+        p.pointer_move(Some(inst));
+        p.pointer_move(None);
+        assert_eq!(comp_of(&p, inst), Some(c2), "On click is not undone by moving away");
+    }
+
+    // --------------------------------------------------------- triggers
+
+    #[test]
+    fn key_triggers_need_the_exact_modifiers() {
+        let mut f = fixture();
+        add(&mut f.doc, f.btn, react(Trigger::KeyPress { keys: "Ctrl+K".into() }, Action::Navigate { dest: f.b, preserve_scroll: false }, None));
+        add(&mut f.doc, f.btn_b, react(Trigger::KeyPress { keys: "K".into() }, Action::Navigate { dest: f.c, preserve_scroll: false }, None));
+        let mut p = Player::new(&f.doc, f.a);
+        p.key("K");
+        assert_eq!(p.current, f.a, "plain K is not Ctrl+K, and B is not on screen");
+        p.key("Shift+Ctrl+K");
+        assert_eq!(p.current, f.a, "an extra modifier does not match");
+        p.key("Ctrl+K");
+        assert_eq!(p.current, f.b);
+        p.key("K");
+        assert_eq!(p.current, f.c, "the new screen's own key trigger runs");
+        assert!(keys_match("Cmd+K", "Ctrl+K") && keys_match("Command+Shift+S", "shift+ctrl+s"));
+        assert!(keys_match("Esc", "Escape") && keys_match("Return", "Enter"));
+    }
+
+    #[test]
+    fn key_triggers_run_all_their_actions_in_order() {
+        let (mut f, v) = counter();
+        f.doc.get_mut(f.btn).unwrap().prototype.reactions.clear();
+        let set = |e: Expression| Action::SetVariable { variable: v.count.clone(), value: e };
+        f.doc.get_mut(f.btn).unwrap().prototype.reactions.push(Reaction {
+            trigger: Trigger::KeyPress { keys: "Space".into() },
+            actions: vec![
+                set(Expression::number(4.0)),
+                Action::Navigate { dest: f.b, preserve_scroll: false },
+                set(Expression::binary(BinaryOp::Add, var(&v.count), Expression::number(1.0))),
+            ],
+            transition: None,
+        });
+        let mut p = Player::new(&f.doc, f.a);
+        p.key("Space");
+        assert_eq!(p.current, f.b);
+        assert_eq!(num_of(&p, &v.count), 5.0);
+    }
+
+    #[test]
+    fn gamepad_triggers_match_their_device() {
+        let mut f = fixture();
+        let pad = |device, buttons: &str| Trigger::GamepadPress { device, buttons: buttons.into() };
+        add(&mut f.doc, f.btn, react(pad(GamepadDevice::Xbox, "A"), Action::Navigate { dest: f.b, preserve_scroll: false }, None));
+        add(&mut f.doc, f.btn_b, react(pad(GamepadDevice::Generic, "LB+A"), Action::Navigate { dest: f.c, preserve_scroll: false }, None));
+        let mut p = Player::new(&f.doc, f.a);
+        p.gamepad(GamepadDevice::PlayStation, "A");
+        assert_eq!(p.current, f.a, "an Xbox trigger ignores a PlayStation pad");
+        p.key("A");
+        assert_eq!(p.current, f.a, "keyboard keys are not gamepad buttons");
+        p.gamepad(GamepadDevice::Xbox, "a");
+        assert_eq!(p.current, f.b);
+        p.gamepad(GamepadDevice::PlayStation, "A+LB");
+        assert_eq!(p.current, f.c, "a generic trigger takes any pad, in any button order");
+    }
+
+    #[test]
+    fn after_delay_chains_across_screens() {
+        let mut f = fixture();
+        add(&mut f.doc, f.a, react(Trigger::AfterDelay { delay_ms: 1000 }, Action::Navigate { dest: f.b, preserve_scroll: false }, None));
+        add(&mut f.doc, f.b, react(Trigger::AfterDelay { delay_ms: 500 }, Action::Navigate { dest: f.c, preserve_scroll: false }, None));
+        add(&mut f.doc, f.c, react(Trigger::AfterDelay { delay_ms: 250 }, Action::Back, None));
+        let mut p = Player::new(&f.doc, f.a);
+        p.tick(0.0);
+        p.tick(0.9);
+        assert_eq!(p.current, f.a);
+        p.tick(1.0);
+        assert_eq!(p.current, f.b);
+        p.tick(1.4);
+        assert_eq!(p.current, f.b, "the second delay counts from when B appeared");
+        p.tick(1.5);
+        assert_eq!(p.current, f.c);
+        p.tick(1.7);
+        assert_eq!(p.current, f.c);
+        p.tick(1.8);
+        assert_eq!(p.current, f.b, "Back returns, and B's timer starts over");
+        assert!(p.is_animating());
+    }
+
+    #[test]
+    fn several_delays_on_one_layer_each_fire_once() {
+        let mut f = fixture();
+        let (v_count, label) = {
+            let v = add_vars(&mut f.doc);
+            (v.count, v.label)
+        };
+        for (ms, n) in [(300u32, 1.0), (100, 2.0), (200, 3.0)] {
+            add(
+                &mut f.doc,
+                f.a,
+                react(Trigger::AfterDelay { delay_ms: ms }, Action::SetVariable { variable: v_count.clone(), value: Expression::number(n) }, None),
+            );
+        }
+        let mut p = Player::new(&f.doc, f.a);
+        p.tick(0.0);
+        p.tick(0.15);
+        assert_eq!(num_of(&p, &v_count), 2.0);
+        p.tick(0.25);
+        assert_eq!(num_of(&p, &v_count), 3.0);
+        p.tick(0.35);
+        assert_eq!(num_of(&p, &v_count), 1.0, "fired in time order, not list order");
+        assert!(p.variable_value(&label).is_some());
+    }
+
+    #[test]
+    fn mouse_leave_delay_waits_after_the_pointer_left() {
+        let mut f = fixture();
+        add(&mut f.doc, f.btn, react(Trigger::MouseLeave { delay_ms: 400 }, Action::Navigate { dest: f.b, preserve_scroll: false }, None));
+        let mut p = Player::new(&f.doc, f.a);
+        p.tick(0.0);
+        p.pointer_move(Some(f.btn));
+        p.tick(0.2);
+        p.pointer_move(None);
+        p.tick(0.5);
+        assert_eq!(p.current, f.a, "400ms after leaving at t=0.2");
+        p.tick(0.7);
+        assert_eq!(p.current, f.b);
+    }
+
+    // ------------------------------------------------- overlays and drag
+
+    #[test]
+    fn manual_overlays_open_relative_to_the_trigger_layer() {
+        let (mut f, _) = overlay_fixture();
+        for a in &mut f.doc.get_mut(f.btn).unwrap().prototype.reactions[0].actions {
+            if let Action::OpenOverlay { position, offset, .. } = a {
+                *position = OverlayPosition::Manual;
+                *offset = Vec2::new(10.0, -120.0);
+            }
+        }
+        let mut p = Player::new(&f.doc, f.a);
+        p.pointer_up(Some(f.btn), false);
+        // the button sits at (20, 700): the overlay is offset from its top-left
+        assert_eq!(p.overlays[0].origin, Vec2::new(30.0, 580.0));
+        assert_eq!(p.overlays[0].position, OverlayPosition::Manual);
+    }
+
+    fn drag_overlay_fixture() -> (Fx, NodeId, NodeId) {
+        let (mut f, close) = overlay_fixture();
+        let modal = f.doc.get(close).unwrap().parent.unwrap();
+        let id = f.doc.alloc_id();
+        let handle = f.doc.insert(modal, Node::rectangle(id, Rect::new(60.0, 0.0, 80.0, 20.0))).unwrap();
+        add(&mut f.doc, handle, react(Trigger::OnDrag, Action::CloseOverlay, None));
+        (f, handle, modal)
+    }
+
+    #[test]
+    fn dragging_an_overlay_far_enough_dismisses_it() {
+        let (f, handle, modal) = drag_overlay_fixture();
+        let mut p = Player::new(&f.doc, f.a);
+        p.pointer_up(Some(f.btn), false);
+        assert_eq!(p.overlays.len(), 1);
+        assert!(p.drag(Some(handle)), "On drag took the gesture");
+        assert_eq!(p.overlays.len(), 1, "closing waits for the release");
+        p.drag_by(Vec2::new(0.0, -30.0));
+        assert_eq!(p.overlays[0].drag, Vec2::new(0.0, 30.0), "the overlay follows the pointer (drag down 30)");
+        p.pointer_up(None, true);
+        assert_eq!(p.overlays[0].drag, Vec2::ZERO, "30 is less than the threshold: it snaps back");
+        assert_eq!(p.overlays[0].frame, modal);
+        p.drag(Some(handle));
+        p.drag_by(Vec2::new(0.0, -80.0));
+        p.pointer_up(None, true);
+        assert!(p.overlays.is_empty(), "dragged past the threshold: dismissed");
+    }
+
+    #[test]
+    fn on_drag_scroll_to_moves_the_frame_with_the_pointer() {
+        let (mut f, tall, header) = scroll_fixture();
+        let id = f.doc.alloc_id();
+        f.doc.get_mut(tall).unwrap().kind = NodeKind::Frame(FrameProps::default());
+        let target = f.doc.insert(tall, Node::rectangle(id, Rect::new(0.0, 900.0, 50.0, 50.0))).unwrap();
+        add(&mut f.doc, header, react(Trigger::OnDrag, Action::ScrollTo { dest: target, offset: Vec2::ZERO }, None));
+        let mut p = Player::new(&f.doc, f.b);
+        assert!(p.drag(Some(header)));
+        assert_eq!(p.scroll_of(f.b).y, 0.0, "nothing jumps when the drag starts");
+        p.drag_by(Vec2::new(0.0, 120.0));
+        assert_eq!(p.scroll_of(f.b).y, 120.0);
+        p.drag_by(Vec2::new(0.0, 5000.0));
+        assert_eq!(p.scroll_of(f.b).y, 1200.0, "clamped to the scroll range");
+        p.pointer_up(None, true);
+        p.drag_by(Vec2::new(0.0, 50.0));
+        assert_eq!(p.scroll_of(f.b).y, 1200.0, "the gesture is over");
+    }
+
+    #[test]
+    fn other_on_drag_actions_fire_at_the_start() {
+        let mut f = fixture();
+        add(&mut f.doc, f.btn, react(Trigger::OnDrag, Action::Navigate { dest: f.b, preserve_scroll: false }, None));
+        let mut p = Player::new(&f.doc, f.a);
+        assert!(p.drag(Some(f.btn)));
+        assert_eq!(p.current, f.b);
+        assert!(!p.drag(Some(f.btn_b)), "nothing on B reacts to a drag");
+    }
+
+    // ------------------------------------------------------------ media
+
+    fn video_fixture() -> (Fx, NodeId) {
+        let mut f = fixture();
+        let id = f.doc.alloc_id();
+        let clip = f.doc.insert(f.a, Node::rectangle(id, Rect::new(0.0, 0.0, 200.0, 120.0))).unwrap();
+        f.doc.get_mut(clip).unwrap().prototype.videos = vec![VideoFill { paint: 0, source: "video-1".into(), autoplay: false, looping: false, muted: false }];
+        (f, clip)
+    }
+
+    #[test]
+    fn media_actions_drive_playback_state() {
+        let (mut f, clip) = video_fixture();
+        let op = |o: MediaOp| Action::MediaControl { dest: clip, op: o };
+        f.doc.get_mut(f.btn).unwrap().prototype.reactions.push(Reaction {
+            trigger: Trigger::OnClick,
+            actions: vec![op(MediaOp::Play), op(MediaOp::Mute)],
+            transition: None,
+        });
+        let mut p = Player::new(&f.doc, f.a);
+        p.tick(10.0);
+        assert!(!p.media[&clip].playing, "autoplay off");
+        p.pointer_up(Some(f.btn), false);
+        let m = &p.media[&clip];
+        assert!(m.playing && m.muted);
+        assert!((m.position(12.5) - 2.5).abs() < 1e-9, "plays in real time");
+        p.tick(12.0);
+        p.media_control(clip, MediaOp::Pause);
+        assert!((p.media[&clip].position(99.0) - 2.0).abs() < 1e-9, "paused at 2s");
+        p.media_control(clip, MediaOp::TogglePlay);
+        assert!(p.media[&clip].playing);
+        p.media_control(clip, MediaOp::ToggleMute);
+        assert!(!p.media[&clip].muted);
+        p.media_control(clip, MediaOp::SeekTo(30.0));
+        assert!((p.media[&clip].position(12.0) - 30.0).abs() < 1e-9);
+        p.media_control(clip, MediaOp::SkipBy(-10.0));
+        assert!((p.media[&clip].position(12.0) - 20.0).abs() < 1e-9);
+        p.media_control(clip, MediaOp::SkipBy(-100.0));
+        assert_eq!(p.media[&clip].position(12.0), 0.0, "never before the start");
+        assert!(p.is_animating(), "a playing video keeps the clock running");
+        // not a video layer: ignored
+        p.media_control(f.btn, MediaOp::Play);
+        assert!(!p.media.contains_key(&f.btn));
+    }
+
+    #[test]
+    fn video_length_loops_or_stops() {
+        let (f, clip) = video_fixture();
+        let mut p = Player::new(&f.doc, f.a);
+        p.media_control(clip, MediaOp::Play);
+        p.set_media_duration(clip, 4.0);
+        assert_eq!(p.media[&clip].position(3.0), 3.0);
+        assert_eq!(p.media[&clip].position(9.0), 4.0, "holds the last frame");
+        p.media_control(clip, MediaOp::SetLoop(true));
+        assert!((p.media[&clip].position(9.0) - 1.0).abs() < 1e-9, "wraps around");
+        p.media_control(clip, MediaOp::SetLoop(false));
+        p.tick(100.0);
+        p.media_control(clip, MediaOp::Pause);
+        p.media_control(clip, MediaOp::Play);
+        assert_eq!(p.media[&clip].position(100.0), 0.0, "playing from the end restarts");
+    }
+
+    #[test]
+    fn autoplay_starts_when_the_screen_is_shown() {
+        let (mut f, clip) = video_fixture();
+        f.doc.get_mut(clip).unwrap().prototype.videos[0].autoplay = true;
+        f.doc.get_mut(clip).unwrap().prototype.videos[0].looping = true;
+        let mut p = Player::new(&f.doc, f.a);
+        let m = &p.media[&clip];
+        assert!(m.playing && m.looping && !m.muted);
+        p.restart(&f.doc, f.a);
+        assert!(p.media[&clip].playing);
     }
 }

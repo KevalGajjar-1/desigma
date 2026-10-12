@@ -3,6 +3,7 @@
 //! interaction editor popover.
 
 use super::properties::{checkbox, open_picker, picker_popup, section_sep, sublabel, title, Pane, PickTarget};
+use super::proto_actions;
 use super::{clipped, scrollbar, wheel_scroll};
 use crate::app::App;
 use crate::icons::{self, Icon};
@@ -206,6 +207,13 @@ fn selection_sections(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[NodeId
     }
     section_sep(ui, pane, false);
 
+    // Video fill: playback options (the poster frame is the layer's image fill).
+    if let Some(id) = single {
+        if let Some(v) = app.doc.get(id).and_then(|n| n.prototype.videos.first().cloned()) {
+            video_section(app, ui, pane, id, &v);
+        }
+    }
+
     // Scroll behaviour.
     title(ui, pane, "Scroll behavior", None, false);
     let frames: Vec<NodeId> = sel
@@ -277,6 +285,52 @@ fn selection_sections(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[NodeId
     }
 }
 
+/// One line about the video file: codec, size, length, or why it only shows its poster.
+fn video_status(app: &App, ui: &Ui, source: &str) -> String {
+    let Some(bytes) = app.doc.images.get(source) else { return "Video file is missing".into() };
+    let id = egui::Id::new(("video-status", source, bytes.len()));
+    if let Some(s) = ui.data(|d| d.get_temp::<String>(id)) {
+        return s;
+    }
+    let s = match crate::video::probe(bytes) {
+        None => "Not a video file".to_string(),
+        Some(i) => match i.unsupported_reason() {
+            Some(r) => format!("{r} (shows the poster frame)"),
+            None => format!("{} {}x{}, {:.1}s", i.codec.name(), i.width, i.height, i.duration),
+        },
+    };
+    ui.data_mut(|d| d.insert_temp(id, s.clone()));
+    s
+}
+
+fn video_section(app: &mut App, ui: &mut Ui, pane: &mut Pane, id: NodeId, v: &VideoFill) {
+    title(ui, pane, "Video", None, false);
+    let status = video_status(app, ui, &v.source);
+    let ok = !status.starts_with("Unsupported") && !status.contains("missing") && !status.starts_with("Not a");
+    let galley = ui.painter().layout(status, theme::font_small(), if ok { theme::TEXT_TERTIARY } else { theme::DANGER }, theme::SECTION_CONTENT_W);
+    let r = pane.rect(theme::SECTION_CONTENT_X, 0.0, theme::SECTION_CONTENT_W, galley.size().y);
+    record(ui, "proto-video-status", r);
+    let h = galley.size().y;
+    ui.painter().galley(r.min, galley, theme::TEXT_TERTIARY);
+    pane.y += h + 8.0;
+    for (key, label, value) in [("autoplay", "Autoplay", v.autoplay), ("loop", "Loop", v.looping), ("muted", "Muted", v.muted)] {
+        record(ui, &format!("proto-video-{key}"), pane.rect(theme::SECTION_CONTENT_X, 0.0, theme::SECTION_CONTENT_W, theme::FIELD_HEIGHT));
+        if let Some(nv) = checkbox(ui, pane, &format!("video-{key}"), label, value) {
+            app.proto_edit(&[id], |p| {
+                if let Some(f) = p.videos.first_mut() {
+                    match key {
+                        "autoplay" => f.autoplay = nv,
+                        "loop" => f.looping = nv,
+                        _ => f.muted = nv,
+                    }
+                }
+            });
+        }
+    }
+    pane.y += 4.0;
+    section_sep(ui, pane, false);
+}
+
 fn reaction_row(app: &mut App, ui: &mut Ui, pane: &mut Pane, id: NodeId, i: usize, r: &Reaction) {
     let row = pane.rect(8.0, 0.0, theme::RIGHT_PANEL_WIDTH - 16.0, theme::PROTO_ROW_HEIGHT);
     record(ui, &format!("proto-row-{i}"), row);
@@ -320,13 +374,22 @@ fn reaction_row(app: &mut App, ui: &mut Ui, pane: &mut Pane, id: NodeId, i: usiz
 const LABEL_W: f32 = 72.0;
 
 /// "Label ......[control]" row; returns the control rect.
-fn label_ctl(ui: &Ui, pane: &Pane, label: &str) -> Rect {
+pub(super) fn label_ctl(ui: &Ui, pane: &Pane, label: &str) -> Rect {
     let r = pane.rect(theme::SECTION_CONTENT_X, 0.0, theme::SECTION_CONTENT_W, theme::FIELD_HEIGHT);
     ui.painter().text(Pos2::new(r.left(), r.center().y), Align2::LEFT_CENTER, label, theme::font_body(), theme::TEXT_SECONDARY);
     Rect::from_min_max(Pos2::new(r.left() + LABEL_W, r.top()), r.max)
 }
 
-fn next_row(pane: &mut Pane) {
+/// A small tertiary note under a field.
+fn hint_line(ui: &Ui, pane: &mut Pane, text: &str) {
+    let r = pane.rect(theme::SECTION_CONTENT_X, -4.0, theme::SECTION_CONTENT_W, 14.0);
+    let galley = ui.painter().layout(text.to_string(), theme::font_small(), theme::TEXT_TERTIARY, r.width());
+    let h = galley.size().y;
+    ui.painter().galley(r.min, galley, theme::TEXT_TERTIARY);
+    pane.y += h + 6.0;
+}
+
+pub(super) fn next_row(pane: &mut Pane) {
     pane.y += theme::FIELD_HEIGHT + 8.0;
 }
 
@@ -334,7 +397,7 @@ fn name_of(doc: &Document, id: NodeId) -> String {
     doc.get(id).map(|n| n.name.clone()).unwrap_or_else(|| "(missing)".into())
 }
 
-fn dest_dropdown(ui: &mut Ui, pane: &mut Pane, doc: &Document, key: &str, label: &str, cur: NodeId, options: &[NodeId]) -> Option<NodeId> {
+pub(super) fn dest_dropdown(ui: &mut Ui, pane: &mut Pane, doc: &Document, key: &str, label: &str, cur: NodeId, options: &[NodeId]) -> Option<NodeId> {
     let r = label_ctl(ui, pane, label);
     record(ui, &format!("proto-pop-{key}"), r);
     let names: Vec<String> = options.iter().map(|o| name_of(doc, *o)).collect();
@@ -355,7 +418,7 @@ fn layers_below(doc: &Document, top: NodeId, cap: usize) -> Vec<NodeId> {
 }
 
 /// Components that an instance of `src` can change to: siblings in its set, else all components.
-fn variants_of(doc: &Document, src: NodeId) -> Vec<NodeId> {
+pub(super) fn variants_of(doc: &Document, src: NodeId) -> Vec<NodeId> {
     let mut cur = Some(src);
     while let Some(id) = cur {
         let Some(n) = doc.get(id) else { break };
@@ -419,42 +482,35 @@ fn popover(app: &mut App, ui: &mut Ui, region: Rect) {
         if let Trigger::KeyPress { keys } = &r.trigger {
             let c = label_ctl(ui, &pane, "Keys");
             record(ui, "proto-pop-keys", c);
-            if let Some(s) = field::text_input(ui, c, "pop-keys", keys) {
+            if let Some(s) = field::text_input_ph(ui, c, "pop-keys", keys, "e.g. Ctrl+K") {
                 r.trigger = Trigger::KeyPress { keys: s.trim().to_string() };
             }
             next_row(&mut pane);
+            hint_line(ui, &mut pane, "Modifiers: Ctrl, Alt, Shift. Join keys with +.");
+        }
+        if let Trigger::GamepadPress { device, buttons } = r.trigger.clone() {
+            let c = label_ctl(ui, &pane, "Controller");
+            record(ui, "proto-pop-gamepad-device", c);
+            let names: Vec<String> = proto::GAMEPAD_DEVICES.iter().map(|d| d.0.to_string()).collect();
+            let cur = proto::gamepad_device_index(device);
+            if let Some(i) = dropdown(ui, c, "pop-gamepad-device", proto::GAMEPAD_DEVICES[cur].0, &names) {
+                r.trigger = Trigger::GamepadPress { device: proto::GAMEPAD_DEVICES[i].1, buttons: buttons.clone() };
+            }
+            next_row(&mut pane);
+            let c = label_ctl(ui, &pane, "Buttons");
+            record(ui, "proto-pop-gamepad-buttons", c);
+            if let Some(s) = field::text_input_ph(ui, c, "pop-gamepad-buttons", &buttons, "e.g. A or LB+A") {
+                r.trigger = Trigger::GamepadPress { device, buttons: s.trim().to_string() };
+            }
+            next_row(&mut pane);
+            hint_line(ui, &mut pane, "A B X Y LB RB LT RT Back Start DPadUp/Down/Left/Right");
         }
         widgets::hline(ui.painter(), pane.x0, pane.x0 + w, pane.oy + pane.y, theme::BORDER_MENU);
         pane.y += 9.0;
 
-        // Actions.
-        let n_actions = r.actions.len();
-        let mut remove_action = None;
-        for ai in 0..n_actions {
-            let ac = label_ctl(ui, &pane, "Action");
-            record(ui, &format!("proto-pop-action-{ai}"), ac);
-            let anames: Vec<String> = proto::ACTIONS.iter().map(|s| s.to_string()).collect();
-            let cur_i = proto::action_index(&r.actions[ai]);
-            let dd = if n_actions > 1 { Rect::from_min_max(ac.min, Pos2::new(ac.right() - 28.0, ac.bottom())) } else { ac };
-            if let Some(i) = dropdown(ui, dd, ("pop-action", ai), proto::ACTIONS[cur_i], &anames) {
-                if i != cur_i {
-                    let fallback = frames.iter().copied().find(|f| Some(*f) != own_top).or(own_top).unwrap_or(node);
-                    let fb = if i == 7 { variants_of(&app.doc, node).first().copied().unwrap_or(fallback) } else { fallback };
-                    r.actions[ai] = proto::action_of_index(i, &r.actions[ai], fb);
-                }
-            }
-            if n_actions > 1 {
-                let b = Rect::from_min_size(Pos2::new(ac.right() - 24.0, ac.top()), Vec2::splat(24.0));
-                if widgets::icon_button(ui, b, ("pop-rm-action", ai), Icon::Minus, false, "Remove action").clicked() {
-                    remove_action = Some(ai);
-                }
-            }
-            next_row(&mut pane);
-            action_params(app, ui, &mut pane, node, &frames, own_top, ai, &mut r.actions[ai]);
-        }
-        if let Some(ai) = remove_action {
-            r.actions.remove(ai);
-        }
+        // Actions (run in order).
+        let cx = proto_actions::EditCtx { node, frames: &frames, own_top, depth: 0, allow_empty: false };
+        proto_actions::actions_editor(app, ui, &mut pane, cx, &mut r.actions, "");
         let add_r = pane.rect(theme::SECTION_CONTENT_X, 0.0, theme::SECTION_CONTENT_W, theme::FIELD_HEIGHT);
         record(ui, "proto-pop-add-action", add_r);
         let ar = ui.interact(add_r, ui.id().with("pop-add-action"), Sense::click());
@@ -517,8 +573,8 @@ fn popover(app: &mut App, ui: &mut Ui, region: Rect) {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn action_params(app: &mut App, ui: &mut Ui, pane: &mut Pane, node: NodeId, frames: &[NodeId], own_top: Option<NodeId>, ai: usize, a: &mut Action) {
-    let key = format!("{ai}");
+pub(super) fn action_params(app: &mut App, ui: &mut Ui, pane: &mut Pane, node: NodeId, frames: &[NodeId], own_top: Option<NodeId>, ai: &str, a: &mut Action) {
+    let key = ai;
     match a {
         Action::Navigate { dest, preserve_scroll } => {
             if let Some(d) = dest_dropdown(ui, pane, &app.doc, &format!("nav-{key}"), "Destination", *dest, frames) {
@@ -670,7 +726,7 @@ fn action_params(app: &mut App, ui: &mut Ui, pane: &mut Pane, node: NodeId, fram
                 *dest = d;
             }
         }
-        Action::Back | Action::CloseOverlay => {}
+        _ => {}
     }
 }
 

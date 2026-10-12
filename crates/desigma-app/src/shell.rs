@@ -58,6 +58,7 @@ impl Shell {
         let mut app = App::new(match opts.fixture.as_deref() {
             Some("no-selection") => demo::reference_document(),
             Some("variables") => demo::variables_document(),
+            Some(crate::protovars::FIXTURE) => crate::protovars::document(),
             Some(f) if crate::vecfixture::FIXTURES.contains(&f) => crate::vecfixture::document(),
             _ => demo::demo_document(),
         });
@@ -137,6 +138,13 @@ impl Shell {
         }
         if opts.present {
             app.start_present();
+            if opts.panel.as_deref() == Some("present-variables") {
+                if opts.fixture.as_deref() == Some(crate::protovars::FIXTURE) {
+                    crate::protovars::prime_present(&mut app);
+                } else if let Some(st) = app.proto.present.as_mut() {
+                    st.show_vars = true;
+                }
+            }
         }
         if let Some(q) = &opts.find {
             app.find.query = q.clone();
@@ -148,6 +156,11 @@ impl Shell {
             }
         }
         match opts.panel.as_deref() {
+            Some("interaction") => {
+                app.ui.right_tab = Some(crate::app::RightTab::Prototype);
+                crate::protovars::open_editor(&mut app);
+            }
+            Some("present-variables") => {}
             Some("libraries") => app.open_libraries(),
             Some("version-history") => crate::history::preset::apply(&mut app, opts.library.clone()),
             Some(panel @ ("variables" | "variables-floating")) => {

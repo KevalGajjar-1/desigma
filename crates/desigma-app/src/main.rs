@@ -20,6 +20,7 @@ mod ops;
 mod panels;
 mod present;
 mod proto;
+mod protovars;
 mod richtext;
 mod shell;
 mod styles;
@@ -30,6 +31,7 @@ mod util;
 mod variables;
 mod vecfixture;
 mod vecops;
+mod video;
 mod widgets;
 
 use std::sync::atomic::Ordering;
