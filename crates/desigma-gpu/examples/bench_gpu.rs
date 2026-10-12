@@ -79,7 +79,7 @@ fn big_doc() -> (Document, NodeId, Vec<NodeId>) {
                     Node::text(id, Rect::new(x, y, 160.0, 20.0), format!("Label {f}-{i} lorem ipsum"), style)
                 }
                 6 | 7 => {
-                    let mut n = Node::new(id, NodeKind::Vector { paths: vec![star(w, h)] });
+                    let mut n = Node::new(id, NodeKind::Vector { paths: vec![star(w, h)], network: None });
                     n.transform = Affine::translate(x, y);
                     n.size = Vec2::new(w, h);
                     n.fills = vec![Paint::solid(color)];

@@ -106,6 +106,7 @@ pub fn demo_scene() -> (Document, NodeId) {
                     ],
                     fill_rule: FillRule::NonZero,
                 }],
+                network: None,
             },
         );
         n.transform = Affine::translate(590.0, 20.0);
