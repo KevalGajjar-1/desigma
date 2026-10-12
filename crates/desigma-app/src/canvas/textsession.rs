@@ -263,6 +263,18 @@ pub fn insert_text(app: &mut App, s: &str, kind: EditKind) {
 }
 
 fn delete(app: &mut App, forward: bool, ctrl: bool) {
+    // Backspace at the start of a list item turns it into a plain paragraph (outdents nested ones).
+    if !forward {
+        if let Some(caret) = app.canvas.text.as_ref().filter(|s| s.range().is_empty()).map(|s| s.caret) {
+            if props_of(app).is_some_and(|(t, _)| t.has_lists()) {
+                let mut done = false;
+                edit_props(app, Some((EditKind::Deleting, true)), |t, _, _| done = richtext::backspace_at_item_start(t, caret));
+                if done {
+                    return;
+                }
+            }
+        }
+    }
     edit_props(app, Some((EditKind::Deleting, false)), |t, caret, anchor| {
         let mut r = (*caret).min(*anchor)..(*caret).max(*anchor);
         if r.is_empty() {
@@ -286,25 +298,25 @@ fn delete(app: &mut App, forward: bool, ctrl: bool) {
 }
 
 fn enter(app: &mut App) {
-    // Continue (or end) a list when pressing Enter inside a list item.
-    let cont = props_of(app).and_then(|(t, _)| {
-        let s = app.canvas.text.as_ref()?;
-        if !s.range().is_empty() {
-            return None;
+    // Enter on an empty list item ends the list (or outdents a nested item); elsewhere the
+    // newline keeps the paragraph's list membership, so Enter inside an item continues the list.
+    let caret = app.canvas.text.as_ref().filter(|s| s.range().is_empty()).map(|s| s.caret);
+    if let Some(caret) = caret {
+        let mut done = false;
+        edit_props(app, Some((EditKind::Other, true)), |t, _, _| done = richtext::exit_empty_item(t, caret));
+        if done {
+            return;
         }
-        richtext::list_continuation(&t.content, s.caret)
-    });
-    match cont {
-        Some((_, true, prefix)) => {
-            edit_props(app, Some((EditKind::Other, true)), |t, caret, anchor| {
-                richtext::splice(t, prefix.clone(), "", None);
-                *caret = prefix.start;
-                *anchor = prefix.start;
-            });
-        }
-        Some((next, false, _)) => insert_text(app, &format!("\n{next}"), EditKind::Other),
-        None => insert_text(app, "\n", EditKind::Other),
     }
+    insert_text(app, "\n", EditKind::Other);
+}
+
+/// Tab / Shift+Tab: nest or un-nest the list items touched by the selection.
+fn change_list_level(app: &mut App, delta: i8) {
+    let Some(range) = app.canvas.text.as_ref().map(|s| s.range()) else { return };
+    edit_props(app, Some((EditKind::Other, true)), |t, _, _| {
+        richtext::change_level(t, range.clone(), delta);
+    });
 }
 
 /// In-session undo (`redo = false`) or redo.
@@ -389,25 +401,8 @@ pub fn text_command(app: &mut App, cmd: TextCmd) {
         let sum = session_summary(app);
         match cmd {
             TextCmd::List(kind) => {
-                let Some(sess) = app.canvas.text.as_ref() else { return };
-                let range = sess.range();
-                let caret_at_end = sess.caret >= sess.anchor;
-                let Some((before, _)) = props_of(app) else { return };
-                let para_start = richtext::paragraphs_in(&before.content, range.clone()).first().map(|p| p.start).unwrap_or(0);
-                let mut new_range = range.clone();
-                edit_props(app, Some((EditKind::Other, true)), |t, _, _| {
-                    new_range = richtext::toggle_list(t, range.clone(), kind);
-                });
-                let delta = props_of(app).map(|(t, _)| t.content.len() as isize - before.content.len() as isize).unwrap_or(0);
-                if range.is_empty() {
-                    // the prefix sits at the paragraph start: the caret keeps its place in the text
-                    let c = ((range.start as isize + delta).max(para_start as isize)) as usize;
-                    set_sel(app, c, c, false);
-                } else if caret_at_end {
-                    set_sel(app, new_range.end, new_range.start, false);
-                } else {
-                    set_sel(app, new_range.start, new_range.end, false);
-                }
+                let Some(range) = app.canvas.text.as_ref().map(|s| s.range()) else { return };
+                edit_props(app, Some((EditKind::Other, true)), |t, _, _| richtext::toggle_list(t, range.clone(), kind));
             }
             c => {
                 let f = style_fn(c, sum.as_ref());
@@ -569,6 +564,7 @@ fn key_event(app: &mut App, key: egui::Key, m: egui::Modifiers) -> bool {
         K::U if ctrl => text_command(app, TextCmd::Underline),
         K::Period if ctrl && m.shift => text_command(app, TextCmd::SizeUp),
         K::Comma if ctrl && m.shift => text_command(app, TextCmd::SizeDown),
+        K::Tab if !ctrl => change_list_level(app, if m.shift { -1 } else { 1 }),
         K::Num7 if ctrl && m.shift => text_command(app, TextCmd::List(ListKind::Numbered)),
         K::Num8 if ctrl && m.shift => text_command(app, TextCmd::List(ListKind::Bullet)),
         K::Z if ctrl && !m.shift => undo_step(app, false),
@@ -738,18 +734,65 @@ mod tests {
         assert_eq!(text_of(&app, id).content, "hello world");
     }
 
+    fn kinds(app: &App, id: NodeId) -> Vec<Option<(ListKind, u8)>> {
+        text_of(app, id).paragraph_lists().iter().map(|i| i.map(|i| (i.kind, i.level))).collect()
+    }
+
     #[test]
     fn enter_continues_lists_and_toggles_work() {
         let (mut app, id) = app_with_text("one");
         set_sel(&mut app, 3, 3, false);
         text_command(&mut app, TextCmd::List(ListKind::Bullet));
-        assert_eq!(text_of(&app, id).content, "• one");
+        assert_eq!(text_of(&app, id).content, "one", "the text itself is untouched");
+        assert_eq!(kinds(&app, id), vec![Some((ListKind::Bullet, 0))]);
         key(&mut app, egui::Key::Enter, false, false);
-        assert_eq!(text_of(&app, id).content, "• one\n• ");
+        assert_eq!(text_of(&app, id).content, "one\n");
+        assert_eq!(kinds(&app, id), vec![Some((ListKind::Bullet, 0)); 2], "Enter continues the list");
         insert_text(&mut app, "two", EditKind::Typing);
         key(&mut app, egui::Key::Enter, false, false);
+        assert_eq!(kinds(&app, id).len(), 3);
         key(&mut app, egui::Key::Enter, false, false);
-        assert_eq!(text_of(&app, id).content, "• one\n• two\n", "empty item ends the list");
+        let t = text_of(&app, id);
+        assert_eq!(t.content, "one\ntwo\n", "Enter on an empty item adds no paragraph");
+        assert_eq!(kinds(&app, id), vec![Some((ListKind::Bullet, 0)), Some((ListKind::Bullet, 0)), None], "and ends the list");
+        // toggling off
+        set_sel(&mut app, 0, 0, false);
+        text_command(&mut app, TextCmd::List(ListKind::Bullet));
+        assert_eq!(kinds(&app, id), vec![None, Some((ListKind::Bullet, 0)), None]);
+    }
+
+    #[test]
+    fn shortcuts_toggle_and_tab_nests() {
+        let (mut app, id) = app_with_text("a\nb\nc");
+        key(&mut app, egui::Key::A, false, true);
+        key(&mut app, egui::Key::Num8, true, true);
+        assert_eq!(kinds(&app, id), vec![Some((ListKind::Bullet, 0)); 3]);
+        key(&mut app, egui::Key::Num7, true, true);
+        assert_eq!(kinds(&app, id), vec![Some((ListKind::Numbered, 0)); 3], "ctrl+shift+7 switches to numbers");
+        set_sel(&mut app, 2, 2, false);
+        key(&mut app, egui::Key::Tab, false, false);
+        key(&mut app, egui::Key::Tab, false, false);
+        assert_eq!(kinds(&app, id)[1], Some((ListKind::Numbered, 2)));
+        key(&mut app, egui::Key::Tab, true, false);
+        assert_eq!(kinds(&app, id)[1], Some((ListKind::Numbered, 1)));
+        assert_eq!(kinds(&app, id)[0], Some((ListKind::Numbered, 0)), "only the caret's item moved");
+        key(&mut app, egui::Key::Num7, true, true);
+        assert_eq!(kinds(&app, id)[1], None, "toggling the caret's item off leaves the others");
+        assert_eq!(kinds(&app, id)[2], Some((ListKind::Numbered, 0)));
+    }
+
+    #[test]
+    fn backspace_at_item_start_unlists() {
+        let (mut app, id) = app_with_text("ab");
+        text_command(&mut app, TextCmd::List(ListKind::Numbered));
+        set_sel(&mut app, 0, 0, false);
+        key(&mut app, egui::Key::Backspace, false, false);
+        assert_eq!(text_of(&app, id).content, "ab");
+        assert!(text_of(&app, id).lists.is_empty());
+        // mid text it deletes as usual
+        set_sel(&mut app, 2, 2, false);
+        key(&mut app, egui::Key::Backspace, false, false);
+        assert_eq!(text_of(&app, id).content, "a");
     }
 
     #[test]

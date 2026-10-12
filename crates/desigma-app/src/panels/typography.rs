@@ -47,6 +47,7 @@ pub fn combine(a: &Summary, b: &Summary) -> Summary {
         fills: m(&a.fills, &b.fills),
         decoration: m(&a.decoration, &b.decoration),
         case: m(&a.case, &b.case),
+        features: m(&a.features, &b.features),
     }
 }
 
@@ -212,7 +213,7 @@ pub(super) fn section(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[NodeId
         let a = [TextAlignH::Left, TextAlignH::Center, TextAlignH::Right][i];
         set_base(app, sel, |s| s.align_h = a);
     }
-    // list buttons share the row (emulated with literal prefixes, see richtext)
+    // list buttons share the row
     if let Some(i) = seg_text(ui, pane, theme::FIELD_COL_X[1], "list", &["\u{2022}", "1."], None, theme::SEGMENT_W) {
         ts::text_command(app, ts::TextCmd::List(if i == 0 { ListKind::Bullet } else { ListKind::Numbered }));
     }

@@ -416,6 +416,31 @@ mod tests {
     }
 
     #[test]
+    fn old_files_load_with_real_lists_and_new_fields_default() {
+        use crate::{Document, Node, NodeKind, Rect};
+        let mut d = Document::new("old");
+        let page = d.add_page("p");
+        let id = d.alloc_id();
+        d.insert(page, Node::text(id, Rect::new(0.0, 0.0, 50.0, 50.0), "\u{2022} one\n\u{2022} two", TextStyle::default())).unwrap();
+        let json = d.to_json().unwrap();
+        // a file from before lists / features existed has none of the new keys
+        let old = json
+            .replace("\"paragraph\"", "\"paragraph_x\"")
+            .replace("\"lists\"", "\"lists_x\"")
+            .replace("\"direction\"", "\"direction_x\"")
+            .replace("\"features\"", "\"features_x\"");
+        let back = Document::from_json(&old).unwrap();
+        let NodeKind::Text(t) = &back.get(id).unwrap().kind else { panic!() };
+        assert_eq!(t.content, "one\ntwo");
+        assert_eq!(t.paragraph_lists().len(), 2);
+        assert!(t.paragraph_lists().iter().all(|i| i.is_some_and(|i| i.kind == ListKind::Bullet)));
+        assert!(t.style.features.is_empty() && t.direction == TextDirection::Auto && t.paragraph == ParagraphProps::default());
+        // new files keep their lists untouched
+        let again = Document::from_json(&back.to_json().unwrap()).unwrap();
+        assert_eq!(again.get(id).unwrap().kind, back.get(id).unwrap().kind);
+    }
+
+    #[test]
     fn migrates_literal_prefixes() {
         let mut t = props("\u{2022} one\n\u{2022} two\nplain\n1. a\n2. b\n3. c\n7. lone");
         assert!(migrate_literal_lists(&mut t));
