@@ -43,8 +43,14 @@ impl Shell {
     pub fn build(ctx: &Context, opts: Options) -> Self {
         theme::install_fonts(ctx);
         theme::apply(ctx);
-        let mut app = App::new(if opts.fixture.as_deref() == Some("no-selection") { demo::reference_document() } else { demo::demo_document() });
-        app.doc.name = "Untitled".into();
+        let mut app = App::new(match opts.fixture.as_deref() {
+            Some("no-selection") => demo::reference_document(),
+            Some("variables") => demo::variables_document(),
+            _ => demo::demo_document(),
+        });
+        if opts.fixture.as_deref() != Some("variables") {
+            app.doc.name = "Untitled".into();
+        }
         if let Some(root) = opts.library.clone() {
             app.attach_library(root);
         }
@@ -113,7 +119,8 @@ impl Shell {
         if opts.present {
             app.start_present();
         }
-        if opts.panel.as_deref() == Some("variables") {
+        if let Some(panel) = opts.panel.as_deref().filter(|p| p.starts_with("variables")) {
+            app.vars.full = panel == "variables";
             app.open_variables();
         }
         let shot = opts.screenshot.map(|path| Shot {
@@ -174,18 +181,7 @@ impl Shell {
         }
         let typing = ctx.egui_wants_keyboard_input();
         if self.app.vars.open {
-            // The Variables modal owns the keyboard; undo / redo still work.
-            if !typing && self.app.ui.menu.is_none() {
-                for ev in ctx.input(|i| i.events.clone()) {
-                    if let Event::Key { key, pressed: true, modifiers, .. } = ev {
-                        match (key, modifiers.command, modifiers.shift) {
-                            (Key::Z, true, false) => self.app.undo(),
-                            (Key::Z, true, true) | (Key::Y, true, false) => self.app.redo(),
-                            _ => {}
-                        }
-                    }
-                }
-            }
+            // The Variables view handles its own keys (and undo / redo).
             return;
         }
         // Open menus own the keyboard (arrows, Enter, Escape, typing in the palette).
@@ -492,24 +488,33 @@ impl Shell {
         let canvas_left = if self.app.ui.left_collapsed { rail_rect.right() } else { left_rect.right() };
         let canvas_rect = Rect::from_min_max(Pos2::new(canvas_left, full.top()), Pos2::new(right_rect.left(), full.bottom()));
 
-        canvas::show(&mut self.app, ui, canvas_rect);
-        rail::show(&mut self.app, ui, rail_rect);
-        if self.app.ui.left_collapsed {
-            let b = Rect::from_min_size(Pos2::new(canvas_rect.left() + 8.0, canvas_rect.top() + 8.0), Vec2::splat(theme::PANEL_ACTION_BUTTON));
-            ui.painter().rect_filled(b, theme::cr(theme::RADIUS_MEDIUM), theme::BG);
-            if widgets::icon_button(ui, b, "show-sidebar", Icon::Sidebar, false, "Show sidebar").clicked() {
-                self.app.ui.left_collapsed = false;
-            }
+        let full_vars = self.app.vars.open && self.app.vars.full;
+        if full_vars {
+            // The local-variables full view replaces the left panel, canvas and right panel.
+            rail::show(&mut self.app, ui, rail_rect);
+            let content = Rect::from_min_max(Pos2::new(rail_rect.right(), full.top()), full.max);
+            crate::variables::view::show(&mut self.app, ui, content);
         } else {
-            left::show(&mut self.app, ui, left_rect);
+            canvas::show(&mut self.app, ui, canvas_rect);
+            rail::show(&mut self.app, ui, rail_rect);
+            if self.app.ui.left_collapsed {
+                let b = Rect::from_min_size(Pos2::new(canvas_rect.left() + 8.0, canvas_rect.top() + 8.0), Vec2::splat(theme::PANEL_ACTION_BUTTON));
+                ui.painter().rect_filled(b, theme::cr(theme::RADIUS_MEDIUM), theme::BG);
+                if widgets::icon_button(ui, b, "show-sidebar", Icon::Sidebar, false, "Show sidebar").clicked() {
+                    self.app.ui.left_collapsed = false;
+                }
+            } else {
+                left::show(&mut self.app, ui, left_rect);
+            }
+            right::show(&mut self.app, ui, right_rect);
+            toolbar::show(&mut self.app, ui, canvas_rect_for_toolbar(full));
+            self.context_menu(ui, canvas_rect);
+            menus::show(&mut self.app, &ctx);
+            panels::context::show(&mut self.app, &ctx);
+            // the floating panel (or only the inspector's binding picker when closed)
+            crate::variables::view::show(&mut self.app, ui, full);
         }
-        right::show(&mut self.app, ui, right_rect);
-        toolbar::show(&mut self.app, ui, canvas_rect_for_toolbar(full));
-        self.context_menu(ui, canvas_rect);
-        menus::show(&mut self.app, &ctx);
         crate::home::dialog::show(&mut self.app, &ctx);
-        panels::context::show(&mut self.app, &ctx);
-        crate::variables::modal::show(&mut self.app, &ctx);
         self.toast(ui, full);
 
         self.sync_title(&ctx);

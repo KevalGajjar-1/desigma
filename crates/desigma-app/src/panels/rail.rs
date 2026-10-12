@@ -56,8 +56,12 @@ pub fn show(app: &mut App, ui: &mut Ui, rect: Rect) {
         }
         let ir = Rect::from_min_size(Pos2::new(rect.left(), y), Vec2::new(inner_w, theme::RAIL_ITEM_SIZE));
         let resp = ui.interact(ir, ui.id().with(("rail", *label)), Sense::click());
-        let selected = app.ui.rail == Some(*item)
-            || (*item == RailItem::File && (app.ui.menu == Some(MenuKind::FileMenu) || (app.ui.rail.is_none() && !app.ui.left_collapsed)));
+        let selected = if app.vars.open {
+            *item == RailItem::Variables
+        } else {
+            app.ui.rail == Some(*item)
+                || (*item == RailItem::File && (app.ui.menu == Some(MenuKind::FileMenu) || (app.ui.rail.is_none() && !app.ui.left_collapsed)))
+        };
         // Active item: 32x32 rounded tile behind the icon.
         let ic = Pos2::new(ir.center().x, ir.top() + theme::RAIL_ICON_CENTER_Y);
         if selected {
@@ -69,11 +73,15 @@ pub fn show(app: &mut App, ui: &mut Ui, rect: Rect) {
         let font = if selected { theme::font_small_strong() } else { theme::font_small() };
         p.text(Pos2::new(ir.center().x, ir.top() + theme::RAIL_LABEL_CENTER_Y), Align2::CENTER_CENTER, *label, font, theme::TEXT);
         if resp.clicked() {
+            if *item != RailItem::Variables && app.vars.open {
+                // leaving the variables view returns to the editor
+                app.close_variables();
+            }
             if *item == RailItem::File {
                 toggle(app, MenuKind::FileMenu, ir);
             } else {
                 if *item == RailItem::Variables {
-                    app.open_variables();
+                    app.toggle_variables();
                     continue;
                 }
                 app.ui.rail = if app.ui.rail == Some(*item) { None } else { Some(*item) };

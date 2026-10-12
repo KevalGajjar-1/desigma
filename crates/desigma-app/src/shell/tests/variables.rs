@@ -1,14 +1,8 @@
-//! UI tests for variables: the modal, the inspector binding UI and mode switching.
+//! UI tests for variables: the view (floating panel and full view), the inspector binding UI and mode switching.
 
 use super::*;
 use crate::panels::rail;
 use desigma_doc::{PaintKind, VariableKind, VariableValue};
-
-fn open_modal(s: &mut Sim) {
-    let top = rail::cell_tops()[3];
-    s.click(Pos2::new(28.0, top + 20.0));
-    assert!(s.app().vars.open, "the Variables rail item opens the modal");
-}
 
 /// (collection id, light mode id, dark mode id) of the demo Theme collection.
 fn theme_ids(app: &App) -> (String, String, String) {
@@ -75,26 +69,75 @@ fn switching_the_card_to_dark_changes_rendered_pixels() {
     assert_eq!(card_pixel(&s), dark_px);
 }
 
+/// Top of the Variables rail cell, looked up so rail changes don't break the tests.
+fn variables_rail_top() -> f32 {
+    let i = rail::ITEMS.iter().position(|(item, ..)| *item == crate::app::RailItem::Variables).expect("Variables rail item");
+    rail::cell_tops()[i]
+}
+
+/// Opens the variables view with the rail item: it starts as the floating panel; `full` expands it.
+fn open_view(s: &mut Sim, full: bool) {
+    let top = variables_rail_top();
+    s.click(Pos2::new(28.0, top + 20.0));
+    assert!(s.app().vars.open, "the Variables rail item opens the view");
+    assert!(!s.app().vars.full, "it opens as the floating panel first");
+    if full {
+        s.click(s.rect_of("vars-expand").center());
+        assert!(s.app().vars.full);
+        s.frame(vec![]);
+    }
+}
+
+fn row_order(s: &Sim) -> Vec<String> {
+    let c = s.app().vars.collection.clone().unwrap();
+    s.app().doc.variable_collections[&c].variables.iter().map(|id| s.app().doc.variables[id].name.clone()).collect()
+}
+
+fn select_row(s: &mut Sim, name: &str) {
+    let r = s.rect_of(&format!("vars-row:{name}"));
+    s.click(Pos2::new(r.left() + 120.0, r.center().y));
+}
+
 #[test]
-fn rail_item_opens_modal_and_escape_closes_it() {
+fn rail_opens_floating_panel_then_full_view_and_back() {
     let mut s = Sim::new();
-    open_modal(&mut s);
+    open_view(&mut s, false);
     assert_eq!(s.app().vars.collection.as_deref(), s.app().doc.variable_collections.values().find(|c| c.name == "Theme").map(|c| c.id.as_str()));
-    s.key(Key::Escape);
+    // expand -> full view, collapse -> floating again (the form is remembered)
+    s.click(s.rect_of("vars-expand").center());
+    assert!(s.app().vars.full);
+    s.click(s.rect_of("vars-collapse").center());
+    assert!(!s.app().vars.full && s.app().vars.open);
+    // X closes, the rail item reopens in the last form
+    s.click(s.rect_of("vars-close").center());
     assert!(!s.app().vars.open);
+    let top = variables_rail_top();
+    s.click(Pos2::new(28.0, top + 20.0));
+    assert!(s.app().vars.open && !s.app().vars.full);
+    s.key(Key::Escape);
+    assert!(!s.app().vars.open, "Escape closes when nothing is selected");
+}
+
+#[test]
+fn floating_panel_drags_by_its_header() {
+    let mut s = Sim::new();
+    open_view(&mut s, false);
+    assert!(s.app().vars.float_pos.is_none());
+    s.drag(Pos2::new(110.0, 28.0), Pos2::new(190.0, 108.0));
+    let p = s.app().vars.float_pos.expect("moved");
+    assert!(p.x > 60.0 && p.y > 60.0, "{p:?}");
 }
 
 #[test]
 fn editing_a_number_cell_is_one_undo_step() {
     let mut s = Sim::new();
-    open_modal(&mut s);
+    open_view(&mut s, true);
     let (_, light, _) = theme_ids(s.app());
     let r = s.rect_of(&format!("vars-num:Radius/Card:{light}"));
     s.click(Pos2::new(r.left() + 30.0, r.center().y));
     s.type_text("20");
     s.key(Key::Enter);
     assert_eq!(var(s.app(), "Radius/Card").values[&light], VariableValue::Number(20.0));
-    // the bound Card radius follows at render time
     s.cmd_key(Key::Z);
     assert_eq!(var(s.app(), "Radius/Card").values[&light], VariableValue::Number(12.0));
     s.cmd_key(Key::Y);
@@ -104,10 +147,9 @@ fn editing_a_number_cell_is_one_undo_step() {
 #[test]
 fn create_variable_menu_adds_a_typed_variable() {
     let mut s = Sim::new();
-    open_modal(&mut s);
+    open_view(&mut s, true);
     let before = s.app().doc.variables.len();
-    let b = s.rect_of("vars-create");
-    s.click(b.center());
+    s.click(s.rect_of("vars-create").center());
     assert!(s.app().vars.menu.is_some());
     s.key(Key::ArrowDown);
     s.key(Key::ArrowDown); // Color, Number
@@ -117,7 +159,6 @@ fn create_variable_menu_adds_a_typed_variable() {
     let v = s.app().doc.variables.values().find(|v| v.name == "Number").expect("new Number variable");
     assert_eq!(v.kind, VariableKind::Number);
     assert_eq!(v.values.len(), 2, "one value per mode");
-    // the new variable's name field has focus (typing), so undo through the app
     s.shell.app.undo();
     assert_eq!(s.app().doc.variables.len(), before);
 }
@@ -125,7 +166,7 @@ fn create_variable_menu_adds_a_typed_variable() {
 #[test]
 fn add_collection_and_mode() {
     let mut s = Sim::new();
-    open_modal(&mut s);
+    open_view(&mut s, true);
     let colls = s.app().doc.variable_collections.len();
     s.click(s.rect_of("vars-add-collection").center());
     assert_eq!(s.app().doc.variable_collections.len(), colls + 1);
@@ -135,6 +176,22 @@ fn add_collection_and_mode() {
     let id = s.app().vars.collection.clone().unwrap();
     s.click(s.rect_of("vars-add-mode").center());
     assert_eq!(s.app().doc.variable_collections[&id].modes.len(), 2);
+}
+
+#[test]
+fn single_default_mode_header_reads_value_and_modes_rename() {
+    let mut s = Sim::new();
+    open_view(&mut s, true);
+    s.click(s.rect_of("vars-add-collection").center());
+    s.type_text("Spacing");
+    s.key(Key::Enter);
+    s.frame(vec![]);
+    s.rect_of("vars-mode:Value");
+    // a second mode switches the header to the mode names
+    s.click(s.rect_of("vars-add-mode").center());
+    s.frame(vec![]);
+    s.rect_of("vars-mode:Mode 1");
+    s.rect_of("vars-mode:Mode 2");
 }
 
 #[test]
@@ -189,16 +246,22 @@ fn numeric_fields_bind_and_unbind() {
 }
 
 #[test]
-fn names_edit_inline_and_keep_the_folder() {
+fn enter_renames_the_selected_row_keeping_its_group() {
     let mut s = Sim::new();
-    open_modal(&mut s);
-    let r = s.rect_of("vars-name:Text/Primary");
-    s.click(Pos2::new(r.left() + 20.0, r.center().y));
+    open_view(&mut s, true);
+    select_row(&mut s, "Text/Primary");
+    assert_eq!(s.app().vars.selected.len(), 1);
+    s.key(Key::Enter);
+    assert!(s.app().vars.renaming.is_some());
     s.type_text("Ink");
     s.key(Key::Enter);
     assert!(s.app().doc.variables.values().any(|v| v.name == "Text/Ink"));
     let m = s.rect_of("vars-mode:Dark");
     s.click(Pos2::new(m.left() + 20.0, m.center().y));
+    // double click renames a mode; here the header only selects, so use the app state directly
+    s.shell.app.vars.renaming = Some(('m', theme_ids(s.app()).2));
+    s.shell.app.vars.rename_frames = 0;
+    s.frame(vec![]);
     s.type_text("Night");
     s.key(Key::Enter);
     let (c, _, dark) = theme_ids(s.app());
@@ -206,18 +269,40 @@ fn names_edit_inline_and_keep_the_folder() {
 }
 
 #[test]
-fn row_menu_deletes_a_variable_and_its_bindings_in_one_step() {
+fn shift_and_ctrl_click_multi_select() {
     let mut s = Sim::new();
-    open_modal(&mut s);
+    open_view(&mut s, true);
+    let order: Vec<String> = row_order(&s);
+    let a = order[0].clone();
+    select_row(&mut s, &a);
+    let c = order.last().unwrap().clone();
+    assert_ne!(a, c);
+    s.mods = Modifiers::SHIFT;
+    select_row(&mut s, &c);
+    s.mods = Modifiers::NONE;
+    let n = s.app().vars.selected.len();
+    assert!(n >= 2, "shift selects a range: {n}");
+    s.mods = Modifiers::COMMAND;
+    select_row(&mut s, &c);
+    s.mods = Modifiers::NONE;
+    assert_eq!(s.app().vars.selected.len(), n - 1, "ctrl toggles a row");
+}
+
+#[test]
+fn delete_and_ctrl_d_work_on_the_selection_in_single_undo_steps() {
+    let mut s = Sim::new();
+    open_view(&mut s, true);
+    let n0 = s.app().doc.variables.len();
+    select_row(&mut s, "Text/Primary");
+    s.cmd_key(Key::D);
+    assert_eq!(s.app().doc.variables.len(), n0 + 1);
+    s.cmd_key(Key::Z);
+    assert_eq!(s.app().doc.variables.len(), n0);
     let ink = var(s.app(), "Text/Primary").id.clone();
     let title = s.by_name("Quarterly report");
     assert_eq!(s.app().doc.get(title).unwrap().variables.bindings["fills/0"], ink);
-    let r = s.rect_of("vars-name:Text/Primary");
-    let p = Pos2::new(r.left() + 20.0, r.center().y);
-    s.right_click(p);
-    assert!(s.app().vars.menu.is_some());
-    // Rename, Duplicate, Delete
-    s.click(Pos2::new(p.x + 20.0, p.y + theme::MENU_PADDING + 2.0 * theme::MENU_ITEM_HEIGHT + 12.0));
+    select_row(&mut s, "Text/Primary");
+    s.key(Key::Delete);
     assert!(!s.app().doc.variables.contains_key(&ink));
     assert!(!s.app().doc.get(title).unwrap().variables.bindings.contains_key("fills/0"));
     s.shell.app.undo();
@@ -226,9 +311,68 @@ fn row_menu_deletes_a_variable_and_its_bindings_in_one_step() {
 }
 
 #[test]
+fn row_menu_has_figmas_items_and_deletes() {
+    let mut s = Sim::new();
+    open_view(&mut s, true);
+    let ink = var(s.app(), "Text/Primary").id.clone();
+    let r = s.rect_of("vars-row:Text/Primary");
+    s.right_click(Pos2::new(r.left() + 120.0, r.center().y));
+    assert!(s.app().vars.menu.is_some());
+    // Edit variable, Duplicate, New group with selection, Delete
+    for _ in 0..4 {
+        s.key(Key::ArrowDown);
+    }
+    s.key(Key::Enter);
+    s.frame(vec![]);
+    assert!(!s.app().doc.variables.contains_key(&ink));
+    s.shell.app.undo();
+    assert!(s.app().doc.variables.contains_key(&ink));
+}
+
+#[test]
+fn new_group_with_selection_prefixes_the_names() {
+    let mut s = Sim::new();
+    open_view(&mut s, true);
+    let r = s.rect_of("vars-row:Text/Primary");
+    s.right_click(Pos2::new(r.left() + 120.0, r.center().y));
+    for _ in 0..3 {
+        s.key(Key::ArrowDown);
+    }
+    s.key(Key::Enter);
+    s.frame(vec![]);
+    assert!(s.app().doc.variables.values().any(|v| v.name == "Text/Group 1/Primary"), "{:?}", row_order(&s));
+}
+
+#[test]
+fn edit_variable_popover_edits_scoping_and_publishing() {
+    let mut s = Sim::new();
+    open_view(&mut s, true);
+    let r = s.rect_of("vars-row:Text/Primary");
+    s.right_click(Pos2::new(r.left() + 120.0, r.center().y));
+    s.key(Key::ArrowDown);
+    s.key(Key::Enter); // Edit variable
+    s.frame(vec![]);
+    s.frame(vec![]);
+    assert!(s.app().vars.edit.is_some());
+    s.click(s.rect_of("var-pop:hide").center());
+    assert!(var(s.app(), "Text/Primary").hidden_from_publishing);
+    s.frame(vec![]);
+    // unchecking one property turns "all" into an explicit list without it
+    s.click(s.rect_of("var-pop:STROKE_COLOR").center());
+    let scopes = var(s.app(), "Text/Primary").scopes.clone();
+    assert!(!scopes.is_empty() && !scopes.contains(&"STROKE_COLOR".to_string()) && scopes.contains(&"ALL_FILLS".to_string()), "{scopes:?}");
+    s.frame(vec![]);
+    s.click(s.rect_of("var-pop:all").center());
+    assert!(var(s.app(), "Text/Primary").scopes.is_empty(), "the checkbox restores all properties");
+    s.key(Key::Escape);
+    s.frame(vec![]);
+    assert!(s.app().vars.edit.is_none());
+}
+
+#[test]
 fn alias_button_picks_another_variable() {
     let mut s = Sim::new();
-    open_modal(&mut s);
+    open_view(&mut s, true);
     let (_, light, _) = theme_ids(s.app());
     let cell = s.rect_of(&format!("vars-hex:Text/Primary:{light}"));
     s.mv(cell.center());
@@ -241,38 +385,53 @@ fn alias_button_picks_another_variable() {
     assert_eq!(var(s.app(), "Text/Primary").values[&light], VariableValue::Alias(target.clone()));
     // the alias shows as a pill; its detach button bakes the resolved colour back
     s.frame(vec![]);
-    let pill = s.rect_of(&format!("vars-cell:Text/Primary:{light}"));
+    let pill = s.rect_of(&format!("vars-alias:Text/Primary:{light}"));
     s.mv(pill.center());
     s.frame(vec![]);
     s.click(Pos2::new(pill.right() - 13.0, pill.center().y));
     assert!(matches!(var(s.app(), "Text/Primary").values[&light], VariableValue::Color(_)));
-    // cycles and type mismatches are not offered: Gray/900 cannot alias a Theme colour that aliases it
     let store = desigma_doc::VariableStore::from_doc(&s.app().doc);
     assert!(!store.can_alias(&target, &var(s.app(), "Radius/Card").id));
 }
 
 #[test]
-fn dragging_the_grip_reorders_rows() {
+fn dragging_a_row_reorders_and_drops_into_groups() {
     let mut s = Sim::new();
-    open_modal(&mut s);
-    let order = |s: &Sim| {
-        let c = s.app().vars.collection.clone().unwrap();
-        s.app().doc.variable_collections[&c].variables.iter().map(|id| s.app().doc.variables[id].name.clone()).collect::<Vec<_>>()
-    };
-    let before = order(&s);
-    let pos = |n: &str| before.iter().position(|x| x == n).unwrap();
-    assert!(pos("Text/Primary") < pos("Text/Secondary"));
-    let grip = s.rect_of("vars-grip:Text/Secondary");
-    let target = s.rect_of("vars-name:Text/Primary");
-    // hover the row first so the grip is drawn and interactive
-    s.mv(grip.center());
-    s.frame(vec![]);
-    s.drag(grip.center(), Pos2::new(target.center().x, target.top() - 6.0));
-    let after = order(&s);
-    let p = |n: &str| after.iter().position(|x| x == n).unwrap();
-    assert!(p("Text/Secondary") < p("Text/Primary"), "{after:?}");
+    open_view(&mut s, true);
+    let before = row_order(&s);
+    let pos = |o: &[String], n: &str| o.iter().position(|x| x == n).unwrap();
+    assert!(pos(&before, "Text/Primary") < pos(&before, "Text/Secondary"));
+    let from = s.rect_of("vars-row:Text/Secondary");
+    let target = s.rect_of("vars-row:Text/Primary");
+    s.drag(Pos2::new(from.left() + 120.0, from.center().y), Pos2::new(target.left() + 120.0, target.top() + 4.0));
+    let after = row_order(&s);
+    assert!(pos(&after, "Text/Secondary") < pos(&after, "Text/Primary"), "{after:?}");
     s.shell.app.undo();
-    assert_eq!(order(&s), before);
+    assert_eq!(row_order(&s), before);
+
+    // onto another group's header row: the variable joins that group
+    s.frame(vec![]);
+    let from = s.rect_of("vars-row:Text/Secondary");
+    let hdr = s.rect_of("vars-header:Surface");
+    s.drag(Pos2::new(from.left() + 120.0, from.center().y), hdr.center());
+    assert!(s.app().doc.variables.values().any(|v| v.name == "Surface/Secondary"), "{:?}", row_order(&s));
+    s.shell.app.undo();
+    assert_eq!(row_order(&s), before);
+}
+
+#[test]
+fn groups_come_from_slashes_and_filter_the_table() {
+    let s = Sim::new();
+    let c = s.app().doc.variable_collections.values().find(|c| c.name == "Theme").unwrap().clone();
+    let store = desigma_doc::VariableStore::from_doc(&s.app().doc);
+    let groups: Vec<String> = crate::variables::view::group_paths(&store, &c).into_iter().map(|(p, _)| p).collect();
+    assert!(groups.contains(&"Text".to_string()) && groups.contains(&"Surface".to_string()), "{groups:?}");
+    let mut s = s;
+    open_view(&mut s, true);
+    s.click(s.rect_of("vars-group:Text").center());
+    assert_eq!(s.app().vars.group.as_deref(), Some("Text"));
+    s.click(s.rect_of("vars-group:All").center());
+    assert_eq!(s.app().vars.group, None);
 }
 
 #[test]

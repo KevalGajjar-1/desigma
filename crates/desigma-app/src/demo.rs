@@ -40,6 +40,32 @@ pub fn reference_document() -> Document {
     d
 }
 
+/// Document of the Figma local-variables reference capture (`--fixture variables`): one
+/// collection "Variable collection" with six colour variables.
+pub fn variables_document() -> Document {
+    let mut d = Document::new("Dray Insight - Design Project");
+    d.add_page("Page 1");
+    let mut store = VariableStore::default();
+    let coll = store.add_collection("Variable collection");
+    let mode = store.collections[&coll].default_mode.clone();
+    for (name, hex) in [
+        ("Color aqcuian", "435391"),
+        ("Color A1", "66FFD9"),
+        ("Color AI blue", "0C111D"),
+        ("Secondary Blue", "00B0FF"),
+        ("Primary Color", "00EBE2"),
+        ("Color Bue", "002552"),
+    ] {
+        if let Some(id) = store.add_variable(&coll, name, VariableKind::Color) {
+            if let Some(c) = Color::from_hex(hex) {
+                store.set_value(&id, &mode, VariableValue::Color(c));
+            }
+        }
+    }
+    let _ = store.command().apply(&mut d);
+    d
+}
+
 pub fn demo_document() -> Document {
     let mut d = Document::new("Untitled");
     let page = d.add_page("Page 1");
