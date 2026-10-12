@@ -96,7 +96,18 @@ pub enum Icon {
     PaintImage,
     Blend,
     NoPaint,
-    ChevronsUpDown,
+    // effects and stroke
+    InnerShadow,
+    DropShadow,
+    LayerBlur,
+    BackgroundBlur,
+    Noise,
+    Texture,
+    Glass,
+    Shader,
+    StrokeSettings,
+    StrokeSides,
+    StrokeWeight,
 }
 
 impl Icon {
@@ -184,7 +195,17 @@ impl Icon {
         Icon::PaintImage,
         Icon::Blend,
         Icon::NoPaint,
-        Icon::ChevronsUpDown,
+        Icon::InnerShadow,
+        Icon::DropShadow,
+        Icon::LayerBlur,
+        Icon::BackgroundBlur,
+        Icon::Noise,
+        Icon::Texture,
+        Icon::Glass,
+        Icon::Shader,
+        Icon::StrokeSettings,
+        Icon::StrokeSides,
+        Icon::StrokeWeight,
     ];
 
     /// Name of the vendored Lucide icon that stands in for this one (None for the logo).
@@ -271,7 +292,17 @@ impl Icon {
             Icon::PaintImage => "image",
             Icon::Blend => "droplet",
             Icon::NoPaint => "ban",
-            Icon::ChevronsUpDown => "chevrons-up-down",
+            Icon::InnerShadow => "square-dashed-bottom",
+            Icon::DropShadow => "layers-2",
+            Icon::LayerBlur => "grip",
+            Icon::BackgroundBlur => "grid-3x3",
+            Icon::Noise => "dices",
+            Icon::Texture => "waves",
+            Icon::Glass => "contrast",
+            Icon::Shader => "sparkles",
+            Icon::StrokeSettings => "sliders-horizontal",
+            Icon::StrokeSides => "square-dashed",
+            Icon::StrokeWeight => "align-justify",
         })
     }
 }
@@ -360,7 +391,15 @@ lucide!(
     "blend",
     "circle-dot",
     "ban",
-    "chevrons-up-down",
+    "align-justify",
+    "contrast",
+    "dices",
+    "grid-3x3",
+    "grip",
+    "layers-2",
+    "sliders-horizontal",
+    "square-dashed-bottom",
+    "waves",
 );
 
 /// SVG source of the Lucide icon behind `icon`.
@@ -468,7 +507,7 @@ mod tests {
         for i in Icon::ALL {
             assert!(seen.insert(*i), "{i:?} listed twice");
         }
-        assert_eq!(seen.len(), 82);
+        assert_eq!(seen.len(), 92);
     }
 
     #[test]

@@ -515,6 +515,45 @@ fn thumb_ring(p: &Painter, c: Pos2, outer: f32, ring: f32, fill: Option<Color32>
     p.circle_stroke(c, outer - ring / 2.0, Stroke::new(ring, Color32::WHITE));
 }
 
+/// Inspector swatch of a paint: the colour (checkerboard behind transparency), a left-to-right
+/// preview of a gradient, or a neutral tile for images. Corner masks assume a `bg_secondary` row.
+pub fn paint_swatch(p: &Painter, rect: Rect, paint: &Paint) {
+    match &paint.kind {
+        PaintKind::Solid(_) => super::swatch(p, rect, preview_color(paint)),
+        k => {
+            let stops = stops_of(k).cloned().unwrap_or_default();
+            if stops.is_empty() {
+                p.rect_filled(rect, theme::cr(theme::SWATCH_RADIUS), Color32::from_gray(0x80));
+                return;
+            }
+            checker(p, rect, 4.0);
+            let mut sorted = stops;
+            sorted.sort_by(|a, b| a.pos.total_cmp(&b.pos));
+            let mut cols: Vec<(f32, Color32)> = sorted.iter().map(|s| (s.pos.clamp(0.0, 1.0), c32(to_u8(s.color, paint.opacity)))).collect();
+            if let Some(f) = cols.first().copied().filter(|f| f.0 > 0.0) {
+                cols.insert(0, (0.0, f.1));
+            }
+            if let Some(l) = cols.last().copied().filter(|l| l.0 < 1.0) {
+                cols.push((1.0, l.1));
+            }
+            let mut m = Mesh::default();
+            for (t, c) in &cols {
+                let x = rect.left() + t * rect.width();
+                m.colored_vertex(Pos2::new(x, rect.top()), *c);
+                m.colored_vertex(Pos2::new(x, rect.bottom()), *c);
+            }
+            for i in 0..cols.len().saturating_sub(1) as u32 {
+                let a = i * 2;
+                m.add_triangle(a, a + 2, a + 3);
+                m.add_triangle(a, a + 3, a + 1);
+            }
+            p.add(Shape::mesh(m));
+            round_corners(p, rect, theme::SWATCH_RADIUS as f32, theme::BG_SECONDARY);
+            p.rect_stroke(rect, theme::cr(theme::SWATCH_RADIUS), Stroke::new(1.0, theme::BORDER_TRANSLUCENT), StrokeKind::Inside);
+        }
+    }
+}
+
 fn luminance(c: Color32) -> f32 {
     (0.299 * c.r() as f32 + 0.587 * c.g() as f32 + 0.114 * c.b() as f32) / 255.0
 }
@@ -897,10 +936,9 @@ fn picker_dropdown(ui: &mut Ui, rect: Rect, key: impl Key, label: &str, options:
         StrokeKind::Inside,
     );
     let font = theme::font_body_strong();
-    let wide = rect.width() > 100.0;
     let shown = elide(p, label, &font, rect.width() - 8.0 - 22.0);
     text_on_baseline(p, rect.left() + 8.0, centered_baseline(rect, &font), &shown, font, theme::TEXT);
-    let chev = Rect::from_center_size(Pos2::new(rect.right() - 12.0, rect.center().y), Vec2::splat(if wide { 12.0 } else { 12.0 }));
+    let chev = Rect::from_center_size(Pos2::new(rect.right() - 12.0, rect.center().y), Vec2::splat(12.0));
     paint_icon_in(p, chev, Icon::ChevronDown, 12.0, theme::ICON_SECONDARY);
     if r.clicked() {
         ui.data_mut(|d| d.insert_temp(id, !open));
@@ -995,7 +1033,7 @@ fn opacity_cell(ui: &mut Ui, r: Rect, alpha: u8) -> Option<u8> {
     } else if ui.rect_contains_pointer(r) {
         ui.painter().rect_stroke(r, radius, Stroke::new(1.0, theme::BORDER), StrokeKind::Inside);
     }
-    let text_r = Rect::from_min_max(r.min, Pos2::new(r.right() - 20.0, r.bottom()));
+    let text_r = Rect::from_min_max(r.min, Pos2::new(r.right() - 14.0, r.bottom()));
     let pct = fmt_num((alpha as f32 / 255.0 * 100.0).round());
     let res = field::edit_text(ui, text_r, id, &pct, theme::font_body(), theme::TEXT, 8.0);
     let font = theme::font_body();

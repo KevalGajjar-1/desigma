@@ -12,6 +12,11 @@ fn audit(label: &str, opts: Options) -> Vec<lint::Finding> {
     lint::take_icons();
     s.frame(vec![]);
     let (texts, boxes) = lint::scan_shapes(&s.shapes);
+    // The audit must really see the screen: a lot of text and rects.
+    assert!(texts.len() > 15 && boxes.len() > 15, "[{label}] only {} texts / {} boxes painted", texts.len(), boxes.len());
+    if label.contains("picker") {
+        assert!(texts.iter().any(|t| t.text == "Custom"), "[{label}] picker not painted");
+    }
     let mut out = lint::check_text(&texts, &boxes);
     out.extend(lint::check_icons(&lint::take_icons()));
     for f in &mut out {
@@ -28,6 +33,13 @@ fn states() -> Vec<(&'static str, Options)> {
         ("text", sel("Continue")),
         ("instance", sel("Get started")),
         ("rectangle", sel("Card")),
+        ("fill picker", Options { select: Some("Card".into()), panel: Some("picker".into()), ..Options::default() }),
+        ("gradient picker", Options { select: Some("Hero".into()), panel: Some("picker-gradient".into()), ..Options::default() }),
+        ("effects menu", Options { select: Some("Hero".into()), panel: Some("effects-menu".into()), ..Options::default() }),
+        ("stroke settings", Options { select: Some("Hero".into()), panel: Some("stroke-settings".into()), ..Options::default() }),
+        ("noise settings", Options { select: Some("Hero".into()), panel: Some("effect-noise".into()), ..Options::default() }),
+        ("texture settings", Options { select: Some("Hero".into()), panel: Some("effect-texture".into()), ..Options::default() }),
+        ("glass settings", Options { select: Some("Hero".into()), panel: Some("effect-glass".into()), ..Options::default() }),
         ("main menu", Options { menu: Some("main".into()), ..Options::default() }),
         ("shape menu", Options { menu: Some("shape".into()), ..Options::default() }),
     ]

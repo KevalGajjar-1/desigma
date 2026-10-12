@@ -27,6 +27,8 @@ pub enum PickTarget {
     TextFill,
     /// Colour of the i-th layout grid of a frame.
     GridColor(usize),
+    /// Colour (or second colour) of the i-th effect, a noise effect.
+    NoiseColor(usize, bool),
 }
 
 pub struct Picker {
@@ -52,6 +54,12 @@ pub struct PropsState {
     pub folded: std::collections::HashSet<String>,
     /// Page background opacity before the visibility toggle hid it.
     pub page_alpha_prev: f32,
+    /// Open settings popover (effect or stroke).
+    pub pop: Option<super::effects::PopState>,
+    /// The Effects "+" menu is open.
+    pub fx_menu: bool,
+    /// The paint styles menu (4-dots button) is open: Some(for_stroke).
+    pub styles_menu: Option<bool>,
 }
 
 pub(super) struct Pane {
@@ -72,11 +80,12 @@ impl Pane {
     }
 }
 
-fn to_c32(c: Color, opacity: f32) -> Color32 {
+pub(super) fn to_c32(c: Color, opacity: f32) -> Color32 {
     let f = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
     Color32::from_rgba_unmultiplied(f(c.r), f(c.g), f(c.b), f(c.a * opacity))
 }
 
+#[cfg(test)]
 fn from_c32(c: Color32) -> Color {
     let [r, g, b, a] = c.to_srgba_unmultiplied();
     Color::rgba(r, g, b, a)
@@ -105,6 +114,45 @@ pub(super) fn title(ui: &mut Ui, pane: &mut Pane, text: &str, action: Option<Ico
         clicked = widgets::icon_button(ui, b, ("title-action", text), ic, false, "").clicked();
     }
     pane.y += theme::SECTION_TITLE_HEIGHT;
+    clicked
+}
+
+/// Fill / Stroke section header: title, the styles button (4 dots) and "+". Returns true when
+/// "+" was clicked.
+pub(super) fn paint_title(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[NodeId], text: &str, stroke: bool, dim: bool) -> bool {
+    title(ui, pane, text, None, dim);
+    let y = -theme::SECTION_TITLE_HEIGHT + 8.0;
+    let plus = pane.rect(theme::SECTION_TRAILING_X, y, theme::PANEL_ACTION_BUTTON, theme::PANEL_ACTION_BUTTON);
+    let styles = pane.rect(theme::SECTION_TRAILING_X - 28.0, y, theme::PANEL_ACTION_BUTTON, theme::PANEL_ACTION_BUTTON);
+    let clicked = widgets::icon_button(ui, plus, ("title-action", text), Icon::Plus, false, "").clicked();
+    let open = app.props.styles_menu == Some(stroke);
+    if widgets::icon_button(ui, styles, ("title-styles", text), Icon::Styles, open, "Apply style").clicked() {
+        app.props.styles_menu = (!open).then_some(stroke);
+    }
+    if open {
+        let want = if stroke { StyleProperty::Stroke } else { StyleProperty::Fill };
+        let entries: Vec<(String, String)> = crate::styles::style_entries(&app.doc, false)
+            .into_iter()
+            .filter(|e| app.doc.style_meta.get(&e.key).map(|m| m.property).unwrap_or(StyleProperty::Fill) == want)
+            .map(|e| (e.key.clone(), app.doc.style_name(&e.key).to_string()))
+            .collect();
+        let items: Vec<crate::widgets::menu::MenuItem> = if entries.is_empty() {
+            vec![crate::widgets::menu::MenuItem::new("No color styles").disabled(true)]
+        } else {
+            entries.iter().map(|(_, n)| crate::widgets::menu::MenuItem::new(n.clone())).collect()
+        };
+        let pos = Pos2::new(styles.right() - 168.0, styles.bottom() + 4.0);
+        match crate::widgets::menu::popup_menu(ui.ctx(), egui::Id::new(("styles-menu", stroke)), pos, 168.0, &items, Some(styles)) {
+            crate::widgets::menu::MenuResult::Picked(i) => {
+                app.props.styles_menu = None;
+                if let Some((key, _)) = entries.get(i) {
+                    app.apply_style(sel, key);
+                }
+            }
+            crate::widgets::menu::MenuResult::Closed => app.props.styles_menu = None,
+            crate::widgets::menu::MenuResult::Open => {}
+        }
+    }
     clicked
 }
 
@@ -194,6 +242,7 @@ pub fn show(app: &mut App, ui: &mut Ui, region: Rect) {
     app.props.content_h = end;
     scrollbar(ui, region, scroll, end);
     picker_popup(app, ui, region);
+    super::effects::popover_ui(app, ui, region);
 }
 
 // ---------------------------------------------------------------- no selection
@@ -605,7 +654,7 @@ fn selection_ui(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[NodeId]) {
         super::typography::fill_section(app, ui, pane, sel);
     } else if !is_line {
         section_sep(ui, pane, false);
-        if title(ui, pane, "Fill", Some(Icon::Plus), n0.fills.is_empty()) {
+        if paint_title(app, ui, pane, sel, "Fill", false, n0.fills.is_empty()) {
             let paint = Paint::solid(Color::from_hex(&format!("{:06X}", theme::DEFAULT_SHAPE_FILL)).unwrap_or(Color::WHITE));
             app.edit_nodes(sel, |n| n.fills.push(paint.clone()));
         }
@@ -614,40 +663,11 @@ fn selection_ui(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[NodeId]) {
 
     // ---- Stroke
     section_sep(ui, pane, false);
-    if title(ui, pane, "Stroke", Some(Icon::Plus), n0.stroke.paints.is_empty()) {
-        let paint = Paint::solid(Color::from_hex(&format!("{:06X}", theme::DEFAULT_STROKE)).unwrap_or(Color::BLACK));
-        app.edit_nodes(sel, |n| n.stroke.paints.push(paint.clone()));
-    }
-    paint_rows(app, ui, pane, sel, &n0.stroke.paints, true);
-    if !n0.stroke.paints.is_empty() {
-        let sw_r = pane.col(0, 0.0);
-        let sw_val = common(app, sel, |n| n.stroke.weight);
-        if let Some(w) = var_bind::numeric(app, ui, sw_r, sel, &["strokeWeight"], |ui| field::num_field(ui, sw_r, "stroke-w", Prefix::Text("W"), sw_val, "")) {
-            let w = w.max(0.0);
-            app.edit_nodes(sel, |n| n.stroke.weight = w);
-        }
-        let aligns = ["Inside", "Center", "Outside"].map(String::from);
-        let cur = match n0.stroke.align {
-            StrokeAlign::Inside => 0,
-            StrokeAlign::Center => 1,
-            StrokeAlign::Outside => 2,
-        };
-        if let Some(i) = dropdown(ui, pane.col(1, 0.0), "stroke-align", &aligns[cur], &aligns) {
-            let a = [StrokeAlign::Inside, StrokeAlign::Center, StrokeAlign::Outside][i];
-            app.edit_nodes(sel, |n| n.stroke.align = a);
-        }
-        row_end(pane);
-        pane.y += 4.0;
-    }
+    super::stroke::section(app, ui, pane, sel, &n0);
 
     // ---- Effects
     section_sep(ui, pane, false);
-    if title(ui, pane, "Effects", Some(Icon::Plus), n0.effects.is_empty()) {
-        let e =
-            Effect::DropShadow { color: Color::rgba(0, 0, 0, 64), offset: DVec2::new(0.0, 4.0), radius: 4.0, spread: 0.0, visible: true, show_behind: false };
-        app.edit_nodes(sel, |n| n.effects.push(e.clone()));
-    }
-    effect_rows(app, ui, pane, sel, &n0.effects);
+    super::effects::section(app, ui, pane, sel, &n0.effects);
 
     // ---- Layout guide (frames)
     if is_frame && !multi {
@@ -884,7 +904,12 @@ fn edit_paint_list(app: &mut App, sel: &[NodeId], stroke: bool, f: impl Fn(&mut 
     });
 }
 
-fn paint_rows(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[NodeId], paints: &[Paint], stroke: bool) {
+/// Width of the swatch + hex + opacity field group of a paint row (the eye and minus follow it).
+const PAINT_GROUP_W: f32 = 159.0;
+/// x of the divider between the hex and opacity cells, from the group's left edge.
+const PAINT_DIVIDER_X: f32 = 104.0;
+
+pub(super) fn paint_rows(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[NodeId], paints: &[Paint], stroke: bool) {
     let linked: Option<String> = sel
         .first()
         .and_then(|s| app.doc.get(*s))
@@ -892,31 +917,48 @@ fn paint_rows(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[NodeId], paint
         .map(|k| app.doc.style_name(k).to_string());
     for (i, p) in paints.iter().enumerate() {
         let key = (stroke, i);
-        let sw = pane.rect(theme::SWATCH_ROW_X, 4.0, theme::SWATCH_SIZE, theme::SWATCH_SIZE);
-        let hex_r = pane.rect(theme::SWATCH_ROW_X + theme::SWATCH_SIZE + 8.0, 0.0, 96.0, theme::FIELD_HEIGHT);
-        let op_r = pane.rect(theme::SWATCH_ROW_X + theme::SWATCH_SIZE + 8.0 + 96.0 + 4.0, 0.0, theme::OPACITY_FIELD_W, theme::FIELD_HEIGHT);
+        let g = pane.rect(theme::SWATCH_ROW_X, 0.0, PAINT_GROUP_W, theme::FIELD_HEIGHT);
+        let sw = Rect::from_min_size(Pos2::new(g.left() + 4.0, g.center().y - theme::SWATCH_SIZE / 2.0), Vec2::splat(theme::SWATCH_SIZE));
+        let hex_r = Rect::from_min_max(
+            Pos2::new(g.left() + theme::FIELD_PREFIX_X + theme::FIELD_PREFIX_ICON, g.top()),
+            Pos2::new(g.left() + PAINT_DIVIDER_X, g.bottom()),
+        );
+        let op_r = Rect::from_min_max(Pos2::new(g.left() + PAINT_DIVIDER_X + 1.0, g.top()), Pos2::new(g.right() - 16.0, g.bottom()));
         let eye_r = pane.rect(theme::RIGHT_NAME_ACTION_X[1] - 1.0 + 4.0, 0.0, theme::PANEL_ACTION_BUTTON, theme::PANEL_ACTION_BUTTON);
         let minus_r = pane.rect(theme::SECTION_TRAILING_X, 0.0, theme::PANEL_ACTION_BUTTON, theme::PANEL_ACTION_BUTTON);
         widgets::record(ui, &format!("sw:{stroke}:{i}"), sw);
-        let swr = ui.interact(sw, ui.id().with(("sw", key)), Sense::click());
-        widgets::swatch(ui.painter(), sw, paint_preview(p));
-        let var_key = format!("{}/{i}", if stroke { "strokes" } else { "fills" });
-        let bound = var_bind::pill_field(app, ui, Rect::from_min_max(hex_r.min, Pos2::new(op_r.left() - 4.0, hex_r.bottom())), sel, &[var_key.as_str()]);
-        if swr.clicked() && !bound {
-            if let PaintKind::Solid(c) = &p.kind {
-                let target = if stroke { PickTarget::Stroke(i) } else { PickTarget::Fill(i) };
-                open_picker(app, target, to_c32(*c, p.opacity), sw, sel.to_vec());
+        // Group chrome: one rounded field with a hairline between hex and opacity.
+        let hex_id = ui.id().with(("txt", ("hex", key)));
+        let op_id = ui.id().with(("num", ("op", key)));
+        let focused = ui.memory(|m| m.has_focus(hex_id) || m.has_focus(op_id));
+        {
+            let pt = ui.painter();
+            pt.rect_filled(g, theme::cr(theme::RADIUS_MEDIUM), theme::BG_SECONDARY);
+            if focused {
+                pt.rect_stroke(g, theme::cr(theme::RADIUS_MEDIUM), Stroke::new(1.0, theme::BORDER_SELECTED), StrokeKind::Inside);
+            } else if ui.rect_contains_pointer(g) {
+                pt.rect_stroke(g, theme::cr(theme::RADIUS_MEDIUM), Stroke::new(1.0, theme::BORDER), StrokeKind::Inside);
             }
         }
+        let swr = ui.interact(sw.expand(2.0), ui.id().with(("sw", key)), Sense::click());
+        widgets::picker::paint_swatch(ui.painter(), sw, p);
+        let var_key = format!("{}/{i}", if stroke { "strokes" } else { "fills" });
+        let bound = var_bind::pill_field(app, ui, Rect::from_min_max(hex_r.min, Pos2::new(g.right(), hex_r.bottom())), sel, &[var_key.as_str()]);
+        if !bound {
+            widgets::vline(ui.painter(), g.left() + PAINT_DIVIDER_X, g.top(), g.bottom(), theme::BG);
+        }
+        if swr.clicked() && !bound {
+            let target = if stroke { PickTarget::Stroke(i) } else { PickTarget::Fill(i) };
+            open_picker(app, target, paint_preview(p), sw, sel.to_vec());
+        }
+        let font = theme::font_body();
         match &p.kind {
             _ if bound => {}
             _ if linked.is_some() => {
-                field::field_bg(ui, hex_r, ui.id().with(("ro", key)));
-                let name = widgets::elide(ui.painter(), linked.as_deref().unwrap_or(""), &theme::font_body(), hex_r.width() - 16.0);
-                ui.painter().text(Pos2::new(hex_r.left() + 8.0, hex_r.center().y), Align2::LEFT_CENTER, name, theme::font_body(), theme::TEXT);
+                widgets::field_text(ui.painter(), hex_r, 0.0, 4.0, linked.as_deref().unwrap_or(""), font.clone(), theme::TEXT);
             }
             PaintKind::Solid(c) => {
-                if let Some(s) = field::text_input(ui, hex_r, ("hex", key), &c.to_hex()) {
+                if let Some(s) = field::edit_text(ui, hex_r, hex_id, &c.to_hex(), font.clone(), theme::TEXT, 0.0) {
                     if let Some(nc) = Color::from_hex(&s) {
                         edit_paint_list(app, sel, stroke, |ps| {
                             if let Some(p) = ps.get_mut(i) {
@@ -927,20 +969,27 @@ fn paint_rows(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[NodeId], paint
                 }
             }
             _ => {
-                field::field_bg(ui, hex_r, ui.id().with(("ro", key)));
-                ui.painter().text(Pos2::new(hex_r.left() + 8.0, hex_r.center().y), Align2::LEFT_CENTER, paint_label(p), theme::font_body(), theme::TEXT);
+                widgets::field_text(ui.painter(), hex_r, 0.0, 4.0, &paint_label(p), font.clone(), theme::TEXT);
             }
         }
         if !bound && matches!(p.kind, PaintKind::Solid(_)) {
             var_bind::hover_button(app, ui, hex_r, sel, &[var_key.as_str()], VariableKind::Color);
         }
-        if let Some(v) = field::num_field(ui, op_r, ("op", key), Prefix::None, Some((p.opacity * 100.0).round()), "%") {
-            let o = (v / 100.0).clamp(0.0, 1.0);
-            edit_paint_list(app, sel, stroke, |ps| {
-                if let Some(p) = ps.get_mut(i) {
-                    p.opacity = o;
+        if !bound {
+            // Opacity: "100" then a separate "%" in text_secondary.
+            let pct = fmt_num((p.opacity * 100.0).round());
+            if let Some(s) = field::edit_text(ui, op_r, op_id, &pct, font.clone(), theme::TEXT, 8.0) {
+                if let Some(v) = field::parse_number(&s) {
+                    let o = (v / 100.0).clamp(0.0, 1.0);
+                    edit_paint_list(app, sel, stroke, |ps| {
+                        if let Some(p) = ps.get_mut(i) {
+                            p.opacity = o;
+                        }
+                    });
                 }
-            });
+            }
+            let pct_x = g.right() - 8.0 - widgets::text_width(ui.painter(), "%", &font);
+            widgets::text_on_baseline(ui.painter(), pct_x, widgets::centered_baseline(g, &font), "%", font, theme::TEXT_SECONDARY);
         }
         if widgets::icon_button(ui, eye_r, ("peye", key), if p.visible { Icon::Eye } else { Icon::EyeOff }, false, "").clicked() {
             edit_paint_list(app, sel, stroke, |ps| {
@@ -957,146 +1006,6 @@ fn paint_rows(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[NodeId], paint
             });
         }
         pane.y += theme::FIELD_HEIGHT + 8.0;
-    }
-    if !paints.is_empty() {
-        pane.y += 0.0;
-    }
-}
-
-fn effect_name(e: &Effect) -> (&'static str, bool) {
-    match e {
-        Effect::DropShadow { visible, .. } => ("Drop shadow", *visible),
-        Effect::InnerShadow { visible, .. } => ("Inner shadow", *visible),
-        Effect::LayerBlur { visible, .. } => ("Layer blur", *visible),
-        Effect::BackgroundBlur { visible, .. } => ("Background blur", *visible),
-        Effect::Noise(n) => ("Noise", n.visible),
-        Effect::Texture(t) => ("Texture", t.visible),
-        Effect::Glass(g) => ("Glass", g.visible),
-    }
-}
-
-fn effect_rows(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[NodeId], effects: &[Effect]) {
-    let kinds = ["Drop shadow", "Inner shadow", "Layer blur", "Background blur"].map(String::from);
-    for (i, e) in effects.iter().enumerate() {
-        let (name, visible) = effect_name(e);
-        let dd = pane.rect(theme::SECTION_CONTENT_X, 0.0, 128.0, theme::FIELD_HEIGHT);
-        if let Some(k) = dropdown(ui, dd, ("fx-kind", i), name, &kinds) {
-            let new = convert_effect(e, k);
-            app.edit_nodes(sel, |n| {
-                if let Some(slot) = n.effects.get_mut(i) {
-                    *slot = new.clone();
-                }
-            });
-        }
-        let eye_r = pane.rect(theme::RIGHT_NAME_ACTION_X[1] - 1.0 + 4.0, 0.0, theme::PANEL_ACTION_BUTTON, theme::PANEL_ACTION_BUTTON);
-        if widgets::icon_button(ui, eye_r, ("fx-eye", i), if visible { Icon::Eye } else { Icon::EyeOff }, false, "").clicked() {
-            app.edit_nodes(sel, |n| {
-                if let Some(e) = n.effects.get_mut(i) {
-                    set_effect_visible(e, !visible);
-                }
-            });
-        }
-        let minus_r = pane.rect(theme::SECTION_TRAILING_X, 0.0, theme::PANEL_ACTION_BUTTON, theme::PANEL_ACTION_BUTTON);
-        if widgets::icon_button(ui, minus_r, ("fx-minus", i), Icon::Minus, false, "").clicked() {
-            app.edit_nodes(sel, |n| {
-                if i < n.effects.len() {
-                    n.effects.remove(i);
-                }
-            });
-        }
-        pane.y += theme::FIELD_HEIGHT + 8.0;
-        match e {
-            Effect::DropShadow { color, offset, radius, spread, .. } | Effect::InnerShadow { color, offset, radius, spread, .. } => {
-                let (ox, oy, r, s, c) = (offset.x, offset.y, *radius, *spread, *color);
-                #[allow(clippy::type_complexity)] // deferred per-effect updater closure
-                let mut upd: Option<Box<dyn Fn(&mut Effect)>> = None;
-                if let Some(v) = field::num_field(ui, pane.col(0, 0.0), ("fx-x", i), Prefix::Text("X"), Some(ox), "") {
-                    upd = Some(Box::new(move |e| set_shadow(e, |_, o, _, _| o.x = v)));
-                }
-                if let Some(v) = field::num_field(ui, pane.col(1, 0.0), ("fx-y", i), Prefix::Text("Y"), Some(oy), "") {
-                    upd = Some(Box::new(move |e| set_shadow(e, |_, o, _, _| o.y = v)));
-                }
-                pane.y += theme::FIELD_HEIGHT + 8.0;
-                if let Some(v) = field::num_field(ui, pane.col(0, 0.0), ("fx-b", i), Prefix::Text("B"), Some(r), "") {
-                    upd = Some(Box::new(move |e| set_shadow(e, |_, _, rr, _| *rr = v.max(0.0))));
-                }
-                if let Some(v) = field::num_field(ui, pane.col(1, 0.0), ("fx-s", i), Prefix::Text("S"), Some(s), "") {
-                    upd = Some(Box::new(move |e| set_shadow(e, |_, _, _, sp| *sp = v)));
-                }
-                pane.y += theme::FIELD_HEIGHT + 8.0;
-                let sw = pane.rect(theme::SWATCH_ROW_X, 4.0, theme::SWATCH_SIZE, theme::SWATCH_SIZE);
-                let hex_r = pane.rect(theme::SWATCH_ROW_X + theme::SWATCH_SIZE + 8.0, 0.0, 96.0, theme::FIELD_HEIGHT);
-                let swr = ui.interact(sw, ui.id().with(("fx-sw", i)), Sense::click());
-                widgets::swatch(ui.painter(), sw, to_c32(c, 1.0));
-                if swr.clicked() {
-                    open_picker(app, PickTarget::Shadow(i), to_c32(c, 1.0), sw, sel.to_vec());
-                }
-                if let Some(s) = field::text_input(ui, hex_r, ("fx-hex", i), &c.to_hex()) {
-                    if let Some(nc) = Color::from_hex(&s) {
-                        upd = Some(Box::new(move |e| set_shadow(e, |col, _, _, _| *col = Color { a: c.a, ..nc })));
-                    }
-                }
-                pane.y += theme::FIELD_HEIGHT + 8.0;
-                if let Some(u) = upd {
-                    app.edit_nodes(sel, |n| {
-                        if let Some(e) = n.effects.get_mut(i) {
-                            u(e);
-                        }
-                    });
-                }
-            }
-            Effect::LayerBlur { radius, .. } | Effect::BackgroundBlur { radius, .. } => {
-                if let Some(v) = field::num_field(ui, pane.col(0, 0.0), ("fx-blur", i), Prefix::Text("B"), Some(*radius), "") {
-                    app.edit_nodes(sel, |n| {
-                        if let Some(Effect::LayerBlur { radius, .. } | Effect::BackgroundBlur { radius, .. }) = n.effects.get_mut(i) {
-                            *radius = v.max(0.0);
-                        }
-                    });
-                }
-                pane.y += theme::FIELD_HEIGHT + 8.0;
-            }
-            // Editors for these arrive with the Figma-style effects menu.
-            Effect::Noise(_) | Effect::Texture(_) | Effect::Glass(_) => {}
-        }
-    }
-}
-
-fn set_shadow(e: &mut Effect, f: impl FnOnce(&mut Color, &mut DVec2, &mut f32, &mut f32)) {
-    match e {
-        Effect::DropShadow { color, offset, radius, spread, .. } | Effect::InnerShadow { color, offset, radius, spread, .. } => {
-            f(color, offset, radius, spread)
-        }
-        _ => {}
-    }
-}
-
-fn set_effect_visible(e: &mut Effect, v: bool) {
-    match e {
-        Effect::DropShadow { visible, .. }
-        | Effect::InnerShadow { visible, .. }
-        | Effect::LayerBlur { visible, .. }
-        | Effect::BackgroundBlur { visible, .. } => *visible = v,
-        Effect::Noise(n) => n.visible = v,
-        Effect::Texture(t) => t.visible = v,
-        Effect::Glass(g) => g.visible = v,
-    }
-}
-
-fn convert_effect(e: &Effect, kind: usize) -> Effect {
-    let (color, offset, radius, spread, visible) = match e {
-        Effect::DropShadow { color, offset, radius, spread, visible, .. } | Effect::InnerShadow { color, offset, radius, spread, visible } => {
-            (*color, *offset, *radius, *spread, *visible)
-        }
-        Effect::LayerBlur { radius, visible } | Effect::BackgroundBlur { radius, visible } => {
-            (Color::rgba(0, 0, 0, 64), DVec2::new(0.0, 4.0), *radius, 0.0, *visible)
-        }
-        other => (Color::rgba(0, 0, 0, 64), DVec2::new(0.0, 4.0), 4.0, 0.0, other.visible()),
-    };
-    match kind {
-        0 => Effect::DropShadow { color, offset, radius, spread, visible, show_behind: false },
-        1 => Effect::InnerShadow { color, offset, radius, spread, visible },
-        2 => Effect::LayerBlur { radius, visible },
-        _ => Effect::BackgroundBlur { radius, visible },
     }
 }
 
@@ -1118,7 +1027,7 @@ fn swatch_sources(app: &App) -> Vec<(String, Vec<Color32>)> {
     let styles: Vec<Color32> = crate::styles::style_entries(&app.doc, false)
         .iter()
         .filter_map(|e| match app.doc.styles.get(&e.key) {
-            Some(Style::Fill(ps)) => ps.first().map(|p| widgets::picker::preview_color(p)),
+            Some(Style::Fill(ps)) => ps.first().map(widgets::picker::preview_color),
             _ => None,
         })
         .collect();
@@ -1186,7 +1095,12 @@ fn apply_picker(doc: &mut Document, p: &mut Picker) {
             PickTarget::PageBg => n.kind = NodeKind::Page { background: c },
             PickTarget::Shadow(i) => {
                 if let Some(e) = n.effects.get_mut(i) {
-                    set_shadow(e, |col, _, _, _| *col = c);
+                    super::effects::set_shadow(e, |col, _, _, _| *col = c);
+                }
+            }
+            PickTarget::NoiseColor(i, second) => {
+                if let Some(e) = n.effects.get_mut(i) {
+                    super::effects::set_noise_color(e, second, c);
                 }
             }
         }
@@ -1446,6 +1360,57 @@ fn gradient_handles(app: &mut App, ctx: &egui::Context, pk: &mut Picker, changed
     }
 }
 
+/// Opens an inspector popup on the current selection (`--panel`, for screenshots).
+pub fn preset_popup(app: &mut App, spec: &str, screen: Vec2) {
+    let Some(id) = app.selection.first().copied() else { return };
+    let sw = Rect::from_min_size(Pos2::new(screen.x - theme::RIGHT_PANEL_WIDTH + 29.0, 660.0), Vec2::splat(theme::SWATCH_SIZE));
+    match spec {
+        "picker" | "picker-gradient" => {
+            if app.doc.get(id).is_some_and(|n| n.fills.is_empty()) {
+                app.edit_nodes(&[id], |n| n.fills.push(Paint::solid(Color::rgb(0xD9, 0xD9, 0xD9))));
+            }
+            if spec == "picker-gradient" {
+                app.edit_nodes(&[id], |n| {
+                    if let Some(p) = n.fills.first_mut() {
+                        *p = widgets::picker::convert(p, widgets::picker::Mode::Linear);
+                    }
+                });
+            }
+            let c = app.doc.get(id).and_then(|n| n.fills.first()).map(paint_preview).unwrap_or(Color32::GRAY);
+            open_picker(app, PickTarget::Fill(0), c, sw, vec![id]);
+        }
+        "effects-menu" => {
+            app.props.scroll = 1.0e6;
+            app.props.fx_menu = true;
+        }
+        "stroke-settings" => {
+            app.props.scroll = 1.0e6;
+            if app.doc.get(id).is_some_and(|n| n.stroke.paints.is_empty()) {
+                app.edit_nodes(&[id], |n| {
+                    n.stroke.paints.push(Paint::solid(Color::BLACK));
+                    n.stroke.weight = 1.0;
+                });
+            }
+            let anchor = Rect::from_min_size(Pos2::new(screen.x - 56.0, 760.0), Vec2::splat(24.0));
+            app.props.pop = Some(super::effects::PopState { kind: super::effects::PopKind::Stroke, anchor, ids: vec![id] });
+        }
+        "effect-noise" | "effect-texture" | "effect-glass" => {
+            app.props.scroll = 1.0e6;
+            let kind = match spec {
+                "effect-noise" => 4,
+                "effect-texture" => 5,
+                _ => 6,
+            };
+            let e = super::effects::default_effect(kind, 1);
+            app.edit_nodes(&[id], |n| n.effects.push(e.clone()));
+            let i = app.doc.get(id).map(|n| n.effects.len().saturating_sub(1)).unwrap_or(0);
+            let anchor = Rect::from_min_size(Pos2::new(screen.x - 80.0, 800.0), Vec2::splat(24.0));
+            app.props.pop = Some(super::effects::PopState { kind: super::effects::PopKind::Effect(i), anchor, ids: vec![id] });
+        }
+        _ => {}
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1457,13 +1422,6 @@ mod tests {
         assert_eq!(back.to_hex(), c.to_hex());
         let half = to_c32(c, 0.5);
         assert!((half.a() as i32 - 128).abs() <= 1);
-    }
-
-    #[test]
-    fn effect_conversion_keeps_radius() {
-        let e = Effect::DropShadow { color: Color::BLACK, offset: DVec2::new(1.0, 2.0), radius: 7.0, spread: 0.0, visible: true, show_behind: false };
-        assert!(matches!(convert_effect(&e, 2), Effect::LayerBlur { radius, .. } if radius == 7.0));
-        assert!(matches!(convert_effect(&e, 1), Effect::InnerShadow { radius, .. } if radius == 7.0));
     }
 
     #[test]

@@ -145,7 +145,7 @@ pub fn num_field(ui: &mut Ui, rect: Rect, key: impl crate::widgets::Key, prefix:
     let hint = Some(("Mixed", theme::TEXT_SECONDARY));
     let pad = if has_prefix { 0.0 } else { theme::FIELD_PLAIN_X };
     let committed = edit_text_hint(ui, text_rect, id, &display, font.clone(), theme::TEXT, pad, hint);
-    if !suffix.is_empty() && !(value.is_none() && !ui.memory(|m| m.has_focus(id))) {
+    if !suffix.is_empty() && (value.is_some() || ui.memory(|m| m.has_focus(id))) {
         let shown = if ui.memory(|m| m.has_focus(id)) { ui.data(|d| d.get_temp::<String>(id)).unwrap_or_else(|| display.clone()) } else { display.clone() };
         let x = text_rect.left() + pad + super::text_width(&p, &shown, &font) + if suffix.starts_with(' ') { theme::FIELD_SUFFIX_GAP } else { 0.0 };
         let b = super::centered_baseline(rect, &font);

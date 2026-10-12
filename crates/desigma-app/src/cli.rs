@@ -34,6 +34,10 @@ pub struct Options {
     pub help: bool,
 }
 
+/// Values of `--panel`: `variables` opens the Local variables modal; the others are
+/// inspector popups opened on the selection for screenshots.
+pub const PANELS: [&str; 8] = ["variables", "picker", "picker-gradient", "effects-menu", "stroke-settings", "effect-noise", "effect-texture", "effect-glass"];
+
 pub fn parse_size(s: &str) -> Option<(u32, u32)> {
     let (w, h) = s.split_once(['x', 'X'])?;
     let (w, h) = (w.trim().parse::<u32>().ok()?, h.trim().parse::<u32>().ok()?);
@@ -74,8 +78,8 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Options, String> 
             "--present" => o.present = true,
             "--panel" => {
                 let t = it.next().ok_or("--panel needs a name (variables)")?;
-                if t != "variables" {
-                    return Err(format!("unknown panel '{t}' (expected variables)"));
+                if !PANELS.contains(&t.as_str()) {
+                    return Err(format!("unknown panel '{t}' (expected {})", PANELS.join(", ")));
                 }
                 o.panel = Some(t);
             }
@@ -110,7 +114,7 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Options, String> 
     Ok(o)
 }
 
-pub const USAGE: &str = "usage: desigma [FILE] [--screenshot OUT.png] [--size WxH] [--select LAYER|none] [--menu main|main/File|shape|palette] [--panel variables]\n               [--zoom PERCENT] [--rulers] [--grid] [--layout-grid grid|columns|rows] [--edit-text LAYER [--select-text START-END]]\n  FILE  .fig, .json (Figma REST or native) or .desigma";
+pub const USAGE: &str = "usage: desigma [FILE] [--screenshot OUT.png] [--size WxH] [--select LAYER|none] [--menu main|main/File|shape|palette] [--panel variables|picker|picker-gradient|effects-menu|stroke-settings|effect-noise|effect-texture|effect-glass]\n               [--zoom PERCENT] [--rulers] [--grid] [--layout-grid grid|columns|rows] [--edit-text LAYER [--select-text START-END]]\n  FILE  .fig, .json (Figma REST or native) or .desigma";
 
 #[cfg(test)]
 mod tests {

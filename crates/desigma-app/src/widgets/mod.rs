@@ -7,6 +7,7 @@ impl<T: std::hash::Hash + std::fmt::Debug> Key for T {}
 pub mod field;
 pub mod menu;
 pub mod picker;
+pub mod popover;
 
 use crate::icons::{self, Icon};
 use crate::theme;
@@ -248,6 +249,33 @@ pub fn fmt_num(v: f32) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Value text in a 24px field sits on a baseline 16px below the field's top edge
+    /// (Figma: 11px Inter in a 16px line box centred in the field), at any pixel ratio.
+    #[test]
+    fn field_text_baseline_is_16px_below_the_top() {
+        for ppp in [1.0f32, 2.0] {
+            let ctx = egui::Context::default();
+            crate::theme::apply(&ctx);
+            crate::theme::install_fonts(&ctx);
+            let mut baseline = None;
+            let field = Rect::from_min_size(Pos2::new(40.0, 100.0), Vec2::new(88.0, 24.0));
+            let mut raw = egui::RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(400.0, 300.0))), ..Default::default() };
+            raw.viewports.entry(egui::ViewportId::ROOT).or_default().native_pixels_per_point = Some(ppp);
+            for _ in 0..2 {
+                let out = ctx.run_ui(raw.clone(), |ui| {
+                    field_text(ui.painter(), field, 8.0, 8.0, "1234", theme::font_body(), theme::TEXT);
+                });
+                for cs in &out.shapes {
+                    if let egui::Shape::Text(t) = &cs.shape {
+                        baseline = Some(t.pos.y + galley_baseline(&t.galley));
+                    }
+                }
+            }
+            let b = baseline.expect("text painted");
+            assert!((b - (field.top() + 16.0)).abs() <= 0.5 / ppp + 1e-3, "baseline {b} at ppp {ppp}");
+        }
+    }
 
     #[test]
     fn number_formatting() {

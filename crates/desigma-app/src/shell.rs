@@ -100,8 +100,13 @@ impl Shell {
         if opts.present {
             app.start_present();
         }
-        if opts.panel.as_deref() == Some("variables") {
-            app.open_variables();
+        match opts.panel.as_deref() {
+            Some("variables") => app.open_variables(),
+            Some(spec) => {
+                let (w, h) = opts.size.unwrap_or((theme::DEFAULT_WINDOW.0 as u32, theme::DEFAULT_WINDOW.1 as u32));
+                panels::properties::preset_popup(&mut app, spec, Vec2::new(w as f32, h as f32));
+            }
+            None => {}
         }
         let shot = opts.screenshot.map(|path| Shot {
             path,

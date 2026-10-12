@@ -1,6 +1,7 @@
 pub mod assets;
 pub mod components;
 pub mod context;
+pub mod effects;
 pub mod export;
 pub mod inspect;
 pub mod layers;
@@ -11,6 +12,7 @@ pub mod properties;
 pub mod prototype;
 pub mod rail;
 pub mod right;
+pub mod stroke;
 pub mod toolbar;
 pub mod typography;
 pub mod var_bind;
