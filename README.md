@@ -1,8 +1,6 @@
-<p align="center">
-  <img alt="desigma" src="docs/brand/desigma-mark.svg" width="96">
-</p>
-
-<h1 align="center">desigma</h1>
+<h1 align="center">
+  <img alt="desigma: the design tool you actually own. Free, open source, offline, written in Rust." src="marketing/png/launch-banner-1600x900.png" width="100%">
+</h1>
 
 <p align="center">
   <b>Interface design; a free, open-source design tool in the spirit of Figma, rebuilt in pure Rust.</b><br>
@@ -21,9 +19,9 @@
 <br>
 
 <p align="center">
-  <img src="docs/images/desigma-hero.png" alt="The desigma editor in its dark theme: pages and layers on the left, a canvas with Welcome, Card and Dashboard frames and two button instances, the Design inspector on the right and the floating toolbar at the bottom" width="100%">
+  <img src="docs/images/desigma-hero.png" alt="The desigma editor on the Marlow showcase file: four phone screens in a row (welcome, home dashboard, spending and a dark settings screen), the Home frame selected and the inspector showing its vertical auto layout" width="900">
   <br>
-  <sub>The editor with the demo document: frames, a card with a drop shadow, button instances and the Design inspector.</sub>
+  <sub>The editor on the built-in showcase file: four 390 x 844 screens built with auto layout and components, one of them in the Dark mode of a variable collection.</sub>
 </p>
 
 <br>
@@ -53,23 +51,23 @@
 
 ## Features
 
-Every screenshot here is the real app, captured offscreen with its own <code>--screenshot</code> mode.
+Every screenshot here is the real app on its built-in showcase file, captured offscreen at 2x with its own <code>--screenshot</code> mode.
 
 <table>
   <tr>
     <td width="50%" valign="top">
-      <img src="docs/images/desigma-components.png" alt="An instance of the Primary button component selected: purple selection outline and size badge, and the inspector showing the swap picker, a Show icon toggle, a Label text property and a Changed: name row with a Reset button" width="100%">
+      <img src="docs/images/desigma-components.png" alt="A Button instance selected on the welcome screen: the inspector shows the Button component set with Type and Size variant pickers, a Label text property, a Show icon toggle and a Changed row with a Reset button" width="440">
       <br>
-      <sub>An instance selected: component properties, overrides and the swap picker.</sub>
+      <sub>A Button instance: variant pickers (Type, Size), a text property, a boolean property and the overrides on this copy.</sub>
       <h3>Components that stay in sync</h3>
       Turn any layer into a component with <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>K</kbd>, drop instances from the Assets panel, and edit the main component: every instance updates in the same undo step while keeping its own overrides.
       <br><br>
       <b>Boolean, text, variant and instance-swap properties</b>, Combine as variants, Go to main component, Reset all changes and Detach, all undoable.
     </td>
     <td width="50%" valign="top">
-      <img src="docs/images/desigma-prototype.png" alt="The Prototype tab: a Flow 1 flag above the Welcome frame, the Continue button selected with a blue hotspot and a connector to the Dashboard frame, and an On click, Navigate to Dashboard interaction in the right panel" width="100%">
+      <img src="docs/images/desigma-prototype.png" alt="The Prototype tab on the Mobile page: the Welcome frame selected with two blue connectors leading to the Home screen, flag chips marking the Onboarding and Dashboard flows above their start frames" width="440">
       <br>
-      <sub>Prototype mode: a flow flag, a hotspot and a connector to the destination frame.</sub>
+      <sub>Prototype mode: flow starting points, and connectors from the selected screen to where its buttons lead.</sub>
       <h3>Prototype what you draw</h3>
       Drag from a layer's hotspot to a frame to wire it up, then refine the interaction: triggers, actions, overlays and transitions with easing curves and springs.
       <br><br>
@@ -78,7 +76,67 @@ Every screenshot here is the real app, captured offscreen with its own <code>--s
   </tr>
   <tr>
     <td width="50%" valign="top">
-      <img src="docs/images/desigma-renderer.png" alt="A renderer test sheet: rounded rectangles with independent radii, arcs, a star, a vector path, linear, radial, angular and diamond gradients, image fills, inside, center and outside strokes, dashes, drop and inner shadows, layer and background blur, masks, boolean operations, corner smoothing and styled text" width="100%">
+      <img src="docs/images/desigma-variables.png" alt="The Variables view on the Theme collection: Light and Dark mode columns, color variables grouped as Surface, Text, Border, Brand and Status with aliases to primitives, and number variables for radius" width="440">
+      <br>
+      <sub>The Variables view: a Theme collection with Light and Dark modes, aliases to primitives and number variables.</sub>
+      <h3>Variables and modes</h3>
+      Color, number, string and boolean variables in collections with modes, bound to fills, strokes, sizes and spacing from a picker next to the field. Switch a frame to another mode and everything bound to it follows.
+      <br><br>
+      <b>Library variables</b> and color styles appear in the same pickers; using one copies it into the file in the same undo step.
+    </td>
+    <td width="50%" valign="top">
+      <img src="docs/images/desigma-dev.png" alt="Dev mode with a balance card selected: a Ready for dev status, an annotation and a dev link, the box model with padding and margin, and SwiftUI code for the card" width="440">
+      <br>
+      <sub>Dev mode: status, annotations, measurements and SwiftUI for the selected card.</sub>
+      <h3>Hand off as code</h3>
+      Switch to Dev mode for measurements, a box model and generated code in CSS, Tailwind, SwiftUI, Jetpack Compose or React. Mark frames Ready for dev, and add annotations and links for whoever builds them.
+      <br><br>
+      <b>Copy</b> a snippet in one click, or switch language without leaving the panel.
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="docs/images/desigma-web.png" alt="A 1440 pixel wide web dashboard frame: a sidebar with navigation, four KPI cards with sparklines, a cash flow line chart, a donut chart and a transactions table with status tags" width="440">
+      <br>
+      <sub>A 1440 px dashboard: sidebar, KPI cards, charts and a table, all auto layout and component instances.</sub>
+      <h3>Real layouts, not just rectangles</h3>
+      Nested auto layout frames with hug, fill and fixed sizing, padding, gaps and alignment keep a whole dashboard in shape when the copy changes. Charts are plain vectors, rectangles and arcs.
+      <br><br>
+      <b>Tag, Avatar and Button instances</b> in the table and the header come from the same component sets as the mobile screens.
+    </td>
+    <td width="50%" valign="top">
+      <img src="docs/images/desigma-gradient.png" alt="The gradient picker open on a balance card: gradient stops on a bar, a color field, hue and opacity sliders, a hex input and the colors used on the page" width="440">
+      <br>
+      <sub>The color picker on a gradient fill, with the page's colors underneath.</sub>
+      <h3>Fills, gradients and effects</h3>
+      Solid, linear, radial, angular and diamond gradients, images and blend modes on every fill, with stops you drag on the layer itself. Shared color styles and variables show up in the same picker.
+      <br><br>
+      <b>Effects</b> include drop and inner shadows, layer and background blur, noise, texture and glass.
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="docs/images/desigma-home.png" alt="The projects home screen: a sidebar with Recents, Starred and a Marlow project, and a grid of four file cards with thumbnails of a whiteboard, a design system, a web dashboard and a mobile app" width="440">
+      <br>
+      <sub>The projects home screen: a Marlow project with a board, a design system, a dashboard and an app.</sub>
+      <h3>Your files, in one place</h3>
+      A local projects library with Recents, Starred, projects and folders, search, grid and list views, thumbnails, trash and drag and drop. Files autosave as you work, and "Open in new window" starts another editor on the same library.
+      <br><br>
+      <b>Shared libraries</b> publish a file's components, styles and variables for other files to enable, with a review step when a new version lands.
+    </td>
+    <td width="50%" valign="top">
+      <img src="docs/images/desigma-board.png" alt="A board on a dotted canvas: a section holding three pastel sticky notes, a diamond and a rounded shape joined by elbow connectors with a yes label, and loose stamps" width="440">
+      <br>
+      <sub>A board: stickies, connectors, shapes with text, stamps and a section.</sub>
+      <h3>Boards for thinking out loud</h3>
+      New board in the File menu or on the home screen opens a whiteboard with its own toolbar: stickies whose text shrinks to fit, shapes with text, markers, stamps and sections. <kbd>Tab</kbd> starts the next sticky, <kbd>Alt</kbd>-drag duplicates.
+      <br><br>
+      <b>Connectors</b> come out of the magnet dots on any shape, route around the boxes they join and follow them when they move. FigJam files open as boards.
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="docs/images/desigma-renderer.png" alt="A renderer test sheet: rounded rectangles with independent radii, arcs, a star, a vector path, linear, radial, angular and diamond gradients, image fills, inside, center and outside strokes, dashes, drop and inner shadows, layer and background blur, masks, boolean operations, corner smoothing and styled text" width="440">
       <br>
       <sub>The renderer's feature sheet, produced by <code>cargo run -p desigma-render --example render_demo</code>.</sub>
       <h3>A renderer that sweats the pixels</h3>
@@ -87,53 +145,13 @@ Every screenshot here is the real app, captured offscreen with its own <code>--s
       <b>All 19 blend modes</b>, including exact linear burn and linear dodge, and text shaped with cosmic-text, with runs, line height, letter spacing, case and truncation.
     </td>
     <td width="50%" valign="top">
-      <img src="docs/images/desigma-palette.png" alt="The Actions command palette open over the editor, with a search field and a list of commands and their keyboard shortcuts" width="100%">
+      <img src="docs/images/desigma-palette.png" alt="The Actions command palette open over the showcase file, with a search field and a list of commands and their keyboard shortcuts" width="440">
       <br>
       <sub>Actions (<kbd>Ctrl</kbd>+<kbd>K</kbd>): every command, searchable, with its shortcut.</sub>
       <h3>Everything a keystroke away</h3>
       The main menu, tool dropdowns, context menus and the command palette all share one menu widget built to Figma's measured spacing, with full keyboard navigation and submenus.
       <br><br>
       <b>Export</b> to PNG, JPG and real vector SVG at any scale, copy as PNG, SVG or CSS, and switch to Dev mode for measurements and ready-to-paste CSS.
-    </td>
-  </tr>
-  <tr>
-    <td width="50%" valign="top">
-      <img src="docs/images/desigma-home.png" alt="The projects home screen: a sidebar with Recents, Starred and a list of projects, and a grid of file cards with thumbnails, project names and edit times" width="100%">
-      <br>
-      <sub>The projects home screen, with a library seeded by <code>--home --library DIR</code>.</sub>
-      <h3>Your files, in one place</h3>
-      A local projects library with Recents, Starred, projects and folders, search, grid and list views, thumbnails, trash and drag and drop. Files autosave as you work, and "Open in new window" starts another editor on the same library.
-      <br><br>
-      <b>Shared libraries</b> publish a file's components, styles and variables for other files to enable, with a review step when a new version lands.
-    </td>
-    <td width="50%" valign="top">
-      <img src="docs/images/desigma-variables.png" alt="The Variables view: a Variable collection with six color variables, each with a swatch and a hex value" width="100%">
-      <br>
-      <sub>The Variables view: a collection of color variables and their values.</sub>
-      <h3>Variables and modes</h3>
-      Color, number, string and boolean variables in collections with modes, bound to fills, strokes, sizes and spacing from a picker next to the field. Switch a frame to another mode and everything bound to it follows.
-      <br><br>
-      <b>Library variables</b> and color styles appear in the same pickers; using one copies it into the file in the same undo step.
-    </td>
-  </tr>
-  <tr>
-    <td width="50%" valign="top">
-      <img src="docs/images/desigma-board.png" alt="A board on a dotted canvas: a section holding three pastel sticky notes, a diamond and a rounded shape joined by elbow connectors with a yes label, loose stamps, a floating toolbar with color swatches, text size and alignment above the selected note, and the board toolbar at the bottom" width="100%">
-      <br>
-      <sub>A board: stickies, connectors and a section, with the contextual toolbar above the selection.</sub>
-      <h3>Boards for thinking out loud</h3>
-      New board in the File menu or on the home screen opens a whiteboard with its own toolbar: stickies whose text shrinks to fit, shapes with text, markers, stamps and sections. <kbd>Tab</kbd> starts the next sticky, <kbd>Alt</kbd>-drag duplicates.
-      <br><br>
-      <b>Connectors</b> come out of the magnet dots on any shape, route around the boxes they join and follow them when they move. FigJam files open as boards.
-    </td>
-    <td width="50%" valign="top">
-      <img src="docs/images/desigma-board-home.png" alt="The home screen with two board cards, one empty on a dotted canvas and one showing a thumbnail of its whole page, both with a Board badge, next to a design file card" width="100%">
-      <br>
-      <sub>Boards on the home screen: a Board badge and a thumbnail of the whole page.</sub>
-      <h3>Design files and boards side by side</h3>
-      The home screen has separate New design file and New board buttons, and a board's card shows its dotted canvas. Boards save and autosave like any other file.
-      <br><br>
-      <b>Export</b> a board to PNG or vector SVG, or round-trip it through Figma REST JSON with its stickies, connectors, shapes and stamps.
     </td>
   </tr>
 </table>
@@ -229,11 +247,13 @@ Useful flags for automation and testing:
 
 ```sh
 desigma --screenshot out.png --size 1600x1000 --select Card   # render one frame and exit
+desigma --fixture showcase --select Home --size 1600x1000 --scale 2 --screenshot hero.png   # the showcase file, rendered at 2x (3200x2000)
 desigma --select Welcome --rulers --layout-grid columns --zoom 120 --screenshot out.png   # rulers + column grid
 desigma --edit-text "Welcome back" --select-text 0-7 --screenshot out.png                 # mid-edit with a selection
 desigma --tab prototype --present                              # open straight into Present
 desigma --fixture proto-vars --select Add --tab prototype --panel interaction --screenshot i.png   # the interaction editor with a Conditional
 desigma --fixture proto-vars --present --panel present-variables --screenshot p.png                # Present with the live Variables panel
+desigma --seed-library ./my-library                            # fill a library directory with the showcase sample files
 desigma --home --library ./my-library --screenshot home.png    # the projects home screen on a library directory
 desigma --fixture variables --panel variables --screenshot v.png  # the Variables view
 desigma-diff compare reference.png actual.png --out diff.png   # pixel-compare two images
