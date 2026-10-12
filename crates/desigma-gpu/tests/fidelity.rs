@@ -126,3 +126,75 @@ fn extreme_effects_render() {
     // huge blurs are approximated at reduced resolution; the image must still be close
     assert!(c.report.ssim > 0.9, "{:?}", c.report);
 }
+
+fn board_scene() -> (Document, NodeId) {
+    let mut t = T::new();
+    t.doc.kind = DocumentKind::Board;
+    t.doc.get_mut(t.page).unwrap().kind = NodeKind::Page { background: Color::rgb(0xF4, 0xF4, 0xF4) };
+    let mut ids = Vec::new();
+    let notes =
+        [(0xFFE58F_u32, "Ship the board mode"), (0xB6D4FF, "A longer note with enough words to make the text shrink to fit the square"), (0xC4EBA6, "")];
+    for (i, (c, text)) in notes.iter().enumerate() {
+        let id = t.add(None, |id| Node::sticky(id, Rect::new(20.0 + i as f32 * 170.0, 20.0, 150.0, 150.0), *text));
+        if let NodeKind::Sticky(s) = &mut t.node(id).kind {
+            s.color = Color::rgb((c >> 16) as u8, (c >> 8) as u8, *c as u8);
+        }
+        ids.push(id);
+    }
+    let shape = t.add(None, |id| Node::shape_with_text(id, Rect::new(30.0, 230.0, 140.0, 90.0), ShapeKind::Diamond, "Decide"));
+    let shape2 = t.add(None, |id| Node::shape_with_text(id, Rect::new(300.0, 230.0, 140.0, 90.0), ShapeKind::RoundedRect, "Do it"));
+    let connect = |t: &mut T, a: NodeId, b: NodeId, line: ConnectorLine, label: &str| {
+        let c = t.add(None, |id| {
+            let mut p =
+                ConnectorProps { start: ConnectorEnd::attached(a, Magnet::Auto), end: ConnectorEnd::attached(b, Magnet::Auto), line, ..Default::default() };
+            p.end_cap = ConnectorCap::Triangle;
+            p.start_cap = ConnectorCap::Circle;
+            if !label.is_empty() {
+                let mut l = board_text(13.0, TextAlignH::Center, TextAlignV::Center);
+                l.content = label.into();
+                p.label = Some(l);
+            }
+            Node::connector(id, p)
+        });
+        sync_connector(&mut t.doc, c);
+    };
+    connect(&mut t, ids[0], shape, ConnectorLine::Elbowed, "");
+    connect(&mut t, shape, shape2, ConnectorLine::Straight, "yes");
+    connect(&mut t, ids[2], shape2, ConnectorLine::Curved, "");
+    for (i, k) in STAMP_KINDS.iter().enumerate() {
+        t.add(None, |id| Node::stamp(id, Vec2::new(30.0 + i as f32 * 60.0, 350.0), k, 48.0));
+    }
+    (t.doc, t.page)
+}
+
+#[test]
+fn board_kinds_match_cpu() {
+    let Some(mut g) = gpu() else { return };
+    let (doc, page) = board_scene();
+    let c = compare(&mut g, "board", &doc, page, Viewport { offset: Vec2::ZERO, zoom: 1.0, dpr: 2.0 }, (1000, 800), 8);
+    assert!(c.report.ratio < 0.03, "mismatch {:.3}%", c.report.ratio * 100.0);
+    assert!(c.report_aa.ratio < 0.01, "mismatch with AA forgiven {:.3}%", c.report_aa.ratio * 100.0);
+    // the notes really are drawn (not an empty page): the yellow sticky fill is on screen
+    let p = c.gpu.pixel(2 * 90, 2 * 150).unwrap();
+    assert!(p.red() > 240 && p.green() > 200 && p.blue() < 180, "{p:?}");
+}
+
+#[test]
+fn board_kinds_zoomed_match_cpu() {
+    let Some(mut g) = gpu() else { return };
+    let (doc, page) = board_scene();
+    let vp = Viewport { offset: Vec2::new(20.0, 10.0), zoom: 2.5, dpr: 1.0 };
+    let c = compare(&mut g, "board_zoom", &doc, page, vp, (900, 700), 8);
+    assert!(c.report.ratio < 0.03, "mismatch {:.3}%", c.report.ratio * 100.0);
+}
+
+#[test]
+fn board_kinds_through_the_cpu_fallback_match_cpu() {
+    let Some(mut g) = gpu() else { return };
+    let (doc, page) = board_scene();
+    // everything the stickies lower to (shadowed bodies, their text) takes the CPU-into-texture path
+    g.compiler.opts.force_fallback = Some(Arc::new(|n: &Node| !n.effects.is_empty() || matches!(n.kind, NodeKind::Text(_))));
+    let vp = Viewport { offset: Vec2::ZERO, zoom: 1.0, dpr: 2.0 };
+    let c = compare(&mut g, "board_fallback", &doc, page, vp, (1000, 800), 8);
+    assert!(c.report.ratio < 0.02, "mismatch {:.3}%", c.report.ratio * 100.0);
+}

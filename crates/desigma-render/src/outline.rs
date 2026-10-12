@@ -178,8 +178,8 @@ pub fn miter_outline(path: &sk::Path, width: f32, res_scale: f32) -> Option<sk::
 /// transform of the whole frame, which anchors noise and blur grids so the
 /// result lines up with GPU output.
 pub fn render_node_into(doc: &Document, id: NodeId, ts: sk::Transform, grid_ts: sk::Transform, pm: &mut sk::Pixmap) {
-    let Some(node) = doc.get(id) else { return };
-    let mut n = resolve_node(doc, node).into_owned();
+    let Some(node) = crate::board::get(doc, id) else { return };
+    let mut n = resolve_node(doc, &node).into_owned();
     if matches!(n.kind, NodeKind::Page { .. }) {
         return;
     }

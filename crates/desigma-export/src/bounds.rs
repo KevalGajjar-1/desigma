@@ -28,6 +28,14 @@ fn grow(r: Rect, l: f32, t: f32, rt: f32, b: f32) -> Rect {
 /// How far a node's own paint reaches outside its box: (left, top, right, bottom).
 pub fn own_overflow(n: &Node) -> (f32, f32, f32, f32) {
     let (mut l, mut t, mut r, mut b) = (0.0f32, 0.0f32, 0.0f32, 0.0f32);
+    if matches!(n.kind, NodeKind::Sticky(_)) {
+        // the soft shadow a sticky note draws
+        let reach = desigma_render::board::sticky_shadow_reach(n.size);
+        l = reach;
+        t = reach;
+        r = reach;
+        b = reach;
+    }
     let has_stroke = n.stroke.paints.iter().any(|p| p.visible) && (n.stroke.weight > 0.0 || n.stroke.side_weights.is_some());
     if has_stroke {
         let out = match n.stroke.align {

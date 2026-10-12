@@ -11,6 +11,7 @@ use crate::mesh::Mesh;
 use crate::paintconv::{PaintCache, PaintInst};
 use desigma_doc as d;
 use desigma_doc::{resolve_node, Document, Effect, Node, NodeId, NodeKind, Vec2};
+use desigma_render::board;
 use desigma_render::tiny_skia as sk;
 use desigma_render::{node_margin, render_node_into, SceneIndex, StrokeClip, Viewport};
 use std::collections::HashMap;
@@ -302,10 +303,11 @@ impl Ctx<'_> {
     fn draw_children(&mut self, children: &[NodeId], parent_ts: sk::Transform, clip: ClipId) {
         let doc = self.doc;
         for (i, cid) in children.iter().enumerate() {
-            let Some(child) = doc.get(*cid) else { continue };
-            let child = resolve_node(doc, child);
+            let Some(child) = board::get(doc, *cid) else { continue };
+            let child = resolve_node(doc, &child);
             let child: &Node = &child;
-            if self.cull && !child.is_mask {
+            // lowered board children are not in the scene index
+            if self.cull && !child.is_mask && !board::is_synthetic(*cid) {
                 let vis = self.visible(clip);
                 match self.index.bounds_of(*cid) {
                     Some(b) => {
@@ -407,6 +409,13 @@ impl Ctx<'_> {
 
     fn draw_node(&mut self, n: &Node, ts: sk::Transform, clip: ClipId) {
         if !n.visible || matches!(n.kind, NodeKind::Unknown { .. } | NodeKind::Page { .. }) {
+            return;
+        }
+        if n.kind.is_board_item() {
+            // stickies, connectors, shapes with text and stamps draw as their lowered form
+            if let Some(body) = board::lower(self.doc, n) {
+                self.draw_node(&body, ts, clip);
+            }
             return;
         }
         if let Some(f) = &self.opts.force_fallback {

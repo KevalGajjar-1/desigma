@@ -37,6 +37,14 @@ impl Default for SvgOptions {
 
 /// SVG document for `node` (its subtree), sized to the layer plus effect overflow.
 pub fn export_svg(doc: &Document, node: NodeId, opts: &SvgOptions) -> String {
+    // board items are written as their lowered shapes and text
+    if let Some(lowered) = desigma_render::board::lowered_document(doc) {
+        return export_svg_plain(&lowered, node, opts);
+    }
+    export_svg_plain(doc, node, opts)
+}
+
+fn export_svg_plain(doc: &Document, node: NodeId, opts: &SvgOptions) -> String {
     let Some(n) = doc.get(node) else {
         return "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"0\" height=\"0\"/>\n".to_string();
     };

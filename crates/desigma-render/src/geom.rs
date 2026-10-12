@@ -467,6 +467,11 @@ fn derived_shape(doc: &Document, n: &Node, tol: f32) -> Option<Shape> {
             Some(s)
         }
         NodeKind::BooleanOp(op) => boolean::boolean_shape(doc, n, *op, tol),
+        // board items have the geometry of their lowered body
+        NodeKind::Sticky(_) | NodeKind::Connector(_) | NodeKind::ShapeWithText(_) | NodeKind::Stamp { .. } => {
+            let body = crate::board::lower(doc, n)?;
+            derived_shape(doc, &body, tol)
+        }
         NodeKind::Page { .. } | NodeKind::Group | NodeKind::Text(_) | NodeKind::Unknown { .. } => None,
     }
 }
