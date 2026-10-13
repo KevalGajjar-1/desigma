@@ -6,14 +6,15 @@
 //! * [`css_for`] prints Dev Mode style CSS for a layer; [`tailwind_for`], [`swiftui_for`],
 //!   [`compose_for`] and [`react_for`] generate code for the other Dev Mode languages.
 //!
-//! PDF export is not provided: no pure-Rust PDF writer with usable vector
-//! output is vendored in this workspace.
+//! [`export_pdf`] exports ordered slide frames as losslessly compressed raster PDF pages.
+//! PDF pages preserve slide dimensions and artwork; text is not selectable.
 
 mod bounds;
 mod codegen;
 mod compose;
 mod css;
 mod geo;
+mod pdf;
 mod raster;
 mod react;
 mod svg;
@@ -23,9 +24,11 @@ mod text;
 mod util;
 
 pub use bounds::render_bounds;
+pub use codegen::css_var as css_variable_reference;
 pub use codegen::{is_vector_asset, vector_assets};
 pub use compose::compose_for;
 pub use css::{css_for, font_family_css, paint_css, text_style_css};
+pub use pdf::export_pdf;
 pub use raster::{export_jpg, export_png, render_export, rgba_bytes, ExportScale};
 pub use react::{react_for, react_with, ReactOptions};
 pub use svg::{export_svg, SvgOptions};

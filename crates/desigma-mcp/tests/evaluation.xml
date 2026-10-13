@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Setup for EACH independent question: fresh server with repository root as
+     workspace; preload crates/desigma-fig/tests/fixtures/rest_file.json.
+     Answering uses read-only tools only. See ../README.md. -->
+<evaluation>
+  <qa_pair>
+    <question>In the loaded fixture, locate the component instance inside the section and follow its component reference to the main component. Inspect their text children, which share a layer name. What are the main component's text and the instance's text? Respond as main|instance with no spaces around the separator.</question>
+    <answer>Click|Overridden</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>Find the masked layer with both gradient and image paints. Follow its ancestors to the page and compare that page with the document's other page. Return the name of the page that does not contain the masked layer and has no children.</question>
+    <answer>Second page</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>Locate the text child of the main button component, not its instance. Walk through the containing component set and section, combining the parent-relative transforms to determine the text layer's page-space origin. Return x,y as integers with no spaces.</question>
+    <answer>542,40</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>Find the frame that contains a text layer with an emoji and a gradient mask. Inspect its stored width and auto-layout padding. What horizontal content width remains after subtracting its left and right padding only, ignoring strokes? Return the number of pixels as an integer.</question>
+    <answer>284</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>Locate the masked gradient layer and its immediate parent. Using their stored width and height before clipping or layout reflow, what percentage of the parent's rectangular area is occupied by the mask's rectangular bounds? Return a decimal number without a percent sign.</question>
+    <answer>22.5</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>Find the masked descendant of the populated page. Inspect all its imported fills, distinguishing paint visibility from opacity and excluding unrecognized source paint types that were not imported. How many imported fills on that layer are visible? Return an integer.</question>
+    <answer>5</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>Find the vector layer under the frame with asymmetric corner radii. Inspect its paths rather than the sibling boolean-operation layer. How many distinct fill-rule values are represented across that vector's paths? Return an integer.</question>
+    <answer>2</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>Locate the text layer in the frame containing the mask. Its base font size differs from one rich-text override. Read the content and run ranges, interpreting those ranges as UTF-8 byte offsets. Return exactly the substring styled at 12 pixels.</question>
+    <answer>xé</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>Locate the common parent of the masked layer and the emoji-containing text layer. Inspect its corner radii. Divide the sum of its two top corner radii by the sum of its two bottom corner radii. Return the ratio as an integer.</question>
+    <answer>4</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>Within the populated page, locate the boolean-operation layer and inspect both direct children. Compute the area of overlap of their axis-aligned rectangular bounds in the boolean parent's local coordinates, ignoring the shapes' curved outlines. Return the area in square pixels as an integer.</question>
+    <answer>900</answer>
+  </qa_pair>
+</evaluation>

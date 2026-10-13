@@ -289,3 +289,90 @@ fn files_without_content_on_the_internal_canvas_have_no_library_page() {
     let doc = import_fig_node_changes(&only, "t").unwrap();
     assert!(doc.library_page.is_none());
 }
+
+#[test]
+fn linked_text_styles_replace_stale_properties_before_character_overrides() {
+    for style_ref in [json!({"guid": g(7, 1)}), json!({"assetRef": {"key": "BODY_TEXT"}})] {
+        let input = json!([
+            node((0, 0), (0, 0), "!", "DOCUMENT", "Document", json!({})),
+            node((0, 1), (0, 0), "a", "CANVAS", "Page", json!({})),
+            node((0, 2), (0, 0), "b", "CANVAS", "Internal Only Canvas", json!({"internalOnly": true})),
+            node(
+                (7, 1),
+                (0, 2),
+                "a",
+                "TEXT",
+                "Body",
+                json!({
+                    "styleType": "TEXT", "key": "BODY_TEXT", "fontSize": 16.0,
+                    "fontName": {"family": "Inter", "style": "Regular"},
+                    "lineHeight": {"units": "PIXELS", "value": 28.0},
+                    "letterSpacing": {"units": "PERCENT", "value": 0.0}
+                })
+            ),
+            node(
+                (1, 1),
+                (0, 1),
+                "a",
+                "TEXT",
+                "Caption",
+                json!({
+                    "fontSize": 48.0, "fontName": {"family": "Inter", "style": "Extra Bold"},
+                    "lineHeight": {"units": "PIXELS", "value": 60.0},
+                    "textDecoration": "UNDERLINE", "textAlignHorizontal": "RIGHT",
+                    "styleIdForText": style_ref, "fillPaints": [solid(1.0, 0.0, 0.0)],
+                    "textData": {"characters": "AB", "characterStyleIDs": [0, 1],
+                        "styleOverrideTable": [{"styleID": 1, "fontSize": 20.0, "textDecoration": "UNDERLINE"}]}
+                })
+            ),
+            node(
+                (1, 2),
+                (0, 1),
+                "b",
+                "TEXT",
+                "Tracking",
+                json!({
+                    "fontSize": 48.0, "styleIdForText": style_ref,
+                    "textData": {"characters": "C", "characterStyleIDs": [1],
+                        "styleOverrideTable": [{"styleID": 1, "letterSpacing": {"units": "PERCENT", "value": 10.0}}]}
+                })
+            )
+        ]);
+        let doc = import_fig_node_changes(&input, "t").unwrap();
+        let NodeKind::Text(t) = &find(&doc, "Caption").kind else { panic!("text") };
+        assert_eq!(t.style.font_size, 16.0);
+        assert_eq!(t.style.font_weight, 400);
+        assert_eq!(t.style.line_height, LineHeight::Pixels(28.0));
+        assert_eq!(t.style.decoration, TextDecoration::None);
+        assert_eq!(t.style.align_h, TextAlignH::Right);
+        assert_eq!(t.runs[0].style.font_size, 20.0);
+        assert_eq!(t.runs[0].style.font_weight, 400);
+        assert_eq!(t.runs[0].style.decoration, TextDecoration::Underline);
+        assert_eq!(t.style.fills[0].kind, PaintKind::Solid(Color { r: 1.0, g: 0.0, b: 0.0, a: 1.0 }));
+        let NodeKind::Text(t) = &find(&doc, "Tracking").kind else { panic!("text") };
+        assert!((t.runs[0].style.letter_spacing - 1.6).abs() < 1e-6);
+    }
+}
+
+#[test]
+fn unavailable_text_style_keeps_local_properties() {
+    let input = json!([
+        node((0, 0), (0, 0), "!", "DOCUMENT", "Document", json!({})),
+        node((0, 1), (0, 0), "a", "CANVAS", "Page", json!({})),
+        node(
+            (1, 1),
+            (0, 1),
+            "a",
+            "TEXT",
+            "Fallback",
+            json!({
+                "fontSize": 24.0, "fontName": {"family": "Inter", "style": "Bold"},
+                "styleIdForText": {"assetRef": {"key": "UNAVAILABLE"}}, "textData": {"characters": "Hello"}
+            })
+        )
+    ]);
+    let doc = import_fig_node_changes(&input, "t").unwrap();
+    let NodeKind::Text(t) = &find(&doc, "Fallback").kind else { panic!("text") };
+    assert_eq!(t.style.font_size, 24.0);
+    assert_eq!(t.style.font_weight, 700);
+}

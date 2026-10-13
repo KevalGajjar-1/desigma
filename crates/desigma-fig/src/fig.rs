@@ -550,7 +550,7 @@ fn convert_node(nc: &Value, id: &str, lk: &Lk) -> Option<Map<String, Value>> {
                 m.insert("_derived".into(), Value::Array(derived));
             }
         }
-        "TEXT" => convert_text(&mut m, nc),
+        "TEXT" => convert_text(&mut m, nc, lk),
         _ => {}
     }
     // Vector networks: vertices, segments and regions of editable vectors.
@@ -1022,11 +1022,25 @@ fn convert_type_style(o: &Value, base_size: Option<f32>) -> Map<String, Value> {
     m
 }
 
-fn convert_text(m: &mut Map<String, Value>, nc: &Value) {
+fn convert_text(m: &mut Map<String, Value>, nc: &Value, lk: &Lk) {
     let td = nc.get("textData");
     let chars = td.and_then(|t| fstr(t, "characters")).unwrap_or("");
     m.insert("characters".into(), chars.into());
     let mut style = convert_type_style(nc, None);
+    // Linked styles are authoritative: kiwi keeps pre-link properties on the
+    // node (e.g. 48px even though the active shared style specifies 18px).
+    // Character overrides are applied afterwards, against this resolved base.
+    if let Some(shared) = nc.get("styleIdForText").and_then(|r| lk.style_node(r)) {
+        let mut linked = convert_type_style(shared, None);
+        for (key, default) in [("textCase", "ORIGINAL"), ("textDecoration", "NONE")] {
+            linked.entry(key.to_string()).or_insert_with(|| default.into());
+        }
+        // A text style does not supply the layer's paint or box alignment.
+        for key in ["fills", "textAlignHorizontal", "textAlignVertical"] {
+            linked.remove(key);
+        }
+        style.extend(linked);
+    }
     style.remove("fills"); // node-level fills are the text color
     copy(&mut style, nc, "textAutoResize", "textAutoResize");
     if let Some(a) = fstr(nc, "textAutoResize") {
@@ -1038,9 +1052,10 @@ fn convert_text(m: &mut Map<String, Value>, nc: &Value) {
     if let Some(lines) = td.and_then(|t| t.get("lines")).and_then(Value::as_array) {
         crate::textfmt::lines_from_kiwi(lines, m, &mut style);
     }
+    let base_size = style.get("fontSize").and_then(Value::as_f64).map(|n| n as f32);
     m.insert("style".into(), Value::Object(style));
     if let Some(td) = td {
-        text_overrides(m, td, fnum(nc, "fontSize"));
+        text_overrides(m, td, base_size);
     }
 }
 

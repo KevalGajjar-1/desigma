@@ -595,15 +595,19 @@ impl App {
 
     /// Opens the Present view from the selected frame, else the page's first flow, else the first frame.
     pub fn start_present(&mut self) {
-        let start = self
-            .selection
-            .first()
-            .and_then(|s| top_frame(&self.doc, *s))
-            .or_else(|| self.doc.flows.iter().find(|f| f.page == self.page).map(|f| f.start))
-            .or_else(|| top_level_frames(&self.doc, self.page).first().copied());
+        crate::decks::ui::flush_notes(self);
+        let start = if self.is_deck() {
+            self.active_slide()
+        } else {
+            self.selection
+                .first()
+                .and_then(|s| top_frame(&self.doc, *s))
+                .or_else(|| self.doc.flows.iter().find(|f| f.page == self.page).map(|f| f.start))
+                .or_else(|| top_level_frames(&self.doc, self.page).first().copied())
+        };
         match start {
             Some(s) => self.proto.present = Some(crate::present::PresentState::new(&self.doc, s)),
-            None => self.show_toast("Nothing to present: add a frame first", true),
+            None => self.show_toast(if self.is_deck() { "Nothing to present: add a slide first" } else { "Nothing to present: add a frame first" }, true),
         }
     }
 }
@@ -623,6 +627,24 @@ mod tests {
         let id = d.alloc_id();
         let b = d.insert(f[0], Node::rectangle(id, Rect::new(0.0, 0.0, 10.0, 10.0))).unwrap();
         (d, f[0], f[1], f[2], b)
+    }
+
+    #[test]
+    fn deck_presentation_starts_the_active_or_selected_slide() {
+        let (mut doc, a, b, _, nested) = doc3();
+        doc.kind = DocumentKind::Deck;
+        for id in [a, b] {
+            doc.get_mut(id).unwrap().slide = Some(SlideProps::default());
+        }
+        let mut app = App::new(doc);
+        app.selection.clear();
+        app.decks.active = Some(b);
+        app.start_present();
+        assert_eq!(app.proto.present.as_ref().unwrap().player.current, b);
+        app.proto.present = None;
+        app.selection = vec![nested];
+        app.start_present();
+        assert_eq!(app.proto.present.as_ref().unwrap().player.current, a);
     }
 
     #[test]

@@ -1,5 +1,6 @@
-//! Every visual constant of the editor chrome lives here (mirrors
-//! `assets/ui-spec.json`, measured from the real Figma UI3 dark theme).
+//! Every visual constant of the editor chrome lives here.
+//! Existing values retain the legacy Figma UI3 measurements in `assets/ui-spec.json`;
+//! new editor work targets Desigma's own visual design, not Figma screenshot parity.
 //! Nothing outside this module may hardcode colors, sizes, radii or fonts.
 
 use egui::{Color32, CornerRadius, FontFamily, FontId};

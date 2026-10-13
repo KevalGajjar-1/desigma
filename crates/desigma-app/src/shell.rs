@@ -62,13 +62,19 @@ impl Shell {
             Some("variables") => demo::variables_document(),
             Some(crate::showcase::FIXTURE) => crate::showcase::document(),
             Some(crate::protovars::FIXTURE) => crate::protovars::document(),
+            Some("deck") => crate::decks::demo::document(),
             Some("board") => crate::board::demo::document(),
             Some("board-empty") => crate::board::create::new_document("Untitled"),
             Some(f) if crate::vecfixture::FIXTURES.contains(&f) => crate::vecfixture::document(),
             _ => demo::demo_document(),
         });
-        if !matches!(opts.fixture.as_deref(), Some("variables" | crate::showcase::FIXTURE)) {
+        if !matches!(opts.fixture.as_deref(), Some("variables" | "deck" | crate::showcase::FIXTURE)) {
             app.doc.name = "Untitled".into();
+        }
+        if opts.fixture.as_deref() == Some("deck") {
+            if let Some(id) = app.deck_slides().first().copied() {
+                app.select_slide(id);
+            }
         }
         if opts.fixture.as_deref() == Some("comments") {
             crate::comments::fixture::apply(&mut app);
@@ -160,6 +166,9 @@ impl Shell {
         }
         if opts.present {
             app.start_present();
+            if let Some(st) = &mut app.proto.present {
+                st.start_fullscreen = opts.fullscreen;
+            }
             if opts.panel.as_deref() == Some("present-variables") {
                 if opts.fixture.as_deref() == Some(crate::protovars::FIXTURE) {
                     crate::protovars::prime_present(&mut app);
@@ -184,6 +193,11 @@ impl Shell {
             }
             Some("present-variables") => {}
             Some("libraries") => app.open_libraries(),
+            Some(panel @ ("plugins" | "plugin-install")) => {
+                app.open_plugins();
+                app.plugins.install_form = panel == "plugin-install";
+                app.plugins.fresh = app.plugins.install_form;
+            }
             Some("version-history") => crate::history::preset::apply(&mut app, opts.library.clone()),
             Some(p @ ("dev-annotate" | "dev-compare")) => crate::dev::preset::panel(&mut app, p),
             Some(panel @ ("variables" | "variables-floating")) => {
@@ -251,7 +265,7 @@ impl Shell {
     }
 
     fn handle_keys(&mut self, ctx: &Context) {
-        if self.app.dialog.is_some() || self.app.history.save_modal.is_some() || self.app.dev.compare.is_some() {
+        if self.app.plugins.open || self.app.dialog.is_some() || self.app.history.save_modal.is_some() || self.app.dev.compare.is_some() {
             return;
         }
         let typing = ctx.egui_wants_keyboard_input();
@@ -490,6 +504,9 @@ impl eframe::App for Shell {
     /// Tab belongs to the text session (it nests list items): take it out of the input before egui
     /// uses it to move keyboard focus between widgets.
     fn raw_input_hook(&mut self, ctx: &egui::Context, raw: &mut egui::RawInput) {
+        if self.app.plugins.open {
+            return;
+        }
         let Some(sess) = self.app.canvas.text.as_mut() else { return };
         if ctx.memory(|m| m.focused()).is_some() {
             return;
@@ -577,14 +594,17 @@ impl Shell {
     pub fn draw(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
         self.app.now = ctx.input(|i| i.time);
+        self.app.poll_plugins();
         self.drive_screenshot(&ctx);
         if ctx.input(|i| i.viewport().close_requested()) {
+            crate::decks::ui::flush_notes(&mut self.app);
             self.app.save_close_version();
             self.app.flush_autosave();
         }
         self.app.scrub_sync(&ctx);
         if self.app.home.is_some() {
             self.home_frame(ui, &ctx);
+            crate::plugins::ui::show(&mut self.app, &ctx);
             return;
         }
         self.app.autosave_tick(&ctx);
@@ -595,7 +615,9 @@ impl Shell {
             return;
         }
         self.handle_keys(&ctx);
-        self.handle_drops(&ctx);
+        if !self.app.plugins.open {
+            self.handle_drops(&ctx);
+        }
 
         let full = ui.max_rect();
         ui.painter().rect_filled(full, 0.0, theme::BG);
@@ -608,7 +630,10 @@ impl Shell {
         let right_w = if board { 0.0 } else { theme::RIGHT_PANEL_WIDTH + theme::BORDER_WIDTH };
         let right_rect = Rect::from_min_max(Pos2::new(full.right() - right_w, full.top()), full.max);
         let canvas_left = if self.app.ui.left_collapsed { rail_rect.right() } else { left_rect.right() };
-        let canvas_rect = Rect::from_min_max(Pos2::new(canvas_left, full.top()), Pos2::new(right_rect.left(), full.bottom()));
+        let deck = self.app.is_deck();
+        let notes_h = if deck { 132.0_f32.min(full.height() * 0.28) } else { 0.0 };
+        let canvas_rect = Rect::from_min_max(Pos2::new(canvas_left, full.top()), Pos2::new(right_rect.left(), full.bottom() - notes_h));
+        let notes_rect = Rect::from_min_max(Pos2::new(canvas_left, canvas_rect.bottom()), Pos2::new(right_rect.left(), full.bottom()));
 
         let full_vars = self.app.vars.open && self.app.vars.full;
         if full_vars {
@@ -618,12 +643,24 @@ impl Shell {
             crate::variables::view::show(&mut self.app, ui, content);
         } else {
             canvas::show(&mut self.app, ui, canvas_rect);
+            if deck {
+                crate::decks::ui::notes(&mut self.app, ui, notes_rect);
+            }
             rail::show(&mut self.app, ui, rail_rect);
             if self.app.ui.left_collapsed {
                 let b = Rect::from_min_size(Pos2::new(canvas_rect.left() + 8.0, canvas_rect.top() + 8.0), Vec2::splat(theme::PANEL_ACTION_BUTTON));
                 ui.painter().rect_filled(b, theme::cr(theme::RADIUS_MEDIUM), theme::BG);
                 if widgets::icon_button(ui, b, "show-sidebar", Icon::Sidebar, false, "Show sidebar").clicked() {
                     self.app.ui.left_collapsed = false;
+                }
+            } else if deck {
+                let mode = Rect::from_min_size(left_rect.min, Vec2::new(left_rect.width(), 36.0));
+                crate::decks::ui::mode_bar(&mut self.app, ui, mode);
+                let body = Rect::from_min_max(Pos2::new(left_rect.left(), mode.bottom()), left_rect.max);
+                if self.app.decks.design_mode {
+                    left::show(&mut self.app, ui, body);
+                } else {
+                    crate::decks::ui::sidebar(&mut self.app, ui, body);
                 }
             } else {
                 left::show(&mut self.app, ui, left_rect);
@@ -634,7 +671,7 @@ impl Shell {
                 crate::board::canvas::zoom_pill(&mut self.app, ui, canvas_rect);
             } else {
                 right::show(&mut self.app, ui, right_rect);
-                toolbar::show(&mut self.app, ui, canvas_rect_for_toolbar(full));
+                toolbar::show(&mut self.app, ui, if deck { canvas_rect } else { canvas_rect_for_toolbar(full) });
             }
             crate::history::banner::show(&mut self.app, ui, canvas_rect);
             self.context_menu(ui, canvas_rect);
@@ -647,6 +684,7 @@ impl Shell {
         crate::history::modal::show(&mut self.app, &ctx);
         crate::dev::compare::show(&mut self.app, &ctx);
         crate::libraries::show(&mut self.app, &ctx);
+        crate::plugins::ui::show(&mut self.app, &ctx);
         self.toast(ui, full);
 
         self.sync_title(&ctx);

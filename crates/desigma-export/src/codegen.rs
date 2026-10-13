@@ -111,7 +111,7 @@ fn segments(v: &Variable) -> Vec<String> {
 }
 
 /// `var(--color-primary)` for a variable named `Color/Primary`.
-pub(crate) fn css_var(v: &Variable) -> String {
+pub fn css_var(v: &Variable) -> String {
     let mut s = segments(v);
     if s.len() == 1 && v.kind == VariableKind::Color {
         s.insert(0, "color".into());

@@ -62,6 +62,11 @@ if command -v plutil >/dev/null 2>&1; then
 fi
 printf 'APPL????' > "$app/Contents/PkgInfo"
 
+# Keep embedded asset notices inside the app, including when installed from the DMG.
+mkdir -p "$res_dir/licenses"
+cp "$root/crates/desigma-fonts/assets/inter/OFL.txt" "$res_dir/licenses/Inter-OFL.txt"
+cp "$root/crates/desigma-app/assets/icons/lucide/LICENSE" "$res_dir/licenses/Lucide-LICENSE.txt"
+
 # 4. Ad-hoc sign. Sign the helper tool first, then the bundle.
 codesign --force --sign - "$macos_dir/desigma-diff"
 codesign --force --deep --sign - "$app"

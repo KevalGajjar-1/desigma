@@ -128,6 +128,7 @@ pub fn choices(lib: &Library) -> Vec<Choice> {
 impl App {
     /// File -> "Save to library...": pick a project for the open document.
     pub fn begin_save_to_library(&mut self) {
+        crate::decks::ui::flush_notes(self);
         let Some(lib) = self.lib.clone() else {
             self.show_toast("The projects library is unavailable", true);
             return;

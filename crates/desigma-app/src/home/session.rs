@@ -79,7 +79,9 @@ impl App {
             self.show_toast("The projects library is unavailable", true);
             return;
         };
+        crate::decks::ui::flush_notes(self);
         self.save_close_version();
+        self.stop_plugin();
         self.flush_autosave();
         self.canvas.reset_interaction();
         let mut home = Home::new();
@@ -125,10 +127,21 @@ impl App {
         self.new_library_file_of(target, DocumentKind::Board);
     }
 
+    pub fn new_library_deck(&mut self, target: Option<(String, Option<String>)>) {
+        self.new_library_file_of(target, DocumentKind::Deck);
+    }
+
+    pub fn new_deck_here(&mut self) {
+        let target = self.lib_file.as_ref().map(|f| (f.project_id.clone(), None));
+        self.new_library_deck(target);
+    }
+
     fn new_library_file_of(&mut self, target: Option<(String, Option<String>)>, kind: DocumentKind) {
         let Some(lib) = self.lib.clone() else {
             if kind == DocumentKind::Board {
                 self.new_board_document();
+            } else if kind == DocumentKind::Deck {
+                self.new_deck_document();
             } else {
                 self.new_document();
             }
@@ -144,6 +157,7 @@ impl App {
             };
             let doc = match kind {
                 DocumentKind::Board => crate::board::create::new_document("Untitled"),
+                DocumentKind::Deck => crate::decks::new_document("Untitled deck"),
                 DocumentKind::Design => {
                     let mut doc = Document::new("Untitled");
                     doc.add_page("Page 1");
@@ -172,6 +186,7 @@ impl App {
 
     /// Writes the open library file (no toast); also refreshes its thumbnail.
     pub fn save_library_file(&mut self) -> Result<(), String> {
+        crate::decks::ui::flush_notes(self);
         let (Some(lib), Some(lf)) = (self.lib.clone(), self.lib_file.clone()) else { return Err("This file is not in the library".into()) };
         if self.history.viewing.is_some() {
             // an old version is on screen: the file on disk must keep the live document
@@ -265,6 +280,7 @@ impl App {
 
     /// Stores the open (external or unsaved) document as a new library file and keeps editing it there.
     pub fn save_to_library_as(&mut self, project: &str, folder: Option<&str>, name: &str) {
+        crate::decks::ui::flush_notes(self);
         let Some(lib) = self.lib.clone() else { return };
         let mut doc = self.doc.clone();
         doc.name = name.trim().to_string();

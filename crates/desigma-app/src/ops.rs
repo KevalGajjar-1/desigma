@@ -678,6 +678,7 @@ impl App {
 
     /// Appends a new empty page (undoable) and switches to it.
     pub fn add_page(&mut self) -> Option<NodeId> {
+        crate::decks::ui::flush_notes(self);
         let id = self.doc.alloc_id();
         let mut page = Node::new(id, NodeKind::Page { background: Color::from_hex(&format!("{:06X}", theme::DEFAULT_PAGE_BG)).unwrap_or(Color::WHITE) });
         page.name = format!("Page {}", self.doc.pages.len() + 1);
@@ -692,6 +693,7 @@ impl App {
     /// Duplicates a page with all its layers right after it; returns the copy.
     pub fn duplicate_page(&mut self, id: NodeId) -> Option<NodeId> {
         let index = self.doc.pages.iter().position(|p| *p == id)? + 1;
+        crate::decks::ui::flush_notes(self);
         let mut nodes = clipboard::clone_subtree(&mut self.doc, id);
         let root = nodes.first_mut()?;
         root.name = self.unique_page_name(&format!("{} copy", self.doc.get(id)?.name));
@@ -708,6 +710,7 @@ impl App {
         if self.doc.pages.len() <= 1 || !self.doc.pages.contains(&id) {
             return false;
         }
+        crate::decks::ui::flush_notes(self);
         let pos = self.doc.pages.iter().position(|p| *p == id).unwrap_or(0);
         let mut tx = Tx::new();
         if tx.cmd(&mut self.doc, Command::RemovePage { id }).is_err() {
@@ -728,6 +731,7 @@ impl App {
         if from == index {
             return;
         }
+        crate::decks::ui::flush_notes(self);
         let nodes = self.subtree_nodes(id);
         let mut tx = Tx::new();
         if tx.cmd(&mut self.doc, Command::RemovePage { id }).is_ok() {
@@ -738,6 +742,7 @@ impl App {
 
     pub fn switch_page(&mut self, id: NodeId) {
         if self.doc.pages.contains(&id) {
+            crate::decks::ui::flush_notes(self);
             self.page = id;
             self.selection.clear();
             self.canvas.reset_interaction();
@@ -789,6 +794,8 @@ impl App {
 
     // ------------------------------------------------------------ files
     pub fn replace_document(&mut self, doc: Document, path: Option<PathBuf>) {
+        crate::decks::ui::flush_notes(self);
+        self.stop_plugin();
         // Pending edits of the library file being left are saved first (from the live state, not an old version).
         self.exit_version_view();
         self.flush_autosave();
@@ -798,6 +805,7 @@ impl App {
         io::ensure_page(&mut doc);
         self.page = doc.pages[0];
         self.doc = doc;
+        self.decks = Default::default();
         self.hist = History::default();
         self.history.reset();
         self.comments.close_popovers();
@@ -851,6 +859,7 @@ impl App {
     }
 
     pub fn save(&mut self, as_new: bool) {
+        crate::decks::ui::flush_notes(self);
         // Library files save back to the library; "Save as…" writes an external copy.
         if !as_new && self.lib_file.is_some() {
             self.save_library_file_with_toast();

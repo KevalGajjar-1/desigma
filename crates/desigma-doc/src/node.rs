@@ -57,6 +57,15 @@ pub struct Node {
     /// Dev mode status, links and annotations; empty for most nodes.
     #[serde(default, skip_serializing_if = "DevInfo::is_empty")]
     pub dev: DevInfo,
+    /// Presentation metadata; ordinary design nodes omit this field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slide: Option<SlideProps>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SlideProps {
+    #[serde(default)]
+    pub notes: String,
 }
 
 /// A node property that an instance can override independently of its main
@@ -164,6 +173,7 @@ impl Node {
             variables: NodeVariables::default(),
             export_settings: Vec::new(),
             dev: DevInfo::default(),
+            slide: None,
         }
     }
 

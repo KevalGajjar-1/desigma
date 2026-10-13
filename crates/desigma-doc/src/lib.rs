@@ -114,6 +114,14 @@ impl Document {
         NodeId(self.next_id)
     }
 
+    /// Allocate safely after importing a document whose stored counter may be
+    /// stale, preserving previously allocated IDs and reporting exhaustion.
+    pub fn try_alloc_id(&mut self) -> Option<NodeId> {
+        let largest = self.nodes.keys().next_back().map_or(0, |id| id.0);
+        self.next_id = self.next_id.max(largest).checked_add(1)?;
+        Some(NodeId(self.next_id))
+    }
+
     /// Ensures future [`Self::alloc_id`] calls return ids above `id`, so
     /// callers can assign deterministic ids themselves.
     pub fn reserve_ids(&mut self, id: NodeId) {

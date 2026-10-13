@@ -35,6 +35,9 @@ for bin in desigma desigma-diff; do
   cp "$bin_dir/$bin$exe" "$stage/"
 done
 cp LICENSE-MIT LICENSE-APACHE README.md "$stage/"
+mkdir -p "$stage/licenses"
+cp "$root/crates/desigma-fonts/assets/inter/OFL.txt" "$stage/licenses/Inter-OFL.txt"
+cp "$root/crates/desigma-app/assets/icons/lucide/LICENSE" "$stage/licenses/Lucide-LICENSE.txt"
 
 case "$target" in
   *linux*)

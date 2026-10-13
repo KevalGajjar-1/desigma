@@ -14,6 +14,8 @@ pub enum DocumentKind {
     #[default]
     Design,
     Board,
+    /// A presentation built from ordered slide frames.
+    Deck,
 }
 
 // --------------------------------------------------------------------- props

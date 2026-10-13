@@ -979,6 +979,24 @@ impl Player {
         self.anim = Some(Anim { from, to, kind: t.kind, easing: t.easing, start: self.now, dur, snapshot });
     }
 
+    /// Moves a deck presenter to a page-level slide without a prototype back-stack entry.
+    pub fn navigate_slide(&mut self, target: NodeId, now: f64) -> bool {
+        if self.doc.kind != DocumentKind::Deck
+            || target == self.current
+            || self.top_frame_of(target) != Some(target)
+            || !self.doc.get(target).is_some_and(|node| node.slide.is_some() && node.kind.frame_props().is_some())
+        {
+            return false;
+        }
+        self.now = now;
+        self.press_target = None;
+        self.drag = None;
+        self.scroll_anim = None;
+        self.back.clear();
+        self.navigate(target, None, false, false);
+        true
+    }
+
     fn navigate(&mut self, dest: NodeId, transition: Option<Transition>, preserve_scroll: bool, push: bool) {
         let Some(frame) = self.top_frame_of(dest) else { return };
         self.finish_anim();
@@ -1354,6 +1372,29 @@ mod tests {
 
     fn add(doc: &mut Document, node: NodeId, r: Reaction) {
         doc.get_mut(node).unwrap().prototype.reactions.push(r);
+    }
+
+    #[test]
+    fn deck_navigation_validates_slide_roots_and_uses_instant_navigation() {
+        let mut f = fixture();
+        f.doc.kind = DocumentKind::Deck;
+        for id in [f.a, f.b] {
+            f.doc.get_mut(id).unwrap().slide = Some(SlideProps::default());
+        }
+        // A nested layer with slide metadata must still never become a slide root.
+        f.doc.get_mut(f.btn).unwrap().slide = Some(SlideProps::default());
+        let mut player = Player::new(&f.doc, f.a);
+        assert!(!player.navigate_slide(f.btn, 1.0));
+        assert!(!player.navigate_slide(f.c, 1.0));
+        assert_eq!(player.current, f.a);
+        assert!(player.navigate_slide(f.b, 2.0));
+        assert_eq!(player.current, f.b);
+        assert!(player.anim.is_none());
+        assert!(player.back.is_empty());
+        assert!(!player.navigate_slide(f.b, 3.0));
+        assert!(player.navigate_slide(f.a, 4.0));
+        assert_eq!(player.current, f.a);
+        assert_eq!(f.doc.get(f.b).unwrap().name, "B", "presentation leaves the original document unchanged");
     }
 
     #[test]

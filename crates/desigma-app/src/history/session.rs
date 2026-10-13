@@ -7,15 +7,18 @@ use desigma_doc::{Document, History};
 
 impl App {
     fn take_snapshot(&mut self) -> Snapshot {
+        crate::decks::ui::flush_notes(self);
         Snapshot { doc: std::mem::take(&mut self.doc), hist: std::mem::take(&mut self.hist), page: self.page, selection: std::mem::take(&mut self.selection) }
     }
 
     /// Puts `doc` on the canvas with the given undo stack, keeping the view.
     fn install(&mut self, doc: Document, hist: History, page: Option<desigma_doc::NodeId>, selection: Vec<desigma_doc::NodeId>) {
+        self.stop_plugin();
         let mut doc = doc;
         crate::io::ensure_page(&mut doc);
         self.page = page.filter(|p| doc.pages.contains(p)).unwrap_or(doc.pages[0]);
         self.doc = doc;
+        self.decks = Default::default();
         self.hist = hist;
         self.selection = selection;
         self.selection.retain(|id| self.doc.get(*id).is_some());

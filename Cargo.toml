@@ -11,6 +11,7 @@ members = [
     "crates/desigma-export",
     "crates/desigma-svg",
     "crates/desigma-gpu",
+    "crates/desigma-mcp",
 ]
 
 [workspace.package]

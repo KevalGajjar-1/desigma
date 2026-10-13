@@ -143,6 +143,7 @@ impl App {
         let Some(m) = self.find.results.get(i).cloned() else { return };
         if let Some(pg) = self.doc.page_of(m.node) {
             if pg != self.page {
+                crate::decks::ui::flush_notes(self);
                 self.page = pg;
                 self.canvas.reset_interaction();
             }

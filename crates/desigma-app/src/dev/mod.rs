@@ -1,6 +1,7 @@
 //! Dev mode: code languages, Ready for dev status, annotations, dev links and Compare changes.
 
 pub mod annot;
+pub mod color;
 pub mod compare;
 pub mod data;
 pub mod highlight;
@@ -77,6 +78,7 @@ pub struct LinkEdit {
 #[derive(Default)]
 pub struct DevState {
     pub lang: Language,
+    pub color_format: color::ColorFormat,
     pub react_tailwind: bool,
     pub left_tab: LeftTab,
     pub annot: Option<AnnotEdit>,

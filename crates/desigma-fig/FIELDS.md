@@ -59,6 +59,7 @@ and render its frames with `--example fig_render`.
 | Line types | `lineType` `PLAIN`, `UNORDERED_LIST` (`ORDERED_LIST` unconfirmed) | partly confirmed |
 | Runs | `textData.characterStyleIDs`, `textData.styleOverrideTable [{styleID, fontName, fontSize, styleIdForFill, fontVariant*}]` | confirmed |
 | Font | `fontName {family, style, postscript}`, `fontSize`, `fontVersion`, `fontVariations` | confirmed |
+| Linked text style | `styleIdForText` resolves through the shared style node before character overrides. Node-level font values can retain stale pre-link values (48px while the linked style and derived glyphs use 18px). Preserve node paints and alignment; resolve percentage run tracking against the linked font size. | confirmed |
 | Line height | `lineHeight {value, units}`: `PIXELS` (almost all) and `PERCENT`; `RAW` unconfirmed | confirmed |
 | Letter spacing | `letterSpacing {value, units}`: always `PERCENT` here; `textTracking` is a redundant float fraction | confirmed |
 | Alignment | `textAlignHorizontal` (absent = left), `textAlignVertical`, `textAutoResize` WIDTH_AND_HEIGHT / HEIGHT (`NONE`, `TRUNCATE` unconfirmed) | confirmed |

@@ -62,6 +62,9 @@ pub struct PresentState {
     pub device_screen: Option<(ERect, f32)>,
     pub pending_url: Option<(String, bool)>,
     pub close: bool,
+    pub fullscreen: bool,
+    pub start_fullscreen: bool,
+    initial_fullscreen: bool,
     /// The live variables panel (a debugging aid; Figma has none) is open.
     pub show_vars: bool,
     /// Screen rect of the variables panel in the last painted frame (clicks on it do not reach the stage).
@@ -85,6 +88,9 @@ impl PresentState {
             device_screen: None,
             pending_url: None,
             close: false,
+            fullscreen: false,
+            start_fullscreen: false,
+            initial_fullscreen: false,
             show_vars: false,
             vars_rect: ERect::NOTHING,
             videos: Default::default(),
@@ -98,6 +104,12 @@ impl PresentState {
         self.smart = None;
         self.pending_url = None;
         self.videos = Default::default();
+    }
+
+    fn set_fullscreen(&mut self, ctx: &Context, fullscreen: bool) {
+        self.fullscreen = fullscreen;
+        ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(fullscreen));
+        ctx.request_repaint();
     }
 
     /// Screen position of the center of `node` in the current frame (for tests).
@@ -334,6 +346,55 @@ fn icon_close(p: &egui::Painter, c: Pos2, col: Color32) {
 
 // ---------------------------------------------------------------------- show
 
+#[derive(Clone, Copy)]
+enum SlideMove {
+    Previous,
+    Next,
+    First,
+    Last,
+}
+
+fn slide_key(key: egui::Key, modifiers: egui::Modifiers) -> Option<SlideMove> {
+    if modifiers != egui::Modifiers::NONE {
+        return None;
+    }
+    match key {
+        egui::Key::ArrowRight | egui::Key::Space | egui::Key::PageDown => Some(SlideMove::Next),
+        egui::Key::ArrowLeft | egui::Key::PageUp => Some(SlideMove::Previous),
+        egui::Key::Home => Some(SlideMove::First),
+        egui::Key::End => Some(SlideMove::Last),
+        _ => None,
+    }
+}
+
+fn slide_target(slides: &[NodeId], current: NodeId, movement: SlideMove) -> Option<NodeId> {
+    match movement {
+        SlideMove::First => slides.first().copied(),
+        SlideMove::Last => slides.last().copied(),
+        SlideMove::Previous => slides.iter().position(|id| *id == current).and_then(|i| i.checked_sub(1)).and_then(|i| slides.get(i)).copied(),
+        SlideMove::Next => slides.iter().position(|id| *id == current).and_then(|i| slides.get(i + 1)).copied(),
+    }
+}
+
+fn move_slide(st: &mut PresentState, slides: &[NodeId], movement: SlideMove, now: f64, ctx: &Context) {
+    if let Some(target) = slide_target(slides, st.player.current, movement) {
+        if st.player.navigate_slide(target, now) {
+            st.drag = None;
+            st.smart = None;
+            st.videos = Default::default();
+            ctx.request_repaint();
+        }
+    }
+}
+
+fn slide_button(ui: &mut Ui, rect: ERect, key: &'static str, label: &str, enabled: bool) -> bool {
+    record(ui, key, rect);
+    let response = ui.interact(rect, ui.id().with(key), if enabled { Sense::click() } else { Sense::hover() });
+    widgets::button_bg(ui.painter(), rect, &response, false, theme::cr(theme::RADIUS_MEDIUM));
+    ui.painter().text(rect.center(), Align2::CENTER_CENTER, label, theme::font_body(), if enabled { theme::TEXT } else { theme::TEXT_TERTIARY });
+    enabled && response.clicked()
+}
+
 /// Draws the Present view over the whole window and handles its input.
 pub fn show(app: &mut App, ui: &mut Ui) {
     let ctx = ui.ctx().clone();
@@ -343,70 +404,132 @@ pub fn show(app: &mut App, ui: &mut Ui) {
     st.frame_no += 1;
     if st.frame_no == 1 {
         st.player.rebase_clock(now);
+        st.initial_fullscreen = ctx.input(|i| i.viewport().fullscreen.unwrap_or(false));
+        st.fullscreen = st.initial_fullscreen;
+        if st.start_fullscreen {
+            st.set_fullscreen(&ctx, true);
+        }
+    }
+    let toggle = ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::F11));
+    if toggle {
+        let fullscreen = !st.fullscreen;
+        st.set_fullscreen(&ctx, fullscreen);
     }
     st.player.tick(now);
+    let is_deck = app.is_deck();
+    let slides = if is_deck { app.deck_slides() } else { Vec::new() };
+    // Process deck keys before computing stage geometry so differently sized slides
+    // are fitted on the same frame in which they are selected.
+    if is_deck && st.pending_url.is_none() {
+        for event in ctx.input(|i| i.events.clone()) {
+            if let Event::Key { key, pressed: true, repeat: false, modifiers, .. } = event {
+                if let Some(movement) = slide_key(key, modifiers) {
+                    move_slide(&mut st, &slides, movement, now, &ctx);
+                }
+            }
+        }
+    }
     let p = ui.painter().clone();
     p.rect_filled(full, 0.0, page_bg(app));
 
     // ---- top bar
     let bar = ERect::from_min_size(full.min, EV::new(full.width(), theme::PRESENT_BAR_HEIGHT));
-    let flows: Vec<Flow> = app.doc.flows.clone();
-    let cur_flow = flows.iter().position(|f| f.start == st.start);
-    let names: Vec<String> = flows.iter().map(|f| f.name.clone()).collect();
-    let label = cur_flow.map(|i| names[i].clone()).unwrap_or_else(|| app.doc.get(st.start).map(|n| n.name.clone()).unwrap_or_default());
-    let dd = ERect::from_min_size(Pos2::new(bar.left() + 16.0, bar.top() + 12.0), EV::new(200.0, 24.0));
-    record(ui, "present-flow", dd);
-    if names.is_empty() {
-        p.rect_filled(dd, theme::cr(theme::RADIUS_MEDIUM), theme::BG_SECONDARY);
-        p.text(Pos2::new(dd.left() + 8.0, dd.center().y), Align2::LEFT_CENTER, &label, theme::font_body(), theme::TEXT);
-    } else if let Some(i) = dropdown(ui, dd, "present-flow", &label, &names) {
-        let start = flows[i].start;
-        st.restart(&app.doc, start);
-    }
-    let rb = ERect::from_min_size(Pos2::new(dd.right() + 8.0, dd.top()), EV::new(76.0, 24.0));
-    record(ui, "present-restart", rb);
-    let rr = ui.interact(rb, ui.id().with("present-restart"), Sense::click());
-    widgets::button_bg(&p, rb, &rr, false, theme::cr(theme::RADIUS_MEDIUM));
-    p.text(rb.center(), Align2::CENTER_CENTER, "Restart", theme::font_body(), theme::TEXT);
-    if rr.clicked() {
-        let s = st.start;
-        st.restart(&app.doc, s);
-    }
-    // Variables: a small toggle for the live values panel (hidden when the file has no variables).
-    if !app.doc.variables.is_empty() {
-        let vb = ERect::from_min_size(Pos2::new(rb.right() + 8.0, rb.top()), EV::new(76.0, 24.0));
-        record(ui, "present-vars-toggle", vb);
-        let vr = ui.interact(vb, ui.id().with("present-vars"), Sense::click());
-        widgets::button_bg(&p, vb, &vr, st.show_vars, theme::cr(theme::RADIUS_MEDIUM));
-        p.text(vb.center(), Align2::CENTER_CENTER, "Variables", theme::font_body(), if st.show_vars { theme::TEXT } else { theme::TEXT_SECONDARY });
-        if vr.on_hover_text("Show live variable values").clicked() {
-            st.show_vars = !st.show_vars;
+    if !st.fullscreen {
+        let flows: Vec<Flow> = if is_deck { Vec::new() } else { app.doc.flows.clone() };
+        let cur_flow = flows.iter().position(|f| f.start == st.start);
+        let names: Vec<String> = flows.iter().map(|f| f.name.clone()).collect();
+        let label = if is_deck {
+            app.doc.name.clone()
+        } else {
+            cur_flow.map(|i| names[i].clone()).unwrap_or_else(|| app.doc.get(st.start).map(|n| n.name.clone()).unwrap_or_default())
+        };
+        let dd = ERect::from_min_size(Pos2::new(bar.left() + 16.0, bar.top() + 12.0), EV::new(200.0, 24.0));
+        record(ui, "present-flow", dd);
+        if names.is_empty() {
+            p.rect_filled(dd, theme::cr(theme::RADIUS_MEDIUM), theme::BG_SECONDARY);
+            p.text(Pos2::new(dd.left() + 8.0, dd.center().y), Align2::LEFT_CENTER, &label, theme::font_body(), theme::TEXT);
+        } else if let Some(i) = dropdown(ui, dd, "present-flow", &label, &names) {
+            let start = flows[i].start;
+            st.restart(&app.doc, start);
         }
+        let rb = ERect::from_min_size(Pos2::new(dd.right() + 8.0, dd.top()), EV::new(76.0, 24.0));
+        record(ui, "present-restart", rb);
+        let rr = ui.interact(rb, ui.id().with("present-restart"), Sense::click());
+        widgets::button_bg(&p, rb, &rr, false, theme::cr(theme::RADIUS_MEDIUM));
+        p.text(rb.center(), Align2::CENTER_CENTER, "Restart", theme::font_body(), theme::TEXT);
+        if rr.clicked() {
+            let s = if is_deck { slides.first().copied().unwrap_or(st.start) } else { st.start };
+            st.restart(&app.doc, s);
+        }
+        // Variables: a small toggle for the live values panel (hidden when the file has no variables).
+        if !app.doc.variables.is_empty() {
+            let vb = ERect::from_min_size(Pos2::new(rb.right() + 8.0, rb.top()), EV::new(76.0, 24.0));
+            record(ui, "present-vars-toggle", vb);
+            let vr = ui.interact(vb, ui.id().with("present-vars"), Sense::click());
+            widgets::button_bg(&p, vb, &vr, st.show_vars, theme::cr(theme::RADIUS_MEDIUM));
+            p.text(vb.center(), Align2::CENTER_CENTER, "Variables", theme::font_body(), if st.show_vars { theme::TEXT } else { theme::TEXT_SECONDARY });
+            if vr.on_hover_text("Show live variable values").clicked() {
+                st.show_vars = !st.show_vars;
+            }
+        }
+        let cb = ERect::from_min_size(Pos2::new(bar.right() - 40.0, bar.top() + 8.0), EV::splat(32.0));
+        let fb = ERect::from_min_size(Pos2::new(cb.left() - 104.0, bar.top() + 12.0), EV::new(96.0, 24.0));
+        record(ui, "present-fullscreen", fb);
+        let fr = ui.interact(fb, ui.id().with("present-fullscreen"), Sense::click());
+        widgets::button_bg(&p, fb, &fr, false, theme::cr(theme::RADIUS_MEDIUM));
+        p.text(fb.center(), Align2::CENTER_CENTER, "Fullscreen", theme::font_body(), theme::TEXT);
+        if fr.on_hover_text("Fullscreen (F11). Esc returns to preview.").clicked() {
+            st.set_fullscreen(&ctx, true);
+        }
+        record(ui, "present-close", cb);
+        let cr = ui.interact(cb, ui.id().with("present-close"), Sense::click());
+        widgets::button_bg(&p, cb, &cr, false, theme::cr(theme::RADIUS_MEDIUM));
+        icon_close(&p, cb.center(), theme::ICON);
+        if cr.on_hover_text("Exit (Esc)").clicked() {
+            st.close = true;
+        }
+        let title = app.doc.get(st.player.current).map(|n| n.name.clone()).unwrap_or_default();
+        p.text(Pos2::new(bar.center().x, bar.center().y), Align2::CENTER_CENTER, title, theme::font_body(), theme::TEXT_SECONDARY);
+        widgets::hline(&p, bar.left(), bar.right(), bar.bottom() - 1.0, Color32::from_white_alpha(18));
     }
-    let cb = ERect::from_min_size(Pos2::new(bar.right() - 40.0, bar.top() + 8.0), EV::splat(32.0));
-    record(ui, "present-close", cb);
-    let cr = ui.interact(cb, ui.id().with("present-close"), Sense::click());
-    widgets::button_bg(&p, cb, &cr, false, theme::cr(theme::RADIUS_MEDIUM));
-    icon_close(&p, cb.center(), theme::ICON);
-    if cr.on_hover_text("Exit (Esc)").clicked() {
-        st.close = true;
+
+    // Deck navigation occupies its own footer, outside the prototype hit area.
+    let footer_height = if is_deck && !st.fullscreen { 44.0 } else { 0.0 };
+    if is_deck && !st.fullscreen {
+        let footer = ERect::from_min_max(Pos2::new(full.left(), full.bottom() - footer_height), full.max);
+        widgets::hline(&p, footer.left(), footer.right(), footer.top(), Color32::from_white_alpha(18));
+        let previous = ERect::from_center_size(Pos2::new(footer.center().x - 90.0, footer.center().y), EV::new(76.0, 28.0));
+        let next = ERect::from_center_size(Pos2::new(footer.center().x + 90.0, footer.center().y), EV::new(76.0, 28.0));
+        let ready = st.pending_url.is_none();
+        if slide_button(ui, previous, "present-slide-prev", "Previous", ready && slide_target(&slides, st.player.current, SlideMove::Previous).is_some()) {
+            move_slide(&mut st, &slides, SlideMove::Previous, now, &ctx);
+        }
+        if slide_button(ui, next, "present-slide-next", "Next", ready && slide_target(&slides, st.player.current, SlideMove::Next).is_some()) {
+            move_slide(&mut st, &slides, SlideMove::Next, now, &ctx);
+        }
+        let index = slides.iter().position(|id| *id == st.player.current).map(|i| i + 1).unwrap_or(0);
+        let count = ERect::from_center_size(footer.center(), EV::new(84.0, 28.0));
+        record(ui, "present-slide-count", count);
+        p.text(count.center(), Align2::CENTER_CENTER, format!("{index} / {}", slides.len()), theme::font_body(), theme::TEXT_SECONDARY);
     }
-    let title = app.doc.get(st.player.current).map(|n| n.name.clone()).unwrap_or_default();
-    p.text(Pos2::new(bar.center().x, bar.center().y), Align2::CENTER_CENTER, title, theme::font_body(), theme::TEXT_SECONDARY);
-    widgets::hline(&p, bar.left(), bar.right(), bar.bottom() - 1.0, Color32::from_white_alpha(18));
 
     // ---- stage geometry
-    let area = ERect::from_min_max(Pos2::new(full.left(), bar.bottom()), full.max);
+    let area = if st.fullscreen {
+        full
+    } else {
+        ERect::from_min_max(Pos2::new(full.left(), bar.bottom()), Pos2::new(full.right(), (full.bottom() - footer_height).max(bar.bottom())))
+    };
+    let padding = if st.fullscreen { 0.0 } else { theme::PRESENT_PADDING };
     let cur_size = st.player.size_of(st.player.current);
     let (stage, scale) = match crate::proto::device_viewport(&app.doc.prototype_device) {
         Some((dev, radius)) => {
-            let (screen, r, stage, k) = device_layout(area, cur_size, dev, radius, theme::PRESENT_PADDING);
+            let (screen, r, stage, k) = device_layout(area, cur_size, dev, radius, padding);
             st.device_screen = Some((screen, r));
             (stage, k)
         }
         None => {
             st.device_screen = None;
-            stage_layout(area, cur_size, theme::PRESENT_PADDING)
+            stage_layout(area, cur_size, padding)
         }
     };
     st.stage = stage;
@@ -462,10 +585,15 @@ pub fn show(app: &mut App, ui: &mut Ui) {
             if key == egui::Key::Escape {
                 if st.pending_url.is_some() {
                     st.pending_url = None;
+                } else if st.fullscreen {
+                    st.set_fullscreen(&ctx, false);
                 } else {
                     st.close = true;
                 }
             } else if st.pending_url.is_none() {
+                if is_deck && slide_key(key, modifiers).is_some() {
+                    continue;
+                }
                 match gamepad_button_for_key(key, modifiers) {
                     Some(button) => st.player.gamepad(GamepadDevice::Generic, button),
                     None => st.player.key(&key_name(key, modifiers)),
@@ -511,6 +639,8 @@ pub fn show(app: &mut App, ui: &mut Ui) {
     }
     if !st.close {
         app.proto.present = Some(st);
+    } else if st.fullscreen != st.initial_fullscreen {
+        ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(st.initial_fullscreen));
     }
 }
 
@@ -786,6 +916,25 @@ fn _icons_used(p: &egui::Painter) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn slides_follow_declared_order_without_wrapping() {
+        let mut doc = Document::new("deck");
+        let a = doc.alloc_id();
+        let b = doc.alloc_id();
+        let c = doc.alloc_id();
+        let slides = [c, a, b];
+        assert_eq!(slide_target(&slides, c, SlideMove::Next), Some(a));
+        assert_eq!(slide_target(&slides, a, SlideMove::Previous), Some(c));
+        assert_eq!(slide_target(&slides, c, SlideMove::Previous), None);
+        assert_eq!(slide_target(&slides, b, SlideMove::Next), None);
+        assert_eq!(slide_target(&slides, a, SlideMove::First), Some(c));
+        assert_eq!(slide_target(&slides, a, SlideMove::Last), Some(b));
+        assert_eq!(slide_target(&[], a, SlideMove::First), None);
+        assert_eq!(slide_target(&[a], a, SlideMove::Next), None);
+        assert!(slide_key(egui::Key::Space, egui::Modifiers::NONE).is_some());
+        assert!(slide_key(egui::Key::ArrowRight, egui::Modifiers::ALT).is_none());
+    }
 
     #[test]
     fn stage_fits_and_centers() {

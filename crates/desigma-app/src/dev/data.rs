@@ -60,12 +60,27 @@ pub fn box_model(doc: &Document, id: NodeId) -> Option<BoxModel> {
 pub struct VarUse {
     pub id: String,
     pub name: String,
-    pub kind: VariableKind,
+    /// Missing variable definitions have no known type.
+    pub kind: Option<VariableKind>,
     pub collection: String,
     /// `(mode name, value)` in the order of the collection's modes.
     pub modes: Vec<(String, Option<VariableValue>)>,
     /// Properties bound on the inspected layer tree, e.g. "fills/0".
     pub props: Vec<String>,
+    /// Each binding, in document order then property order, resolved at its own layer.
+    pub effective: Vec<EffectiveVarUse>,
+}
+
+/// A token's actual value at one binding, including inherited collection modes.
+#[derive(Clone, Debug, PartialEq)]
+pub struct EffectiveVarUse {
+    pub node: NodeId,
+    pub node_name: String,
+    pub property: String,
+    /// Active mode name; absent when the variable, collection or mode is unknown.
+    pub mode: Option<String>,
+    /// Absent for missing definitions, broken aliases or alias cycles.
+    pub value: Option<VariableValue>,
 }
 
 /// Resolves `variable` in a fixed mode, following aliases (an alias into another collection
@@ -95,25 +110,29 @@ pub fn variables_used(doc: &Document, root: NodeId) -> Vec<VarUse> {
     let mut out: Vec<VarUse> = Vec::new();
     doc.walk(root, |n, _| {
         for (prop, var) in &n.variables.bindings {
-            let Some(v) = doc.variables.get(var) else { continue };
-            if let Some(u) = out.iter_mut().find(|u| u.id == v.id) {
+            let definition = doc.variables.get(var);
+            let collection = definition.and_then(|v| doc.variable_collections.get(&v.collection));
+            let mode = collection.and_then(|c| {
+                let active = doc.variable_mode(n.id, &c.id)?;
+                c.modes.iter().find(|m| m.id == active).map(|m| m.name.clone())
+            });
+            let effective = EffectiveVarUse { node: n.id, node_name: n.name.clone(), property: prop.clone(), mode, value: doc.resolve_variable(n.id, var) };
+            if let Some(u) = out.iter_mut().find(|u| u.id == *var) {
                 if !u.props.contains(prop) {
                     u.props.push(prop.clone());
                 }
+                u.effective.push(effective);
                 continue;
             }
-            let modes = doc
-                .variable_collections
-                .get(&v.collection)
-                .map(|c| c.modes.iter().map(|m| (m.name.clone(), resolve_in_mode(doc, &v.id, &m.id))).collect())
-                .unwrap_or_default();
+            let modes = collection.map(|c| c.modes.iter().map(|m| (m.name.clone(), resolve_in_mode(doc, var, &m.id))).collect()).unwrap_or_default();
             out.push(VarUse {
-                id: v.id.clone(),
-                name: v.name.clone(),
-                kind: v.kind,
-                collection: doc.variable_collections.get(&v.collection).map(|c| c.name.clone()).unwrap_or_default(),
+                id: var.clone(),
+                name: definition.map(|v| v.name.clone()).unwrap_or_else(|| var.clone()),
+                kind: definition.map(|v| v.kind),
+                collection: collection.map(|c| c.name.clone()).unwrap_or_default(),
                 modes,
                 props: vec![prop.clone()],
+                effective: vec![effective],
             });
         }
     });
@@ -331,6 +350,89 @@ mod tests {
         );
         assert_eq!(format_value(&VariableValue::Color(Color::WHITE)), "#FFFFFF");
         assert_eq!(format_value(&VariableValue::Number(8.0)), "8");
+    }
+
+    #[test]
+    fn effective_variables_resolve_each_binding_at_its_own_layer() {
+        let (mut d, f) = var_doc();
+        d.get_mut(f).unwrap().variables.modes.insert("c".into(), "d".into());
+        let child = d.alloc_id();
+        let mut n = Node::rectangle(child, Rect::new(0.0, 0.0, 5.0, 5.0));
+        n.name = "Light child".into();
+        n.variables.modes.insert("c".into(), "l".into());
+        n.variables.bindings.insert("fills/0".into(), "bg".into());
+        d.insert(f, n).unwrap();
+
+        let used = variables_used(&d, f);
+        assert_eq!(used.len(), 1);
+        assert_eq!(used[0].props, vec!["fills/0", "strokes/0"]);
+        let effective = &used[0].effective;
+        assert_eq!(effective.len(), 3);
+        assert_eq!(effective[0].node, f);
+        assert_eq!(effective[0].property, "fills/0");
+        assert_eq!(effective[1].property, "strokes/0");
+        for value in &effective[..2] {
+            assert_eq!(value.mode.as_deref(), Some("Dark"));
+            assert_eq!(value.value, Some(VariableValue::Color(Color::BLACK)));
+        }
+        assert_eq!(effective[2].node, child);
+        assert_eq!(effective[2].node_name, "Light child");
+        assert_eq!(effective[2].mode.as_deref(), Some("Light"));
+        assert_eq!(effective[2].value, Some(VariableValue::Color(Color::WHITE)));
+        assert_eq!(used, variables_used(&d, f), "ordering must be stable");
+    }
+
+    #[test]
+    fn effective_cross_collection_alias_uses_the_inherited_target_mode() {
+        let (mut d, f) = var_doc();
+        let mut target = d.variable_collections["c"].clone();
+        target.id = "target".into();
+        target.name = "Palette".into();
+        target.variables = vec!["base".into()];
+        d.variable_collections.insert("target".into(), target);
+        d.variables.get_mut("base").unwrap().collection = "target".into();
+        let page = d.get(f).unwrap().parent.unwrap();
+        d.get_mut(page).unwrap().variables.modes.insert("target".into(), "d".into());
+
+        let used = variables_used(&d, f);
+        assert_eq!(used[0].effective[0].mode.as_deref(), Some("Light"));
+        assert_eq!(used[0].effective[0].value, Some(VariableValue::Color(Color::BLACK)));
+        // The all-modes overview remains independent of the current layer context.
+        assert_eq!(used[0].modes[0].1, Some(VariableValue::Color(Color::WHITE)));
+    }
+
+    #[test]
+    fn missing_variable_definitions_remain_visible_and_unresolved() {
+        let (mut d, f) = var_doc();
+        d.get_mut(f).unwrap().variables.bindings.insert("width".into(), "missing".into());
+        let used = variables_used(&d, f);
+        let missing = used.iter().find(|v| v.id == "missing").unwrap();
+        assert_eq!(missing.name, "missing");
+        assert_eq!(missing.kind, None);
+        assert!(missing.collection.is_empty());
+        assert!(missing.modes.is_empty());
+        assert_eq!(missing.effective[0].property, "width");
+        assert_eq!(missing.effective[0].mode, None);
+        assert_eq!(missing.effective[0].value, None);
+    }
+
+    #[test]
+    fn missing_collections_broken_aliases_and_cycles_are_unresolved() {
+        let (mut d, f) = var_doc();
+        d.variables.get_mut("base").unwrap().values.insert("l".into(), VariableValue::Alias("bg".into()));
+        let used = variables_used(&d, f);
+        assert!(used[0].effective.iter().all(|u| u.value.is_none()));
+        assert_eq!(used[0].modes[0].1, None);
+
+        d.variables.remove("base");
+        let used = variables_used(&d, f);
+        assert!(used[0].effective.iter().all(|u| u.value.is_none()));
+
+        d.variable_collections.remove("c");
+        let used = variables_used(&d, f);
+        assert_eq!(used[0].kind, Some(VariableKind::Color));
+        assert!(used[0].modes.is_empty());
+        assert!(used[0].effective.iter().all(|u| u.mode.is_none() && u.value.is_none()));
     }
 
     #[test]

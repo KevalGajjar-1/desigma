@@ -21,6 +21,8 @@ pub struct Options {
     pub tab: Option<String>,
     /// Open the Present view on start.
     pub present: bool,
+    /// Start presentation in native fullscreen.
+    pub fullscreen: bool,
     /// Open a panel on start: `variables` (full view) or `variables-floating`.
     pub panel: Option<String>,
     /// Initial zoom in percent (`--zoom 800`), centred on the selection or the page.
@@ -67,7 +69,9 @@ impl Options {
 
 /// Values of `--panel`: `variables` / `variables-floating` open the local variables view,
 /// `libraries` the Libraries modal; the others are inspector popups opened on the selection for screenshots.
-pub const PANELS: [&str; 18] = [
+pub const PANELS: [&str; 20] = [
+    "plugins",
+    "plugin-install",
     "interaction",
     "present-variables",
     "variables",
@@ -136,6 +140,10 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Options, String> 
                 o.tab = Some(t);
             }
             "--present" => o.present = true,
+            "--fullscreen" => {
+                o.present = true;
+                o.fullscreen = true;
+            }
             "--panel" => {
                 let t = it.next().ok_or("--panel needs a name (see --help)")?;
                 if !PANELS.contains(&t.as_str()) {
@@ -192,6 +200,7 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Options, String> 
 pub const USAGE: &str = "usage: desigma [FILE] [--screenshot OUT.png] [--size WxH] [--scale FACTOR] [--select LAYER|none] [--menu main|main/File|shape|palette] [--panel interaction|present-variables|variables|variables-floating|libraries|picker|picker-page|fill-d9|picker-gradient|effects-menu|stroke-settings|type-details|effect-noise|effect-texture|effect-glass|version-history|dev-annotate|dev-compare]\n               [--zoom PERCENT] [--rulers] [--grid] [--gpu] [--home] [--library DIR] [--layout-grid grid|columns|rows] [--edit-text LAYER [--select-text START-END]]\n  FILE  .fig, .json (Figma REST or native), .svg or .desigma; without a file the projects home screen opens
   --scale    with --screenshot: device pixel ratio (2 writes a PNG twice --size, rendered crisp rather than upscaled)
   --home     show the home screen (also in --screenshot mode)
+  --present  open presentation preview; --fullscreen starts it in native fullscreen (F11 toggles, Esc returns)
   --gpu      draw the canvas on the GPU; --screenshot uses the CPU renderer unless this is given
   --library  use DIR as the projects library instead of the default location
   --dev      open Dev mode with a code language (css|tailwind|swiftui|compose|react); --dev-demo marks the selection Ready for dev with an annotation

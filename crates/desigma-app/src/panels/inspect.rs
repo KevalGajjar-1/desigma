@@ -2,6 +2,7 @@
 
 use super::{clipped, scrollbar, wheel_scroll};
 use crate::app::App;
+use crate::dev::color::ColorFormat;
 use crate::theme;
 use crate::util::world_corners;
 use crate::widgets::{self, elide, fmt_num, text_width};
@@ -32,7 +33,7 @@ pub struct ColorEntry {
 
 impl ColorEntry {
     pub fn hex(&self) -> String {
-        format!("#{}", self.color.to_hex())
+        ColorFormat::Hex.value(self.color, self.opacity)
     }
 }
 
@@ -59,6 +60,7 @@ fn push_paints(out: &mut Vec<ColorEntry>, paints: &[Paint], role: &'static str, 
 pub fn collect_colors(doc: &Document, root: NodeId) -> Vec<ColorEntry> {
     let mut all = Vec::new();
     doc.walk(root, |n, _| {
+        let n = resolve_node(doc, n);
         let fill_style = n.style_refs.get("fill").map(|k| doc.style_name(k).to_string());
         let stroke_style = n.style_refs.get("stroke").map(|k| doc.style_name(k).to_string());
         match &n.kind {
@@ -77,7 +79,7 @@ pub fn collect_colors(doc: &Document, root: NodeId) -> Vec<ColorEntry> {
     });
     let mut out: Vec<ColorEntry> = Vec::new();
     for e in all {
-        let dup = out.iter().any(|o| o.color.to_hex() == e.color.to_hex() && (o.opacity - e.opacity).abs() < 0.005);
+        let dup = out.iter().any(|o| o.color.to_hex() == e.color.to_hex() && (o.opacity - e.opacity).abs() < 0.000001);
         if !dup {
             out.push(e);
         }
@@ -330,26 +332,38 @@ fn body(app: &mut App, ui: &mut Ui, c: &mut Cur, id: NodeId, count: usize) {
     let colors = collect_colors(&app.doc, id);
     if !colors.is_empty() {
         section_title(ui, c, "Colors");
+        let dd = c.rect(c.w - PAD - 80.0, -24.0, 80.0, 24.0);
+        widgets::record(ui, "dev-color-format", dd);
+        let options: Vec<String> = ColorFormat::ALL.iter().map(|f| f.label().to_string()).collect();
+        if let Some(i) = widgets::menu::dropdown(ui, dd, "dev-color-format", app.dev.color_format.label(), &options) {
+            app.dev.color_format = ColorFormat::ALL[i];
+        }
         for (i, e) in colors.iter().enumerate() {
-            let r = c.rect(PAD, 0.0, c.w - 2.0 * PAD, 28.0);
+            let r = c.rect(PAD, 0.0, c.w - 2.0 * PAD, 44.0);
+            widgets::record(ui, &format!("dev-copy-color-{i}"), r);
             let resp = ui.interact(r, ui.id().with(("insp-color", i)), Sense::click());
             if resp.hovered() {
                 ui.painter().rect_filled(r.expand2(Vec2::new(8.0, 0.0)), theme::cr(theme::RADIUS_MEDIUM), theme::BG_SECONDARY);
             }
             let sw = Rect::from_min_size(Pos2::new(r.left(), r.center().y - 8.0), Vec2::splat(16.0));
             widgets::swatch(ui.painter(), sw, c32(&e.color.with_alpha(1.0), e.opacity));
-            let label = match &e.style {
-                Some(s) => format!("{} · {}", e.hex(), s),
-                None => e.hex(),
+            let value = if app.dev.color_format == ColorFormat::Hex { e.hex() } else { app.dev.color_format.value(e.color, e.opacity) };
+            let label = elide(ui.painter(), &value, &theme::font_body(), r.width() - 24.0);
+            ui.painter().text(Pos2::new(sw.right() + 8.0, r.top() + 12.0), Align2::LEFT_CENTER, label, theme::font_body(), theme::TEXT);
+            let detail = match &e.style {
+                Some(s) => format!("{} · {}", e.role, s),
+                None => e.role.to_string(),
             };
-            let label = elide(ui.painter(), &label, &theme::font_body(), r.width() - 100.0);
-            ui.painter().text(Pos2::new(sw.right() + 8.0, r.center().y), Align2::LEFT_CENTER, label, theme::font_body(), theme::TEXT);
-            let right = if resp.hovered() { "Copy".to_string() } else { format!("{}%  {}", fmt_num((e.opacity * 100.0).round()), e.role) };
-            ui.painter().text(Pos2::new(r.right(), r.center().y), Align2::RIGHT_CENTER, right, theme::font_small(), theme::TEXT_SECONDARY);
-            if resp.clicked() {
-                copy(app, ui, e.hex(), "color");
+            let detail = elide(ui.painter(), &detail, &theme::font_small(), r.width() - 64.0);
+            ui.painter().text(Pos2::new(sw.right() + 8.0, r.top() + 31.0), Align2::LEFT_CENTER, detail, theme::font_small(), theme::TEXT_SECONDARY);
+            if resp.hovered() {
+                ui.painter().text(Pos2::new(r.right(), r.top() + 31.0), Align2::RIGHT_CENTER, "Copy", theme::font_small(), theme::TEXT_SECONDARY);
             }
-            c.y += 28.0;
+            if resp.clicked() {
+                copy(app, ui, value.clone(), "color");
+            }
+            resp.on_hover_text(format!("Click to copy {value}"));
+            c.y += 44.0;
         }
         c.y += 8.0;
     }
@@ -516,6 +530,70 @@ mod tests {
         let cols = collect_colors(&d, f);
         let roles: Vec<(&str, String)> = cols.iter().map(|c| (c.role, c.hex())).collect();
         assert_eq!(roles, vec![("Fill", "#FFFFFF".into()), ("Stroke", "#010203".into()), ("Text", "#000000".into())]);
+    }
+
+    #[test]
+    fn collected_colors_keep_distinct_alpha_and_multiply_paint_opacity_once() {
+        let mut d = Document::new("t");
+        let page = d.add_page("p");
+        let id = d.alloc_id();
+        let mut n = Node::rectangle(id, desigma_doc::Rect::new(0.0, 0.0, 10.0, 10.0));
+        let mut paint = Paint::solid(Color::rgb(255, 0, 0).with_alpha(0.5));
+        paint.opacity = 0.5;
+        let mut other = paint.clone();
+        other.opacity = 0.502;
+        n.fills = vec![paint.clone(), paint, other];
+        d.insert(page, n).unwrap();
+        let colors = collect_colors(&d, id);
+        assert_eq!(colors.len(), 2, "deduplicate repeated paints, but preserve distinct opacity values");
+        assert_eq!(colors[0].opacity, 0.25);
+        assert_eq!(colors[0].hex(), "#FF000040");
+        assert_eq!(ColorFormat::Rgb.value(colors[0].color, colors[0].opacity), "rgb(255 0 0 / 0.25)");
+    }
+
+    #[test]
+    fn collected_colors_resolve_inherited_modes_without_changing_stored_paints() {
+        let mut d = Document::new("t");
+        let page = d.add_page("p");
+        let frame = d.alloc_id();
+        d.insert(page, Node::frame(frame, desigma_doc::Rect::new(0.0, 0.0, 100.0, 100.0))).unwrap();
+        let id = d.alloc_id();
+        let mut n = Node::rectangle(id, desigma_doc::Rect::new(0.0, 0.0, 10.0, 10.0));
+        n.fills = vec![Paint::solid(Color::rgb(255, 0, 0))];
+        n.variables.bindings.insert("fills/0".into(), "background".into());
+        d.insert(frame, n).unwrap();
+        d.variable_collections.insert(
+            "theme".into(),
+            VariableCollection {
+                id: "theme".into(),
+                name: "Theme".into(),
+                modes: vec![VariableMode { id: "light".into(), name: "Light".into() }, VariableMode { id: "dark".into(), name: "Dark".into() }],
+                default_mode: "light".into(),
+                variables: vec!["background".into()],
+                key: None,
+            },
+        );
+        d.variables.insert(
+            "background".into(),
+            Variable {
+                id: "background".into(),
+                name: "Background".into(),
+                collection: "theme".into(),
+                kind: VariableKind::Color,
+                values: [("light".into(), VariableValue::Color(Color::WHITE)), ("dark".into(), VariableValue::Color(Color::BLACK))].into(),
+                description: String::new(),
+                scopes: vec![],
+                hidden_from_publishing: false,
+                key: None,
+            },
+        );
+        assert_eq!(collect_colors(&d, id)[0].hex(), "#FFFFFF");
+        d.get_mut(frame).unwrap().variables.modes.insert("theme".into(), "dark".into());
+        let stored = d.clone();
+        assert_eq!(collect_colors(&d, id)[0].hex(), "#000000");
+        assert_eq!(d.get(id), stored.get(id));
+        assert_eq!(d.get(frame), stored.get(frame));
+        assert_eq!(d.get(id).unwrap().fills, vec![Paint::solid(Color::rgb(255, 0, 0))]);
     }
 
     #[test]

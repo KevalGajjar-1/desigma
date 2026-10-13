@@ -37,6 +37,10 @@ cosmic-text = "0.19.0"
 unicode-segmentation = "1"
 serde_json.workspace = true
 serde.workspace = true
+ureq = "2"
+url = "2"
+uuid = { version = "1", features = ["v4"] }
+roxmltree = "0.20"
 egui = "0.35"
 resvg = { version = "0.45", default-features = false }
 

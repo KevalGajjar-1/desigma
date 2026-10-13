@@ -3,7 +3,7 @@
 </h1>
 
 <p align="center">
-  <b>Interface design; a free, open-source design tool in the spirit of Figma, rebuilt in pure Rust.</b><br>
+  <b>Interface design; an independent, local-first, open-source design tool built in Rust.</b><br>
   Frames, auto layout, components and variants, prototyping, vector editing and real Figma file import,<br>
   in a native desktop app written entirely in Rust. Free, offline, and yours to change.
 </p>
@@ -30,7 +30,7 @@
   <tr>
     <td width="25%" valign="top">
       <h3>🎛️ Familiar by design</h3>
-      The panels, toolbar, menus and shortcuts sit where Figma users expect them, from <kbd>F</kbd> for Frame to <kbd>Shift</kbd>+<kbd>A</kbd> for auto layout. The chrome is measured against the real thing and checked with a pixel-diff harness.
+      Familiar design workflows and shortcuts, from <kbd>F</kbd> for Frame to <kbd>Shift</kbd>+<kbd>A</kbd> for auto layout. Desigma is developing its own editor interface, with document fidelity and a fast editing experience as the priorities.
     </td>
     <td width="25%" valign="top">
       <h3>⚡ Native and fast</h3>
@@ -50,6 +50,14 @@
 <br>
 
 ## Features
+
+### Desigma Decks
+
+Create a presentation with **File → New deck**. Decks use editable 16:9 frames with slide thumbnails, add/duplicate/delete controls, ordering, overview, and speaker notes. Switch to **Layers** for the existing text, shape, image, and vector editing tools. Notes save with **Save notes** or when navigating to another slide. Slide edits and saved notes support Undo/Redo and persist in the document.
+
+**Present** starts at the active slide. Use Right/Space/Page Down and Left/Page Up, or Previous/Next; Home/End jump to the first/last slide. Click **Fullscreen** or press **F11** for a borderless presentation with the controls hidden; **Esc** returns to preview, then exits. Launch directly with `--fixture deck --fullscreen`. This initial version does not yet include transitions, a template gallery, or a separate presenter display. Preview the sample with `cargo run -p desigma-app -- --fixture deck`.
+
+Export the current slide or the whole deck using the **Slide PDF** / **Deck PDF** controls or File menu. Each slide becomes one PDF page in document order, with no speaker notes or editor controls. The initial PDF export uses high-resolution raster pages; text is not selectable.
 
 Every screenshot here is the real app on its built-in showcase file, captured offscreen at 2x with its own <code>--screenshot</code> mode.
 
@@ -149,7 +157,7 @@ Every screenshot here is the real app on its built-in showcase file, captured of
       <br>
       <sub>Actions (<kbd>Ctrl</kbd>+<kbd>K</kbd>): every command, searchable, with its shortcut.</sub>
       <h3>Everything a keystroke away</h3>
-      The main menu, tool dropdowns, context menus and the command palette all share one menu widget built to Figma's measured spacing, with full keyboard navigation and submenus.
+      The main menu, tool dropdowns, context menus and the command palette all share one consistent menu widget, with full keyboard navigation and submenus.
       <br><br>
       <b>Export</b> to PNG, JPG and real vector SVG at any scale, copy as PNG, SVG or CSS, and switch to Dev mode for measurements and ready-to-paste CSS.
     </td>
@@ -206,8 +214,8 @@ The `.fig` format is undocumented. Our decoder follows community reverse enginee
 
 - **One document model:** `desigma-doc` is plain data plus an undo stack. Every edit is a `Command` with an exact inverse.
 - **Deterministic rendering:** `desigma-render` draws on the CPU with tiny-skia, so output is reproducible byte for byte. Tiles stitched together match a whole-page render.
-- **Pixel-checked chrome:** `desigma-diff` compares the app's screenshots against reference captures with anti-aliasing detection and SSIM, and writes an HTML report.
-- **Clean-room:** built from public documentation and observed behavior. No Figma code, icons or assets; the icons are our own.
+- **Visual regression tooling:** `desigma-diff` compares screenshots with anti-aliasing detection and SSIM, and writes an HTML report. The development target is faithful document rendering and an independently designed editor, with its own approved UI baselines.
+- **Independent product direction:** file compatibility and familiar workflows guide development; reproducing Figma's editor appearance is not a goal. Third-party code, fonts and assets retain their own licenses and attribution requirements.
 - **Tested:** more than 500 tests across the workspace, from undo and import round trips to UI tests that drive the editor with synthetic input.
 
 | Crate | What it does |
@@ -219,6 +227,7 @@ The `.fig` format is undocumented. Our decoder follows community reverse enginee
 | `desigma-export` | PNG, JPG and SVG export, Dev mode CSS |
 | `desigma-app` | The egui desktop editor |
 | `desigma-diff` | Pixel-diff library and CLI |
+| `desigma-mcp` | Local MCP server for design-file inspection, editing, and code generation |
 
 ## Get started
 
@@ -262,6 +271,26 @@ desigma-diff compare reference.png actual.png --out diff.png   # pixel-compare t
 > [!IMPORTANT]
 > **Status:** desigma is in early alpha. Much of Figma's everyday design surface exists, but **it is not yet a replacement for professional daily work**. The biggest gaps are collaboration, plugins, PDF export, `.fig` features that real files haven't exercised yet, and code-signed release builds. Expect rough edges, and please file issues with your OS, a sample file if you can share one, and a screenshot.
 
+## MCP integration
+
+Build the local server with `cargo build --locked -p desigma-mcp`, then configure your MCP client to launch `desigma-mcp --workspace /path/to/designs`. It provides 13 tools for importing files, inspecting layers and tokens, generating code, editing with undo/redo, and saving a new `.desigma` file. The server runs an isolated file session; live desktop-editor control is not yet connected. See the [setup and tool reference](crates/desigma-mcp/README.md).
+
+## Native plugin installation
+
+Open **Plugins** from the editor rail or main menu, choose **Install plugin**, and paste a manifest URL from [desigma-plugins](https://github.com/deepfounder-ai/desigma-plugins). GitHub `blob` and raw URLs are supported, for example:
+
+```text
+https://github.com/deepfounder-ai/desigma-plugins/blob/main/plugins/icon-browser/manifest.json
+```
+
+The registry is private. Before launching the editor, set `DESIGMA_PLUGINS_TOKEN` to a GitHub token with read access to that repository's contents. The installer uses the GitHub contents API, does not discover credentials automatically, and never puts credentials in URLs or installed metadata. Prefer a commit SHA in place of `main` for a fixed package revision.
+
+Schema 2 plugins include a root HTML panel and declared HTML/CSS/JavaScript assets. Choose **Open** on an installed plugin to launch its panel in your browser. Icon Browser can insert static SVG into the current document as editable layers; one Undo removes each insertion. **Stop**, switching documents, or returning to the library revokes the session. Schema 1 packages remain installable but do not run.
+
+The browser panel is served from a temporary loopback address. Only `document:insert-svg` and `storage:local` permissions are supported, with optional access to `https://api.iconify.design`. The bridge checks the session token and request origin; plugins cannot read the document or access GitHub credentials. Browser JavaScript retains normal browser capabilities; this is a scoped document bridge, not a general-purpose JavaScript sandbox. Favorites in a launched panel last for that browser session because each launch uses a fresh origin.
+
+Schema 2 adds `panel`, `files` (including the main script and panel), and `network` to the native manifest. Bundles require a sibling `LICENSE`. Downloads are limited to 16 assets, 2 MiB per file and 8 MiB total, with redirects disabled. Extra paths, unsupported permissions, Figma Community URLs and other repositories are rejected. SVG insertion accepts static vectors only and is blocked during presentation, version preview, and active editing gestures.
+
 ## Spread the word
 
 Logos, social images, banners and copy are in [`marketing/`](marketing/).
@@ -271,5 +300,7 @@ Logos, social images, banners and copy are in [`marketing/`](marketing/).
 Licensed under either of [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your option. Unless you state otherwise, any contribution you submit for inclusion is dual-licensed the same way, without additional terms.
 
 Bundled Inter is © The Inter Project Authors, licensed under the SIL Open Font License 1.1 (see `crates/desigma-fonts/assets/inter/OFL.txt`).
+
+Editor icons use Lucide under its ISC license (see `crates/desigma-app/assets/icons/lucide/LICENSE`). Release packages include both asset notices in `licenses/` (inside `desigma.app/Contents/Resources/` on macOS).
 
 desigma is an independent project. It is not affiliated with, endorsed by or sponsored by Figma, Inc. Figma is a trademark of Figma, Inc., used here only to describe file compatibility.

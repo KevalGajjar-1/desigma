@@ -477,38 +477,132 @@ pub fn variables_section(app: &mut App, ui: &mut Ui, c: &mut Cur, id: NodeId) {
         }
         let name = elide(ui.painter(), &u.name, &theme::font_body_strong(), r.width() - 60.0);
         ui.painter().text(Pos2::new(r.left(), r.center().y), Align2::LEFT_CENTER, name, theme::font_body_strong(), theme::TEXT);
-        ui.painter().text(Pos2::new(r.right(), r.center().y), Align2::RIGHT_CENTER, kind_name(u.kind), theme::font_small(), theme::TEXT_TERTIARY);
+        ui.painter().text(
+            Pos2::new(r.right(), r.center().y),
+            Align2::RIGHT_CENTER,
+            u.kind.map(kind_name).unwrap_or("Missing"),
+            theme::font_small(),
+            theme::TEXT_TERTIARY,
+        );
         if resp.clicked() {
             copy(app, ui, u.name.clone(), "variable name");
         }
         c.y += 24.0;
-        for (mode, value) in &u.modes {
-            let r = c.rect(PAD, 0.0, c.w - 2.0 * PAD, 22.0);
-            ui.painter().text(
-                Pos2::new(r.left() + 8.0, r.center().y),
-                Align2::LEFT_CENTER,
-                elide(ui.painter(), mode, &theme::font_small(), 72.0),
-                theme::font_small(),
-                theme::TEXT_SECONDARY,
-            );
-            let mut x = r.left() + 88.0;
-            if let Some(VariableValue::Color(col)) = value {
-                widgets::swatch(ui.painter(), Rect::from_min_size(Pos2::new(x, r.center().y - 7.0), Vec2::splat(14.0)), c32(col));
-                x += 20.0;
+        token_note(ui, c, &format!("Collection: {}", if u.collection.is_empty() { "Unavailable" } else { &u.collection }));
+        token_note(ui, c, &format!("Bindings: {}", u.props.join(", ")));
+        if let Some(v) = app.doc.variables.get(&u.id) {
+            let reference = desigma_export::css_variable_reference(v);
+            token_copy_row(app, ui, c, &format!("dev-token-ref-{i}"), "CSS reference", &reference, None);
+        }
+        token_note(ui, c, "Effective values · click to copy");
+        for (j, binding) in u.effective.iter().enumerate() {
+            // A token often drives all four corners. Keep distinct layer/mode values,
+            // but show identical values on one layer only once.
+            let same_value = |other: &&data::EffectiveVarUse| other.node == binding.node && other.mode == binding.mode && other.value == binding.value;
+            if u.effective[..j].iter().any(|other| same_value(&other)) {
+                continue;
             }
-            let text = value.as_ref().map(data::format_value).unwrap_or_else(|| "-".into());
-            ui.painter().text(
-                Pos2::new(x, r.center().y),
-                Align2::LEFT_CENTER,
-                elide(ui.painter(), &text, &theme::font_small(), r.right() - x),
-                theme::font_small(),
-                theme::TEXT,
-            );
-            c.y += 22.0;
+            let properties = u.effective.iter().filter(same_value).map(|other| other.property.as_str()).collect::<Vec<_>>().join(", ");
+            token_note(ui, c, &format!("{} · {}", binding.node_name, properties));
+            let mode = binding.mode.as_deref().unwrap_or("Unknown mode");
+            match &binding.value {
+                Some(value) => {
+                    let text = match value {
+                        VariableValue::Color(col) => super::color::ColorFormat::Rgb.value(*col, col.a),
+                        VariableValue::String(s) => serde_json::to_string(s).unwrap_or_default(),
+                        _ => data::format_value(value),
+                    };
+                    let swatch = match value {
+                        VariableValue::Color(col) => Some(*col),
+                        _ => None,
+                    };
+                    token_copy_row(app, ui, c, &format!("dev-token-value-{i}-{j}"), mode, &text, swatch);
+                }
+                None => token_note(ui, c, &format!("{mode} · Unresolved")),
+            }
+        }
+        let toggle = c.rect(PAD, 0.0, c.w - 2.0 * PAD, 24.0);
+        let open_id = ui.id().with(("token-mode-previews", &u.id));
+        let mut open = ui.ctx().data(|d| d.get_temp::<bool>(open_id)).unwrap_or(false);
+        if small_button(ui, toggle, ("token-mode-previews", i), if open { "Hide mode previews" } else { "Show mode previews" }) {
+            open = !open;
+            ui.ctx().data_mut(|d| d.insert_temp(open_id, open));
+        }
+        c.y += 28.0;
+        if open {
+            token_note(ui, c, "Cross-collection aliases use defaults here");
+            for (mode, value) in &u.modes {
+                let r = c.rect(PAD, 0.0, c.w - 2.0 * PAD, 22.0);
+                ui.painter().text(
+                    Pos2::new(r.left() + 8.0, r.center().y),
+                    Align2::LEFT_CENTER,
+                    elide(ui.painter(), mode, &theme::font_small(), 72.0),
+                    theme::font_small(),
+                    theme::TEXT_SECONDARY,
+                );
+                let mut x = r.left() + 88.0;
+                if let Some(VariableValue::Color(col)) = value {
+                    widgets::swatch(ui.painter(), Rect::from_min_size(Pos2::new(x, r.center().y - 7.0), Vec2::splat(14.0)), c32(col));
+                    x += 20.0;
+                }
+                let text = value.as_ref().map(data::format_value).unwrap_or_else(|| "-".into());
+                ui.painter().text(
+                    Pos2::new(x, r.center().y),
+                    Align2::LEFT_CENTER,
+                    elide(ui.painter(), &text, &theme::font_small(), r.right() - x),
+                    theme::font_small(),
+                    theme::TEXT,
+                );
+                c.y += 22.0;
+            }
         }
         c.y += 4.0;
     }
     c.y += 4.0;
+}
+
+fn token_note(ui: &mut Ui, c: &mut Cur, text: &str) {
+    let r = c.rect(PAD, 0.0, c.w - 2.0 * PAD, 20.0);
+    ui.painter().text(
+        r.left_center(),
+        Align2::LEFT_CENTER,
+        elide(ui.painter(), text, &theme::font_small(), r.width()),
+        theme::font_small(),
+        theme::TEXT_SECONDARY,
+    );
+    ui.interact(r, ui.id().with(("token-note", c.y.to_bits(), text)), Sense::hover()).on_hover_text(text);
+    c.y += 20.0;
+}
+
+/// A two-line copy target keeps full token references usable in a narrow inspector.
+fn token_copy_row(app: &mut App, ui: &mut Ui, c: &mut Cur, key: &str, label: &str, value: &str, color: Option<Color>) {
+    let r = c.rect(PAD, 0.0, c.w - 2.0 * PAD, 42.0);
+    widgets::record(ui, key, r);
+    let resp = ui.interact(r, ui.id().with(key), Sense::click()).on_hover_text(format!("Copy {label}: {value}"));
+    ui.painter().rect_filled(r, theme::cr(theme::RADIUS_MEDIUM), if resp.hovered() { theme::BG_TERTIARY } else { theme::BG_SECONDARY });
+    ui.painter().text(
+        Pos2::new(r.left() + 8.0, r.top() + 10.0),
+        Align2::LEFT_CENTER,
+        elide(ui.painter(), label, &theme::font_small(), r.width() - 16.0),
+        theme::font_small(),
+        theme::TEXT_SECONDARY,
+    );
+    let mut x = r.left() + 8.0;
+    if let Some(col) = color {
+        widgets::swatch(ui.painter(), Rect::from_min_size(Pos2::new(x, r.top() + 22.0), Vec2::splat(12.0)), c32(&col));
+        x += 18.0;
+    }
+    ui.painter().text(
+        Pos2::new(x, r.top() + 29.0),
+        Align2::LEFT_CENTER,
+        elide(ui.painter(), value, &theme::font_body(), r.right() - x - 8.0),
+        theme::font_body(),
+        theme::TEXT,
+    );
+    if resp.clicked() {
+        copy(app, ui, value.to_string(), label);
+    }
+    c.y += 48.0;
 }
 
 /// Icon and vector subtrees (plus embedded images) with an SVG export for each.

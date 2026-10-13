@@ -1,6 +1,8 @@
 # Contributing to desigma
 
-Thanks for helping. desigma is a pure-Rust Figma-style editor; the goal is pixel-accurate behaviour with a small, readable codebase.
+Thanks for helping. desigma is an independent, local-first design editor built in Rust. The goals are faithful document rendering, Figma file compatibility and a fast editing experience with a small, readable codebase.
+
+Develop Desigma's own visual hierarchy, panels, controls and icons. Familiar design-tool workflows and shortcuts are useful, but reproducing Figma's editor appearance is not an acceptance criterion. Document rendering fidelity and editor UI design have separate reference targets.
 
 ## Build and run
 
@@ -48,7 +50,9 @@ desigma-diff compare reference.png out.png --out diff.png --tolerance 2 --thresh
 desigma-diff suite path/to/manifest.json          # run many cases, writes an HTML report
 ```
 
-Anti-aliased edge pixels are forgiven by default (`--no-aa` turns that off). Use `--ignore x,y,w,h` to mask regions such as a clock or cursor. Reference captures of Figma's own UI live under `reference/screens/`; they are local-only and git-ignored, so do not commit them. Screenshots for the README go in `docs/images/`.
+Anti-aliased edge pixels are forgiven by default (`--no-aa` turns that off). Use `--ignore x,y,w,h` to mask regions such as a clock or cursor. For document fidelity, compare canvas-only output from permitted test documents at matching zoom, dimensions and font settings; record any expected rendering differences. For editor changes, use approved Desigma screenshots as the regression baseline. Historical captures of Figma's own UI under `reference/screens/` are local-only and git-ignored; do not commit them or use them as an editor acceptance target. Screenshots for the README go in `docs/images/`.
+
+Use test documents and third-party assets whose licenses permit the intended use and distribution, and preserve required attribution. Independent implementation and visual differences do not establish legal clearance.
 
 ## Crate map
 

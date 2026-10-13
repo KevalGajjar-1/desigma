@@ -82,4 +82,11 @@ fn shadcn_ui_imports_with_local_components() {
     assert!(instances >= 400 && instances == resolved, "{resolved} of {instances} instances resolved");
     assert_eq!(doc.styles.len(), 35);
     assert!(doc.library.external.is_empty(), "everything is local");
+
+    for (source, size, weight) in [("21:1325", 18.0, 600), ("13:2558", 16.0, 400)] {
+        let n = doc.nodes.values().find(|n| n.source_id.as_deref() == Some(source)).expect("cover text");
+        let NodeKind::Text(t) = &n.kind else { panic!("cover text node") };
+        assert_eq!(t.style.font_size, size, "{} uses its linked style", n.name);
+        assert_eq!(t.style.font_weight, weight);
+    }
 }

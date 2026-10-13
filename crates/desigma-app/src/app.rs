@@ -57,6 +57,7 @@ pub enum RailItem {
     Assets,
     Tools,
     Variables,
+    Plugins,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -126,6 +127,7 @@ pub struct App {
     pub assets: crate::panels::assets::AssetsState,
     /// Shared libraries (publishing, enabled libraries, updates).
     pub libs: crate::libraries::LibrariesState,
+    pub plugins: crate::plugins::PluginsState,
     pub proto: crate::proto::ProtoState,
     /// Find and replace panel state (Ctrl+F).
     pub find: crate::find::FindState,
@@ -161,6 +163,7 @@ pub struct App {
     pub dev: crate::dev::DevState,
     /// Board (whiteboard) mode: tool settings, magnet dots and popovers.
     pub board: crate::board::BoardState,
+    pub decks: crate::decks::DecksState,
 }
 
 impl App {
@@ -183,6 +186,7 @@ impl App {
             vars: Default::default(),
             assets: Default::default(),
             libs: Default::default(),
+            plugins: Default::default(),
             proto: Default::default(),
             find: Default::default(),
             ui: UiState { pixel_grid: true, ..UiState::default() },
@@ -206,6 +210,7 @@ impl App {
             history: Default::default(),
             dev: Default::default(),
             board: Default::default(),
+            decks: Default::default(),
         }
     }
 

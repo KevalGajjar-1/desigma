@@ -18,10 +18,13 @@ pub enum Action {
     New,
     /// File -> New board.
     NewBoard,
+    NewDeck,
     Open,
     Save,
     SaveAs,
     Export,
+    ExportSlidePdf,
+    ExportDeckPdf,
     Undo,
     Redo,
     SelectAll,
@@ -85,6 +88,7 @@ pub enum Action {
     /// Reduce the nodes of the selected vectors.
     VectorSimplify,
     OpenPalette,
+    Plugins,
     About,
     /// Home screen (file browser).
     BackToFiles,
@@ -112,10 +116,13 @@ pub fn run(app: &mut App, ctx: &Context, a: Action) {
     match a {
         Action::New => app.new_file_here(),
         Action::NewBoard => app.new_board_here(),
+        Action::NewDeck => app.new_deck_here(),
         Action::Open => app.open_dialog(),
         Action::Save => app.save(false),
         Action::SaveAs => app.save(true),
         Action::Export => app.export_selection(),
+        Action::ExportSlidePdf => app.export_deck_pdf(false),
+        Action::ExportDeckPdf => app.export_deck_pdf(true),
         Action::Undo => app.undo(),
         Action::Redo => app.redo(),
         Action::SelectAll => app.select_all_layers(),
@@ -198,6 +205,7 @@ pub fn run(app: &mut App, ctx: &Context, a: Action) {
             app.ui.menu_anchor = None;
         }
         Action::About => app.show_toast("desigma, a Figma-compatible design editor", false),
+        Action::Plugins => app.open_plugins(),
         Action::BackToFiles => app.go_home(),
         Action::SaveToLibrary => app.begin_save_to_library(),
         Action::ToggleVersionHistory => app.toggle_version_history(),
@@ -333,9 +341,10 @@ fn main_nodes(app: &App) -> Vec<Node> {
     let has_text = app.selection.iter().any(|id| app.doc.get(*id).is_some_and(|n| matches!(n.kind, NodeKind::Text(_))));
     let has_inst = !app.selected_instances().is_empty();
     let multi = app.selection.len() > 1;
-    let file = vec![
+    let mut file = vec![
         leaf("New design file", "", Action::New),
         leaf("New board", "", Action::NewBoard),
+        leaf("New deck", "", Action::NewDeck),
         leaf("Open…", "Ctrl+O", Action::Open),
         leaf("Save", "Ctrl+S", Action::Save),
         leaf("Save as…", "Ctrl+Shift+S", Action::SaveAs),
@@ -344,6 +353,10 @@ fn main_nodes(app: &App) -> Vec<Node> {
         leaf("Save to version history…", "Ctrl+Alt+S", Action::SaveVersion).off(!app.has_history()).sep(),
         leaf("Export selection as PNG…", "", Action::Export).off(!has_sel),
     ];
+    if app.is_deck() {
+        file.push(leaf("Export current slide as PDF…", "", Action::ExportSlidePdf).off(app.deck_pdf_slides(false).is_err()));
+        file.push(leaf("Export all slides as PDF…", "", Action::ExportDeckPdf).off(app.deck_pdf_slides(true).is_err()));
+    }
     let edit = vec![
         leaf("Undo", "Ctrl+Z", Action::Undo).off(!app.hist.can_undo()),
         leaf("Redo", "Ctrl+Shift+Z", Action::Redo).off(!app.hist.can_redo()).sep(),
@@ -440,7 +453,7 @@ fn main_nodes(app: &App) -> Vec<Node> {
         submenu("Text", text),
         submenu("Arrange", arrange),
         submenu("Vector", vector).sep(),
-        stub_sub("Plugins"),
+        leaf("Plugins", "", Action::Plugins),
         stub_sub("Widgets"),
         submenu(
             "Preferences",
@@ -503,9 +516,10 @@ pub fn preset_menu(ctx: &Context, app: &mut App, spec: &str, screen: Rect) -> bo
 
 fn file_items(app: &App) -> Vec<(MenuItem, Option<Action>)> {
     let has_sel = !app.selection.is_empty();
-    vec![
+    let mut items = vec![
         (MenuItem::new("New design file"), Some(Action::New)),
         (MenuItem::new("New board"), Some(Action::NewBoard)),
+        (MenuItem::new("New deck"), Some(Action::NewDeck)),
         (MenuItem::new("Open…").shortcut("Ctrl+O"), Some(Action::Open)),
         (MenuItem::new("Save").shortcut("Ctrl+S"), Some(Action::Save)),
         (MenuItem::new("Save as…").shortcut("Ctrl+Shift+S"), Some(Action::SaveAs)),
@@ -521,7 +535,12 @@ fn file_items(app: &App) -> Vec<(MenuItem, Option<Action>)> {
         (MenuItem::new("Create component").shortcut("Ctrl+Alt+K").disabled(!has_sel), Some(Action::CreateComponent)),
         (MenuItem::new("Detach instance").shortcut("Ctrl+Alt+B").disabled(!has_sel).sep(), Some(Action::Detach)),
         (MenuItem::new("Export selection as PNG…").disabled(!has_sel), Some(Action::Export)),
-    ]
+    ];
+    if app.is_deck() {
+        items.push((MenuItem::new("Export current slide as PDF…").disabled(app.deck_pdf_slides(false).is_err()), Some(Action::ExportSlidePdf)));
+        items.push((MenuItem::new("Export all slides as PDF…").disabled(app.deck_pdf_slides(true).is_err()), Some(Action::ExportDeckPdf)));
+    }
+    items
 }
 
 fn zoom_items() -> Vec<(MenuItem, Option<Action>)> {

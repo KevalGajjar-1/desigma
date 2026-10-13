@@ -257,6 +257,94 @@ fn inspect_sections_for_variables_components_and_assets_have_data() {
 }
 
 #[test]
+fn token_handoff_copies_codegen_reference_and_effective_value_without_editing() {
+    let (mut s, card) = dev_sim();
+    let used = crate::dev::data::variables_used(&s.app().doc, card);
+    let index = used.iter().position(|u| u.name == "Surface/Card").unwrap();
+    let token = &s.app().doc.variables[&used[index].id];
+    let reference = desigma_export::css_variable_reference(token);
+    assert!(desigma_export::css_for(&s.app().doc, card).contains(&reference));
+    let desigma_doc::VariableValue::Color(color) = used[index].effective[0].value.clone().unwrap() else { panic!("color token") };
+    let value = crate::dev::color::ColorFormat::Rgb.value(color, color.a);
+    let before = s.app().doc.to_json().unwrap();
+    let ctx = s.ctx.clone();
+    let mut time = 0.0;
+    let mut draw = |events| {
+        time += 0.05;
+        let output = ctx.run_ui(
+            RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(400.0, 4000.0))), time: Some(time), events, ..Default::default() },
+            |ui| {
+                let mut c = crate::panels::inspect::Cur { x0: 0.0, oy: 0.0, y: 0.0, w: 240.0 };
+                crate::dev::sections::variables_section(&mut s.shell.app, ui, &mut c, card);
+            },
+        );
+        output
+            .platform_output
+            .commands
+            .into_iter()
+            .filter_map(|cmd| match cmd {
+                egui::OutputCommand::CopyText(text) => Some(text),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    draw(vec![]);
+    for (key, expected) in [(format!("dev-token-ref-{index}"), reference), (format!("dev-token-value-{index}-0"), value)] {
+        let r = ctx.data(|d| d.get_temp::<Rect>(egui::Id::new(("test-rect", key)))).unwrap();
+        let mut copied = Vec::new();
+        for pressed in [true, false] {
+            copied.extend(draw(vec![
+                Event::PointerMoved(r.center()),
+                Event::PointerButton { pos: r.center(), button: PointerButton::Primary, pressed, modifiers: Modifiers::NONE },
+            ]));
+        }
+        assert_eq!(copied, vec![expected]);
+    }
+    assert_eq!(s.app().doc.to_json().unwrap(), before, "inspection is read-only");
+}
+
+#[test]
+fn color_handoff_copies_the_selected_format() {
+    use crate::dev::color::ColorFormat;
+    let (mut s, card) = dev_sim();
+    let color = crate::panels::inspect::collect_colors(&s.app().doc, card)[0].clone();
+    let ctx = s.ctx.clone();
+    let mut time = 0.0;
+    let mut draw = |format, events| {
+        s.shell.app.dev.color_format = format;
+        time += 0.05;
+        let output = ctx.run_ui(
+            RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(400.0, 8000.0))), time: Some(time), events, ..Default::default() },
+            |ui| crate::panels::inspect::show(&mut s.shell.app, ui, Rect::from_min_size(Pos2::ZERO, Vec2::new(240.0, 8000.0))),
+        );
+        output
+            .platform_output
+            .commands
+            .into_iter()
+            .filter_map(|cmd| match cmd {
+                egui::OutputCommand::CopyText(text) => Some(text),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    for format in ColorFormat::ALL {
+        draw(format, vec![]);
+        let r = ctx.data(|d| d.get_temp::<Rect>(egui::Id::new(("test-rect", "dev-copy-color-0".to_string())))).unwrap();
+        let mut copied = Vec::new();
+        for pressed in [true, false] {
+            copied.extend(draw(
+                format,
+                vec![
+                    Event::PointerMoved(r.center()),
+                    Event::PointerButton { pos: r.center(), button: PointerButton::Primary, pressed, modifiers: Modifiers::NONE },
+                ],
+            ));
+        }
+        assert_eq!(copied, vec![format.value(color.color, color.opacity)]);
+    }
+}
+
+#[test]
 fn selecting_instances_and_vectors_draws_the_dev_panel() {
     let (mut s, _) = dev_sim();
     let inst = s.app().doc.nodes.values().find(|n| matches!(n.kind, NodeKind::Instance { .. })).map(|n| n.id).unwrap();
