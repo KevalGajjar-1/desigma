@@ -81,9 +81,7 @@ pub struct FxParams {
     /// Viewport size of the pass (see `fx.wgsl`).
     pub out_w: f32,
     pub out_h: f32,
-    // WGSL rounds P's total size to its largest member alignment (vec2: 8).
-    // Include that tail padding in uploads and min_binding_size as well.
-    pub pad: [f32; 3],
+    pub pad: [f32; 2],
 }
 
 pub struct Layouts {
