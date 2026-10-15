@@ -905,6 +905,7 @@ dependencies = [
  "arboard",
  "cosmic-text",
  "desigma-doc",
+ "desigma-engine",
  "desigma-export",
  "desigma-fig",
  "desigma-fonts",
@@ -947,6 +948,15 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "desigma-engine"
+version = "0.1.0"
+dependencies = [
+ "desigma-doc",
+ "desigma-render",
+ "unicode-segmentation",
 ]
 
 [[package]]
