@@ -19,16 +19,17 @@ struct Slot {
     divider: bool,
 }
 
-const SLOTS: [Slot; 9] = [
+const SLOTS: [Slot; 10] = [
     Slot { tools: &[Tool::Move], menu: None, divider: false },
     Slot { tools: &[Tool::Hand], menu: None, divider: false },
     Slot { tools: &[Tool::Marker, Tool::Highlighter], menu: Some(ToolMenu::Brush), divider: true },
-    Slot { tools: &[Tool::Sticky], menu: None, divider: false },
+    Slot { tools: &[Tool::Sticky], menu: Some(ToolMenu::Sticky), divider: false },
     Slot { tools: &[Tool::BoardShape], menu: Some(ToolMenu::Shape), divider: false },
     Slot { tools: &[Tool::Connector], menu: None, divider: false },
     Slot { tools: &[Tool::Text], menu: None, divider: false },
     Slot { tools: &[Tool::Section], menu: None, divider: false },
     Slot { tools: &[Tool::Stamp], menu: Some(ToolMenu::Stamp), divider: false },
+    Slot { tools: &[Tool::Code], menu: None, divider: false },
 ];
 
 const SLOT_GAP: f32 = 4.0;
@@ -153,7 +154,8 @@ fn popup(app: &mut App, ui: &mut Ui) {
     let (cols, rows) = match menu {
         ToolMenu::Brush => (4, 3),
         ToolMenu::Shape => (5, 2),
-        ToolMenu::Stamp => (5, 1),
+        ToolMenu::Stamp => (6, 2),
+        ToolMenu::Sticky => (2, 1),
     };
     let size = match menu {
         ToolMenu::Brush => Vec2::new(8.0 * 26.0 + pad * 2.0, 2.0 * 32.0 + 34.0 + pad * 2.0),
@@ -190,9 +192,21 @@ fn popup(app: &mut App, ui: &mut Ui) {
                     }
                 }
             }
+            ToolMenu::Sticky => {
+                for (i, (wide, icon, tip)) in [(false, Icon::Sticky, "Sticky note"), (true, Icon::WideSticky, "Wide sticky note")].into_iter().enumerate() {
+                    let cell = Rect::from_min_size(inner.min + Vec2::new(i as f32 * CELL, 0.0), Vec2::splat(CELL));
+                    let resp = ui.interact(cell, ui.id().with(("board-sticky-kind", i)), Sense::click());
+                    cell_bg(&p, cell, app.board.wide == wide, resp.hovered());
+                    widgets::paint_icon_in(&p, cell, icon, 20.0, theme::ICON);
+                    widgets::record(ui, if wide { "board-sticky-wide" } else { "board-sticky-square" }, cell);
+                    if resp.on_hover_text(tip).clicked() {
+                        picked = Some(Pick::Sticky(wide));
+                    }
+                }
+            }
             ToolMenu::Stamp => {
                 for (i, k) in STAMP_KINDS.iter().enumerate() {
-                    let cell = Rect::from_min_size(inner.min + Vec2::new(i as f32 * CELL, 0.0), Vec2::splat(CELL));
+                    let cell = Rect::from_min_size(inner.min + Vec2::new((i % cols) as f32 * CELL, (i / cols) as f32 * CELL), Vec2::splat(CELL));
                     let sel = app.board.stamp == *k;
                     let resp = ui.interact(cell, ui.id().with(("board-stamp", i)), Sense::click());
                     cell_bg(&p, cell, sel, resp.hovered());
@@ -227,6 +241,11 @@ fn popup(app: &mut App, ui: &mut Ui) {
             app.board.tool_menu = None;
             app.set_tool(Tool::Stamp);
         }
+        Some(Pick::Sticky(wide)) => {
+            app.board.wide = wide;
+            app.board.tool_menu = None;
+            app.set_tool(Tool::Sticky);
+        }
         Some(Pick::Brush(t)) => {
             app.board.brush = t;
             app.set_tool(t);
@@ -243,6 +262,7 @@ fn popup(app: &mut App, ui: &mut Ui) {
 enum Pick {
     Shape(ShapeKind),
     Stamp(String),
+    Sticky(bool),
     Brush(Tool),
     Ink(u32),
 }

@@ -64,6 +64,10 @@ pub enum Command {
         variables: BTreeMap<String, Variable>,
         collections: BTreeMap<String, VariableCollection>,
     },
+    /// Replace the board's timer and voting session.
+    SetBoardSession {
+        session: BoardSession,
+    },
     Batch(Vec<Command>),
 }
 
@@ -144,6 +148,7 @@ impl Command {
                 Command::SetGuides { page, guides: old.unwrap_or_default() }
             }
             Command::SetPrototypeDevice { device } => Command::SetPrototypeDevice { device: std::mem::replace(&mut doc.prototype_device, device) },
+            Command::SetBoardSession { session } => Command::SetBoardSession { session: std::mem::replace(&mut doc.board_session, session) },
             Command::SetVariables { variables, collections } => Command::SetVariables {
                 variables: std::mem::replace(&mut doc.variables, variables),
                 collections: std::mem::replace(&mut doc.variable_collections, collections),

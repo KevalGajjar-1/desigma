@@ -31,6 +31,7 @@ pub fn tool_icon(t: Tool) -> Icon {
         Tool::BoardShape => Icon::Shapes,
         Tool::Connector => Icon::Connector,
         Tool::Stamp => Icon::Stamp,
+        Tool::Code => Icon::Code,
         Tool::Marker => Icon::Marker,
         Tool::Highlighter => Icon::Highlighter,
     }

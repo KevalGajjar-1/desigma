@@ -298,8 +298,8 @@ impl Renderer<'_> {
         if !n.visible || matches!(n.kind, NodeKind::Unknown { .. } | NodeKind::Page { .. }) {
             return;
         }
-        if n.kind.is_board_item() {
-            // stickies, connectors, shapes with text and stamps draw as their lowered form
+        if board::lowers(self.doc, n) {
+            // stickies, connectors, shapes with text, stamps and code blocks draw as their lowered form
             if let Some(body) = board::lower(self.doc, n) {
                 self.draw_node(&body, ts, target, clip, back);
             }

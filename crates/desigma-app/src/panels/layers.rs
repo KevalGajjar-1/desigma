@@ -152,6 +152,7 @@ pub(crate) fn kind_icon(k: &NodeKind) -> Icon {
         NodeKind::Connector(_) => Icon::Connector,
         NodeKind::ShapeWithText(_) => Icon::Shapes,
         NodeKind::Stamp { .. } => Icon::Stamp,
+        NodeKind::CodeBlock(_) => Icon::Code,
         NodeKind::Unknown { .. } => Icon::Rectangle,
     }
 }

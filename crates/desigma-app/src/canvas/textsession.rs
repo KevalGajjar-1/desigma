@@ -708,10 +708,16 @@ fn key_event(app: &mut App, key: egui::Key, m: egui::Modifiers) -> bool {
     true
 }
 
-/// Tab: on a sticky note it starts the next one to the right; elsewhere it changes the list level.
+/// Tab: in code it indents; on a sticky note it starts the next one to the right; elsewhere it changes the list level.
 fn tab(app: &mut App, shift: bool) {
+    let on_code = app.canvas.text.as_ref().and_then(|s| app.doc.get(s.id)).is_some_and(|n| matches!(n.kind, NodeKind::CodeBlock(_)));
     let on_sticky = app.canvas.text.as_ref().and_then(|s| app.doc.get(s.id)).is_some_and(|n| matches!(n.kind, NodeKind::Sticky(_)));
-    if on_sticky {
+    if on_code {
+        // code takes indentation, not list levels
+        if !shift {
+            insert_text(app, "    ", EditKind::Other);
+        }
+    } else if on_sticky {
         if !shift {
             crate::board::create::tab_next(app);
         }

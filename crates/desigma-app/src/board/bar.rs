@@ -3,7 +3,7 @@
 //! alignment. Every change is one undoable edit (or part of the text session being typed in).
 
 use super::toolbar::swatch;
-use super::{color_of, rgb_of, BarMenu};
+use super::{color32, color_of, rgb_of, BarMenu};
 use crate::app::App;
 use crate::canvas::Interaction;
 use crate::icons::{self, Icon};
@@ -27,6 +27,14 @@ pub struct Caps {
     pub text: bool,
     /// Every selected node is a sticky note (the author line toggle).
     pub author: bool,
+    /// Every selected node is a sticky note (the wide variant toggle).
+    pub wide: bool,
+    /// Every selected node is a text layer (the highlight background).
+    pub highlight: bool,
+    /// Every selected node is a code block (language, theme, line numbers, copy).
+    pub code: bool,
+    /// Text alignment applies (any text but a code block's).
+    pub align: bool,
 }
 
 /// Which controls apply to the nodes `ids`.
@@ -44,11 +52,17 @@ pub fn caps_of(doc: &Document, ids: &[NodeId]) -> Caps {
         }
         if k.any_text().is_some() && !matches!(k, NodeKind::Connector(_)) {
             c.text = true;
+            if !matches!(k, NodeKind::CodeBlock(_)) {
+                c.align = true;
+            }
         }
     }
     c.shape = kinds.iter().all(|k| matches!(k, NodeKind::ShapeWithText(_)));
     c.line = kinds.iter().all(|k| matches!(k, NodeKind::Connector(_)));
     c.author = kinds.iter().all(|k| matches!(k, NodeKind::Sticky(_)));
+    c.wide = c.author;
+    c.highlight = kinds.iter().all(|k| matches!(k, NodeKind::Text(_)));
+    c.code = kinds.iter().all(|k| matches!(k, NodeKind::CodeBlock(_)));
     // a mixed selection keeps to the controls every node has
     if c.fill && c.ink {
         c.ink = false;
@@ -97,10 +111,35 @@ fn palette(caps: Caps) -> Vec<u32> {
         theme::BOARD_INK.to_vec()
     } else {
         let mut v = theme::BOARD_PALETTE.to_vec();
-        if caps.shape {
+        if caps.shape && !v.contains(&0xFFFFFF) {
             v.push(0xFFFFFF);
         }
         v
+    }
+}
+
+/// The background colour of a highlighted text layer.
+pub fn highlight_of(n: &Node) -> Option<u32> {
+    match &n.kind {
+        NodeKind::Text(_) => n.fills.iter().find(|p| p.visible).and_then(super::create::solid_rgb),
+        _ => None,
+    }
+}
+
+/// Sets (or, with `None`, removes) the highlight background of a text layer.
+pub fn set_highlight(n: &mut Node, rgb: Option<u32>) {
+    if matches!(n.kind, NodeKind::Text(_)) {
+        n.fills = rgb.map(|c| vec![Paint::solid(color_of(c))]).unwrap_or_default();
+    }
+}
+
+/// Switches a sticky note between its square and wide shape, keeping its height.
+pub fn set_wide(n: &mut Node, wide: bool) {
+    if let NodeKind::Sticky(s) = &mut n.kind {
+        if s.wide != wide {
+            s.wide = wide;
+            n.size.x = if wide { (n.size.y * STICKY_WIDE_W / STICKY_WIDE_H).round() } else { n.size.y };
+        }
     }
 }
 
@@ -210,7 +249,7 @@ pub fn show(app: &mut App, ui: &mut Ui, canvas: ERect) {
     }
     let ids = app.top_selection();
     let caps = caps_of(&app.doc, &ids);
-    if !(caps.fill || caps.ink || caps.shape || caps.line || caps.text || caps.author) {
+    if !(caps.fill || caps.ink || caps.shape || caps.line || caps.text || caps.author || caps.highlight || caps.code) {
         return;
     }
     let Some(sel) = app.selection_bounds() else { return };
@@ -235,6 +274,13 @@ pub fn show(app: &mut App, ui: &mut Ui, canvas: ERect) {
 
     // ---- layout: items left to right, widths first so the bar can be centred
     const SW: f32 = 24.0;
+    const LANG_W: f32 = 104.0;
+    let cur_hl = first.as_ref().and_then(highlight_of);
+    let hl_colors: Vec<u32> = if caps.highlight && cur_hl.is_some() { theme::BOARD_PALETTE.to_vec() } else { vec![] };
+    let cur_code = match first.as_ref().map(|n| &n.kind) {
+        Some(NodeKind::CodeBlock(c)) => Some(c.clone()),
+        _ => None,
+    };
     const BTN: f32 = theme::BOARD_BAR_BTN;
     let sep = theme::BOARD_BAR_SEP;
     let mut width = theme::BOARD_BAR_PAD * 2.0;
@@ -256,9 +302,24 @@ pub fn show(app: &mut App, ui: &mut Ui, canvas: ERect) {
         add(3.0 * BTN, &mut width, &mut groups);
         add(2.0 * BTN, &mut width, &mut groups);
     }
+    if !hl_colors.is_empty() {
+        add(hl_colors.len() as f32 * SW, &mut width, &mut groups);
+    }
     if caps.text {
         add(2.0 * BTN + 30.0, &mut width, &mut groups);
+    }
+    if caps.align {
         add(3.0 * BTN, &mut width, &mut groups);
+    }
+    if caps.highlight {
+        add(BTN, &mut width, &mut groups);
+    }
+    if caps.code {
+        add(LANG_W, &mut width, &mut groups);
+        add(3.0 * BTN, &mut width, &mut groups);
+    }
+    if caps.wide {
+        add(BTN, &mut width, &mut groups);
     }
     if caps.author {
         add(BTN, &mut width, &mut groups);
@@ -302,6 +363,22 @@ pub fn show(app: &mut App, ui: &mut Ui, canvas: ERect) {
                     app.board.ink = color_of(c);
                 }
                 edit(app, &ids, |n| set_color(n, c));
+            }
+            x += SW;
+        }
+    }
+
+    // highlight background colours of a highlighted text layer
+    if !hl_colors.is_empty() {
+        divider(&mut x, &p);
+        for (i, c) in hl_colors.iter().enumerate() {
+            let r = ERect::from_min_size(Pos2::new(x, cy - SW / 2.0), EV::splat(SW));
+            let resp = ui.interact(r, ui.id().with(("board-hl-swatch", i)), Sense::click());
+            swatch(&p, r.center(), *c, cur_hl == Some(*c), resp.hovered());
+            widgets::record(ui, &format!("board-hl-swatch-{i}"), r);
+            if resp.on_hover_text("Highlight colour").clicked() {
+                let c = *c;
+                edit(app, &ids, |n| set_highlight(n, Some(c)));
             }
             x += SW;
         }
@@ -386,6 +463,8 @@ pub fn show(app: &mut App, ui: &mut Ui, canvas: ERect) {
         }
         p.text(Pos2::new(x + BTN + 15.0, cy), Align2::CENTER_CENTER, format!("{}", size.round() as i64), theme::font_body_strong(), theme::TEXT);
         x += 2.0 * BTN + 30.0;
+    }
+    if caps.align {
         divider(&mut x, &p);
         let cur = cur_text.as_ref().map(|t| t.style.align_h).unwrap_or_default();
         for (a, icon, key) in [
@@ -404,6 +483,100 @@ pub fn show(app: &mut App, ui: &mut Ui, canvas: ERect) {
             }
             x += BTN;
         }
+    }
+
+    // highlight background of text layers
+    if caps.highlight {
+        divider(&mut x, &p);
+        let on = cur_hl.is_some();
+        let r = ERect::from_min_size(Pos2::new(x, cy - BTN / 2.0), EV::splat(BTN));
+        let resp = ui.interact(r, ui.id().with("board-highlight"), Sense::click());
+        widgets::button_bg(&p, r, &resp, on, theme::cr(theme::RADIUS_MEDIUM));
+        widgets::paint_icon_in(&p, r, Icon::Highlighter, 16.0, if on { theme::ICON_SELECTED } else { theme::ICON });
+        widgets::record(ui, "board-highlight", r);
+        if resp.on_hover_text("Highlight").clicked() {
+            let c = if on { None } else { Some(rgb_of(app.board.color)) };
+            edit(app, &ids, |n| set_highlight(n, c));
+        }
+        x += BTN;
+    }
+
+    // code block: language, theme, line numbers, copy
+    if let (true, Some(code)) = (caps.code, cur_code.as_ref()) {
+        divider(&mut x, &p);
+        let r = ERect::from_min_size(Pos2::new(x, cy - BTN / 2.0), EV::new(LANG_W, BTN));
+        let open = matches!(app.board.bar_menu, Some((BarMenu::Lang, _)));
+        let resp = ui.interact(r, ui.id().with("board-lang-btn"), Sense::click());
+        widgets::button_bg(&p, r, &resp, open, theme::cr(theme::RADIUS_MEDIUM));
+        p.text(Pos2::new(r.left() + 10.0, cy), Align2::LEFT_CENTER, code.lang.label(), theme::font_body(), theme::TEXT);
+        icons::paint(&p, Icon::ChevronDown, Pos2::new(r.right() - 12.0, cy), theme::CHEVRON_SMALL, theme::ICON_SECONDARY);
+        widgets::record(ui, "board-lang-btn", r);
+        if resp.on_hover_text("Language").clicked() {
+            app.board.bar_menu = if open { None } else { Some((BarMenu::Lang, r)) };
+        }
+        x += LANG_W;
+        divider(&mut x, &p);
+        // theme
+        let r = ERect::from_min_size(Pos2::new(x, cy - BTN / 2.0), EV::splat(BTN));
+        let resp = ui.interact(r, ui.id().with("board-code-theme"), Sense::click());
+        widgets::button_bg(&p, r, &resp, false, theme::cr(theme::RADIUS_MEDIUM));
+        let chip = ERect::from_center_size(r.center(), EV::splat(14.0));
+        p.rect_filled(chip, 3.0, color32(code.theme.background()));
+        p.rect_stroke(chip, 3.0, Stroke::new(1.0, theme::ICON_SECONDARY), StrokeKind::Inside);
+        p.text(chip.center(), Align2::CENTER_CENTER, "A", egui::FontId::proportional(9.0), color32(code.theme.token(TokenKind::Keyword)));
+        widgets::record(ui, "board-code-theme", r);
+        if resp.on_hover_text(if code.theme == CodeTheme::Dark { "Light theme" } else { "Dark theme" }).clicked() {
+            edit(app, &ids, |n| {
+                if let NodeKind::CodeBlock(c) = &mut n.kind {
+                    c.theme = if c.theme == CodeTheme::Dark { CodeTheme::Light } else { CodeTheme::Dark };
+                }
+            });
+        }
+        x += BTN;
+        // line numbers
+        let r = ERect::from_min_size(Pos2::new(x, cy - BTN / 2.0), EV::splat(BTN));
+        let resp = ui.interact(r, ui.id().with("board-code-lines"), Sense::click());
+        widgets::button_bg(&p, r, &resp, code.line_numbers, theme::cr(theme::RADIUS_MEDIUM));
+        widgets::paint_icon_in(&p, r, Icon::ListNumbers, 16.0, if code.line_numbers { theme::ICON_SELECTED } else { theme::ICON });
+        widgets::record(ui, "board-code-lines", r);
+        if resp.on_hover_text("Line numbers").clicked() {
+            let on = !code.line_numbers;
+            edit(app, &ids, |n| {
+                if let NodeKind::CodeBlock(c) = &mut n.kind {
+                    c.line_numbers = on;
+                }
+            });
+        }
+        x += BTN;
+        // copy
+        let r = ERect::from_min_size(Pos2::new(x, cy - BTN / 2.0), EV::splat(BTN));
+        let resp = ui.interact(r, ui.id().with("board-code-copy"), Sense::click());
+        widgets::button_bg(&p, r, &resp, false, theme::cr(theme::RADIUS_MEDIUM));
+        widgets::paint_icon_in(&p, r, Icon::Copy, 16.0, theme::ICON);
+        widgets::record(ui, "board-code-copy", r);
+        if resp.on_hover_text("Copy code").clicked() {
+            let text = code.text.content.clone();
+            ui.ctx().copy_text(text.clone());
+            app.board.copied = Some(text);
+            app.show_toast("Copied code", false);
+        }
+        x += BTN;
+    }
+
+    // wide variant of sticky notes
+    if caps.wide {
+        divider(&mut x, &p);
+        let wide = matches!(first.as_ref().map(|n| &n.kind), Some(NodeKind::Sticky(s)) if s.wide);
+        let r = ERect::from_min_size(Pos2::new(x, cy - BTN / 2.0), EV::splat(BTN));
+        let resp = ui.interact(r, ui.id().with("board-wide"), Sense::click());
+        widgets::button_bg(&p, r, &resp, wide, theme::cr(theme::RADIUS_MEDIUM));
+        widgets::paint_icon_in(&p, r, Icon::WideSticky, 16.0, if wide { theme::ICON_SELECTED } else { theme::ICON });
+        widgets::record(ui, "board-wide", r);
+        if resp.on_hover_text("Wide sticky note").clicked() {
+            app.board.wide = !wide;
+            edit(app, &ids, |n| set_wide(n, !wide));
+        }
+        x += BTN;
     }
 
     // author line of sticky notes
@@ -439,6 +612,7 @@ fn popup(app: &mut App, ui: &mut Ui, ids: &[NodeId]) {
     let (size, rows_cols) = match menu {
         BarMenu::Shape => (EV::new(5.0 * 40.0 + pad * 2.0, 2.0 * 40.0 + pad * 2.0), (2, 5)),
         BarMenu::StartCap | BarMenu::EndCap => (EV::new(5.0 * 36.0 + pad * 2.0, 36.0 + pad * 2.0), (1, 5)),
+        BarMenu::Lang => (EV::new(160.0, CodeLang::ALL.len() as f32 * 28.0 + pad * 2.0), (8, 1)),
     };
     let screen = ctx.content_rect();
     let above = anchor.top() - 8.0 - size.y;
@@ -473,6 +647,19 @@ fn popup(app: &mut App, ui: &mut Ui, ids: &[NodeId]) {
                     widgets::record(ui, &format!("board-bar-shape-{k:?}"), cell);
                     if resp.on_hover_text(k.label()).clicked() {
                         picked = Some(Pick::Shape(*k));
+                    }
+                }
+            }
+            BarMenu::Lang => {
+                let cur = ids.first().and_then(|i| app.doc.get(*i)).and_then(|n| if let NodeKind::CodeBlock(c) = &n.kind { Some(c.lang) } else { None });
+                for (i, l) in CodeLang::ALL.iter().enumerate() {
+                    let row = ERect::from_min_size(inner.min + EV::new(0.0, i as f32 * 28.0), EV::new(inner.width(), 28.0));
+                    let resp = ui.interact(row, ui.id().with(("board-bar-lang", i)), Sense::click());
+                    widgets::button_bg(&p, row, &resp, cur == Some(*l), theme::cr(theme::RADIUS_MEDIUM));
+                    p.text(Pos2::new(row.left() + 10.0, row.center().y), Align2::LEFT_CENTER, l.label(), theme::font_body(), theme::TEXT);
+                    widgets::record(ui, &format!("board-bar-lang-{l:?}"), row);
+                    if resp.clicked() {
+                        picked = Some(Pick::Lang(*l));
                     }
                 }
             }
@@ -517,6 +704,15 @@ fn popup(app: &mut App, ui: &mut Ui, ids: &[NodeId]) {
             app.board.shape = k;
             app.board.bar_menu = None;
         }
+        Some(Pick::Lang(l)) => {
+            edit(app, ids, |n| {
+                if let NodeKind::CodeBlock(c) = &mut n.kind {
+                    c.lang = l;
+                }
+            });
+            app.board.lang = l;
+            app.board.bar_menu = None;
+        }
         Some(Pick::Cap(start, cap)) => {
             edit(app, ids, |n| {
                 if let NodeKind::Connector(c) = &mut n.kind {
@@ -540,6 +736,7 @@ fn popup(app: &mut App, ui: &mut Ui, ids: &[NodeId]) {
 enum Pick {
     Shape(ShapeKind),
     Cap(bool, ConnectorCap),
+    Lang(CodeLang),
 }
 
 #[cfg(test)]
@@ -565,11 +762,11 @@ mod tests {
             Node::connector(NodeId(0), ConnectorProps::default()),
         ]);
         let sticky = caps_of(&d, &ids[..1]);
-        assert_eq!(sticky, Caps { fill: true, ink: false, shape: false, line: false, text: true, author: true });
+        assert_eq!(sticky, Caps { fill: true, text: true, author: true, wide: true, align: true, ..Default::default() });
         let shape = caps_of(&d, &ids[1..2]);
         assert!(shape.fill && shape.shape && shape.text && !shape.line);
         let conn = caps_of(&d, &ids[2..]);
-        assert_eq!(conn, Caps { fill: false, ink: true, shape: false, line: true, text: false, author: false });
+        assert_eq!(conn, Caps { ink: true, line: true, ..Default::default() });
         let mixed = caps_of(&d, &ids[..2]);
         assert!(mixed.fill && !mixed.shape && mixed.text);
     }

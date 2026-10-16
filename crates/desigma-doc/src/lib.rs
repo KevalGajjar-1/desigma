@@ -5,6 +5,7 @@
 //! Coordinates are in Figma units (1 unit = 1 CSS px at 100% zoom), y down.
 
 mod board;
+mod code;
 mod comments;
 mod components;
 mod dev;
@@ -16,6 +17,7 @@ mod library_ops;
 mod node;
 mod paint;
 mod prototype;
+mod session;
 mod settings;
 mod textmodel;
 mod variables;
@@ -25,6 +27,7 @@ pub mod vector;
 mod vector_fit;
 
 pub use board::*;
+pub use code::*;
 pub use comments::*;
 pub use components::*;
 pub use dev::*;
@@ -35,6 +38,7 @@ pub use library_ops::*;
 pub use node::*;
 pub use paint::*;
 pub use prototype::*;
+pub use session::*;
 pub use settings::*;
 pub use textmodel::*;
 pub use variables::*;
@@ -99,6 +103,9 @@ pub struct Document {
     /// Hidden page holding copies of library components; not in `pages`.
     #[serde(default)]
     pub library_page: Option<NodeId>,
+    /// Timer and voting session of a board.
+    #[serde(default)]
+    pub board_session: BoardSession,
     /// Embedded images keyed by content hash (Figma `imageRef`).
     pub images: BTreeMap<String, Vec<u8>>,
     next_id: u64,

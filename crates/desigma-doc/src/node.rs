@@ -270,6 +270,8 @@ pub enum NodeKind {
     Stamp {
         kind: String,
     },
+    /// Board code block: monospace code with syntax highlighting.
+    CodeBlock(CodeBlockProps),
     /// Anything the importer could not map, kept so nothing is silently lost.
     Unknown {
         type_name: String,
@@ -293,7 +295,7 @@ impl NodeKind {
 
     /// Board items that are drawn by lowering to ordinary shapes and text.
     pub fn is_board_item(&self) -> bool {
-        matches!(self, NodeKind::Sticky(_) | NodeKind::Connector(_) | NodeKind::ShapeWithText(_) | NodeKind::Stamp { .. })
+        matches!(self, NodeKind::Sticky(_) | NodeKind::Connector(_) | NodeKind::ShapeWithText(_) | NodeKind::Stamp { .. } | NodeKind::CodeBlock(_))
     }
 
     /// The text of a board item that has its own text (sticky, shape with text), if any.
@@ -301,6 +303,7 @@ impl NodeKind {
         match self {
             NodeKind::Sticky(s) => Some(&s.text),
             NodeKind::ShapeWithText(s) => Some(&s.text),
+            NodeKind::CodeBlock(c) => Some(&c.text),
             NodeKind::Connector(c) => c.label.as_ref(),
             _ => None,
         }
@@ -325,6 +328,7 @@ impl NodeKind {
         match self {
             NodeKind::Sticky(s) => Some(&mut s.text),
             NodeKind::ShapeWithText(s) => Some(&mut s.text),
+            NodeKind::CodeBlock(c) => Some(&mut c.text),
             NodeKind::Connector(c) => c.label.as_mut(),
             _ => None,
         }
@@ -367,6 +371,7 @@ impl NodeKind {
             NodeKind::Connector(_) => "Connector",
             NodeKind::ShapeWithText(_) => "Shape",
             NodeKind::Stamp { .. } => "Stamp",
+            NodeKind::CodeBlock(_) => "Code block",
             NodeKind::Unknown { .. } => "Layer",
         }
     }

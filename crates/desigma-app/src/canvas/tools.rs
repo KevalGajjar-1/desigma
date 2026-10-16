@@ -28,6 +28,7 @@ pub enum Tool {
     BoardShape,
     Connector,
     Stamp,
+    Code,
     Marker,
     Highlighter,
 }
@@ -57,6 +58,7 @@ impl Tool {
             Tool::BoardShape => "Shape",
             Tool::Connector => "Connector",
             Tool::Stamp => "Stamp",
+            Tool::Code => "Code block",
             Tool::Marker => "Marker",
             Tool::Highlighter => "Highlighter",
         }
@@ -86,6 +88,7 @@ impl Tool {
             Tool::BoardShape => "R",
             Tool::Connector => "X",
             Tool::Stamp => "E",
+            Tool::Code => "Shift+C",
             Tool::Marker => "P",
             Tool::Highlighter => "Shift+P",
         }
@@ -129,6 +132,7 @@ impl Tool {
             (X, false) => Tool::Connector,
             (T, false) => Tool::Text,
             (E, false) => Tool::Stamp,
+            (C, true) => Tool::Code,
             _ => return None,
         })
     }
@@ -149,6 +153,7 @@ impl Tool {
                 | Tool::Sticky
                 | Tool::BoardShape
                 | Tool::Stamp
+                | Tool::Code
         )
     }
 

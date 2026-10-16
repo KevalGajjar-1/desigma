@@ -263,6 +263,15 @@ fn on_press(app: &mut App, rect: ERect, inp: &Inp) {
             return;
         }
     }
+    // board: while a vote is open a click on an item adds a vote (Alt takes one back)
+    if app.is_board() && !mid && !inp.space && app.tool == Tool::Move && app.doc.board_session.voting() {
+        if let Some(id) = hit_under(app, page, true) {
+            if crate::board::session::votable(&app.doc, id) {
+                crate::board::session::vote(app, id, !inp.mods.alt);
+                return;
+            }
+        }
+    }
     let deep = inp.mods.command;
     let target = if let Some(h) = handle_hit(app, rect, pos) {
         PressTarget::Handle(h)
@@ -478,7 +487,7 @@ fn on_drag(app: &mut App, ui: &Ui, rect: ERect, inp: &Inp) {
             if dist(d.start, c) * zoom > theme::DRAG_THRESHOLD_PX {
                 d.dragged = true;
             }
-            let g = create::draw_geom(d.tool, d.start, c, inp.mods.shift || crate::board::create::keeps_square(d.tool), inp.mods.alt);
+            let g = create::draw_geom(d.tool, d.start, c, inp.mods.shift || crate::board::create::keeps_square(d.tool, app.board.wide), inp.mods.alt);
             create::apply_geom(&mut app.doc, &mut d.tx, d.id, d.parent, &g);
             app.changed();
         }
@@ -702,7 +711,7 @@ fn on_release(app: &mut App, rect: ERect, inp: &Inp) {
         Interaction::Draw(mut d) => {
             if !d.dragged && (crate::board::create::types_into(d.tool) || d.tool == Tool::Stamp) {
                 // a click places a board item at its default size, centred on the pointer
-                let r = crate::board::create::click_rect(d.tool, d.start);
+                let r = crate::board::create::click_rect(d.tool, d.start, app.board.wide);
                 create::apply_geom(&mut app.doc, &mut d.tx, d.id, d.parent, &create::DrawGeom { rect: r, line: None });
             } else if !d.dragged {
                 let (w, h) = (theme::DEFAULT_SHAPE_SIZE, theme::DEFAULT_SHAPE_SIZE);
@@ -811,7 +820,7 @@ fn on_double_click(app: &mut App, rect: ERect, inp: &Inp) {
         let board_kind = app.doc.get(id).map(|n| &n.kind);
         if is_text {
             begin_text_edit(app, id);
-        } else if matches!(board_kind, Some(NodeKind::Sticky(_) | NodeKind::ShapeWithText(_))) {
+        } else if matches!(board_kind, Some(NodeKind::Sticky(_) | NodeKind::ShapeWithText(_) | NodeKind::CodeBlock(_))) {
             // stickies and shapes take their text on double-click
             begin_text_edit(app, id);
         } else if matches!(board_kind, Some(NodeKind::Connector(_))) {

@@ -36,8 +36,14 @@ pub fn item(app: &mut App, tool: Tool) -> Option<Node> {
             if let NodeKind::Sticky(s) = &mut n.kind {
                 s.color = app.board.color;
                 s.author = Some(author_name());
+                s.wide = app.board.wide;
             }
             n.name = app.unique_name("Sticky note");
+            n
+        }
+        Tool::Code => {
+            let mut n = Node::code_block(id, r, app.board.lang, "");
+            n.name = app.unique_name("Code block");
             n
         }
         Tool::BoardShape => {
@@ -56,9 +62,11 @@ pub fn item(app: &mut App, tool: Tool) -> Option<Node> {
 }
 
 /// Default box of a board item placed by a click at `at` (centred on the point).
-pub fn click_rect(tool: Tool, at: Vec2) -> Rect {
+pub fn click_rect(tool: Tool, at: Vec2, wide: bool) -> Rect {
     let (w, h) = match tool {
+        Tool::Sticky if wide => (STICKY_WIDE_W, STICKY_WIDE_H),
         Tool::Sticky => (STICKY_SIZE, STICKY_SIZE),
+        Tool::Code => (CODE_BLOCK_W, CODE_BLOCK_H),
         Tool::Stamp => (theme::BOARD_STAMP_SIZE, theme::BOARD_STAMP_SIZE),
         _ => (theme::BOARD_SHAPE_W, theme::BOARD_SHAPE_H),
     };
@@ -66,13 +74,13 @@ pub fn click_rect(tool: Tool, at: Vec2) -> Rect {
 }
 
 /// Whether dragging out this tool keeps the box square.
-pub fn keeps_square(tool: Tool) -> bool {
-    matches!(tool, Tool::Sticky | Tool::Stamp)
+pub fn keeps_square(tool: Tool, wide: bool) -> bool {
+    matches!(tool, Tool::Stamp) || (tool == Tool::Sticky && !wide)
 }
 
 /// Whether a click with this tool starts typing into the new item.
 pub fn types_into(tool: Tool) -> bool {
-    matches!(tool, Tool::Sticky | Tool::BoardShape)
+    matches!(tool, Tool::Sticky | Tool::BoardShape | Tool::Code)
 }
 
 /// Styles a freshly drawn marker or highlighter stroke.
@@ -95,7 +103,7 @@ pub fn tab_next(app: &mut App) -> bool {
     let Some(cur) = cur else { return false };
     let Some(n) = app.doc.get(cur) else { return false };
     let NodeKind::Sticky(src) = &n.kind else { return false };
-    let (color, tpos, size, parent) = (src.color, n.transform, n.size, n.parent);
+    let (color, tpos, size, parent, wide) = (src.color, n.transform, n.size, n.parent, src.wide);
     let Some(parent) = parent else { return false };
     // commit the text being typed, then add the neighbour in its own undo step
     crate::canvas::interact::finish_text(app, true);
@@ -106,6 +114,7 @@ pub fn tab_next(app: &mut App) -> bool {
     if let NodeKind::Sticky(s) = &mut next.kind {
         s.color = color;
         s.author = Some(author_name());
+        s.wide = wide;
     }
     let index = app.doc.get(parent).map(|p| p.children.len()).unwrap_or(0);
     let mut tx = Tx::new();

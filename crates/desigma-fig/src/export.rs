@@ -337,7 +337,7 @@ fn export_node(doc: &Document, id: NodeId, parent_abs: Option<&Affine>, depth: u
         NodeKind::ComponentSet(_) => "COMPONENT_SET",
         NodeKind::Instance { .. } => "INSTANCE",
         NodeKind::Unknown { type_name } => type_name.as_str(),
-        NodeKind::Sticky(_) | NodeKind::Connector(_) | NodeKind::ShapeWithText(_) | NodeKind::Stamp { .. } => {
+        NodeKind::Sticky(_) | NodeKind::Connector(_) | NodeKind::ShapeWithText(_) | NodeKind::Stamp { .. } | NodeKind::CodeBlock(_) => {
             crate::board::type_name(&node.kind).unwrap_or("SECTION")
         }
     };
@@ -506,7 +506,7 @@ fn export_node(doc: &Document, id: NodeId, parent_abs: Option<&Affine>, depth: u
                 m.insert("vectorNetwork".into(), crate::vecnet::network_to_json(net));
             }
         }
-        NodeKind::Sticky(_) | NodeKind::Connector(_) | NodeKind::ShapeWithText(_) | NodeKind::Stamp { .. } => {
+        NodeKind::Sticky(_) | NodeKind::Connector(_) | NodeKind::ShapeWithText(_) | NodeKind::Stamp { .. } | NodeKind::CodeBlock(_) => {
             crate::board::export_fields(node, parent_abs.map(|p| p.translation()).unwrap_or(Vec2::ZERO), &mut m, &|t| figma_id(doc, t));
         }
         NodeKind::BooleanOp(op) => {

@@ -257,6 +257,7 @@ pub(crate) fn type_name(k: &NodeKind) -> Option<&'static str> {
         NodeKind::Connector(_) => Some("CONNECTOR"),
         NodeKind::ShapeWithText(_) => Some("SHAPE_WITH_TEXT"),
         NodeKind::Stamp { .. } => Some("STAMP"),
+        NodeKind::CodeBlock(_) => Some("CODE_BLOCK"),
         _ => None,
     }
 }
@@ -294,6 +295,10 @@ pub(crate) fn export_fields(node: &Node, origin: Vec2, m: &mut Map<String, Value
         }
         NodeKind::Stamp { kind } => {
             m.insert("stampType".into(), kind.clone().into());
+        }
+        NodeKind::CodeBlock(c) => {
+            m.insert("code".into(), c.text.content.clone().into());
+            m.insert("codeLanguage".into(), c.lang.label().into());
         }
         NodeKind::Connector(c) => {
             let end = |e: &ConnectorEnd| {
