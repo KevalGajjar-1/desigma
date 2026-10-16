@@ -57,6 +57,14 @@ pub enum Icon {
     Eraser,
     Stamp,
     Table,
+    Code,
+    Timer,
+    Pause,
+    Reset,
+    Vote,
+    Copy,
+    ListNumbers,
+    WideSticky,
     // layer kinds
     Group,
     Vector,
@@ -181,6 +189,14 @@ impl Icon {
         Icon::Eraser,
         Icon::Stamp,
         Icon::Table,
+        Icon::Code,
+        Icon::Timer,
+        Icon::Pause,
+        Icon::Reset,
+        Icon::Vote,
+        Icon::Copy,
+        Icon::ListNumbers,
+        Icon::WideSticky,
         Icon::Group,
         Icon::Vector,
         Icon::Component,
@@ -292,6 +308,14 @@ impl Icon {
             Icon::Eraser => "eraser",
             Icon::Stamp => "stamp",
             Icon::Table => "table",
+            Icon::Code => "braces",
+            Icon::Timer => "timer",
+            Icon::Pause => "pause",
+            Icon::Reset => "rotate-ccw",
+            Icon::Vote => "vote",
+            Icon::Copy => "copy",
+            Icon::ListNumbers => "list-ordered",
+            Icon::WideSticky => "rectangle-horizontal",
             Icon::Group => "group",
             Icon::Vector => "spline",
             Icon::Component => "component",
@@ -459,6 +483,14 @@ lucide!(
     "waves",
     "eraser",
     "ribbon",
+    "braces",
+    "timer",
+    "pause",
+    "rotate-ccw",
+    "vote",
+    "copy",
+    "list-ordered",
+    "rectangle-horizontal",
 );
 
 /// SVG source of the Lucide icon behind `icon`.
@@ -566,7 +598,7 @@ mod tests {
         for i in Icon::ALL {
             assert!(seen.insert(*i), "{i:?} listed twice");
         }
-        assert_eq!(seen.len(), 105);
+        assert_eq!(seen.len(), 114);
     }
 
     #[test]

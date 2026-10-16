@@ -43,6 +43,15 @@ pub fn get(doc: &Document, id: NodeId) -> Option<Cow<'_, Node>> {
     }
 }
 
+/// Whether `n` is drawn as its lowered form: a board item, a text layer with a highlight
+/// background (its own fill) on a board, or any item that has votes.
+pub fn lowers(doc: &Document, n: &Node) -> bool {
+    n.kind.is_board_item()
+        || (doc.kind == d::DocumentKind::Board
+            && matches!(n.kind, NodeKind::Text(_))
+            && (n.fills.iter().any(|p| p.visible) || doc.board_session.vote.as_ref().is_some_and(|v| v.count(n.id) > 0)))
+}
+
 /// Largest extent (local units) the shadow of a sticky note reaches past its box.
 pub fn sticky_shadow_reach(size: Vec2) -> f32 {
     let m = size.x.min(size.y);
@@ -166,6 +175,7 @@ pub fn text_frame(doc: &Document, n: &Node) -> Option<TextFrame> {
             Some(label_frame(route.midpoint(), label).1)
         }
         NodeKind::TableCell(c) => Some(fit_into(&c.text, cell_text_box(n.size), c.text.style.font_size, d::STICKY_FONT_MIN)),
+        NodeKind::CodeBlock(c) => Some(TextFrame { rect: c.layout(n.size).text_box, props: c.styled_text() }),
         _ => None,
     }
 }
@@ -238,10 +248,24 @@ pub fn lower(doc: &Document, n: &Node) -> Option<Node> {
                 extras.push(stamp_layer(n, 6 + i as u64, &l, w, h));
             }
         }
+        NodeKind::CodeBlock(c) => lower_code(n, c, &mut body, &mut extras),
         NodeKind::Connector(_) => lower_connector(doc, n, &mut body, &mut extras)?,
         NodeKind::BoardSection(s) => lower_section(n, s, &mut body, &mut extras),
         NodeKind::Table(t) => lower_table(doc, n, t, &mut body, &mut extras),
+        NodeKind::Text(t) if lowers(doc, n) => {
+            // a highlight background: the text layer's own fill behind its text
+            body.kind = NodeKind::Rectangle;
+            body.corner_radii = [(t.style.font_size * 0.2).min(n.size.y / 2.0).max(0.0); 4];
+            body.stroke.weight = 0.0;
+            body.stroke.paints.clear();
+            extras.push(child(n, 0, NodeKind::Text(t.clone()), Rect::new(0.0, 0.0, n.size.x, n.size.y)));
+        }
         _ => return None,
+    }
+    if !matches!(n.kind, NodeKind::Connector(_)) {
+        if let Some(count) = doc.board_session.vote.as_ref().map(|v| v.count(n.id)).filter(|c| *c > 0) {
+            vote_badge(n, count, &mut extras);
+        }
     }
     // a section keeps its real (visible) children under the title pill
     body.children = if matches!(n.kind, NodeKind::BoardSection(_)) { d::section_visible_children(n).to_vec() } else { Vec::new() };
@@ -263,7 +287,7 @@ pub fn lower(doc: &Document, n: &Node) -> Option<Node> {
 /// plus its synthetic children as real nodes), for exporters that walk the node tree
 /// themselves. `None` when the document has no board items.
 pub fn lowered_document(doc: &Document) -> Option<Document> {
-    let items: Vec<NodeId> = doc.nodes.values().filter(|n| n.kind.is_board_item()).map(|n| n.id).collect();
+    let items: Vec<NodeId> = doc.nodes.values().filter(|n| lowers(doc, n)).map(|n| n.id).collect();
     if items.is_empty() {
         return None;
     }
@@ -394,6 +418,60 @@ fn lower_table(doc: &Document, n: &Node, t: &TableProps, body: &mut Node, extras
         extras.push(g);
     }
     extras.extend(texts);
+}
+
+/// Colour of vote dots.
+pub const VOTE_COLOR: Color = Color { r: 0.592, g: 0.278, b: 1.0, a: 1.0 };
+
+/// The vote dot in the top right corner of `n` with the number of votes on it.
+fn vote_badge(n: &Node, count: u32, extras: &mut Vec<Node>) {
+    let r = (n.size.x.min(n.size.y) * 0.09).clamp(10.0, 16.0);
+    let c = Vec2::new((n.size.x - r - 4.0).max(r), r + 4.0);
+    let bx = Rect::new(c.x - r, c.y - r, 2.0 * r, 2.0 * r);
+    let mut dot = child(n, 14, NodeKind::Ellipse(ArcData::default()), bx);
+    dot.fills = solid(VOTE_COLOR);
+    dot.stroke.paints = solid(Color::WHITE);
+    dot.stroke.weight = 1.5;
+    dot.stroke.align = StrokeAlign::Center;
+    extras.push(dot);
+    let mut t = d::board_text(r * 1.15, TextAlignH::Center, TextAlignV::Center);
+    t.content = count.to_string();
+    t.style.font_weight = 700;
+    t.style.fills = solid(Color::WHITE);
+    extras.push(child(n, 15, NodeKind::Text(t), bx));
+}
+
+/// A code block: a clipping rounded frame in the theme's colours, the line numbers and the code.
+fn lower_code(n: &Node, c: &d::CodeBlockProps, body: &mut Node, extras: &mut Vec<Node>) {
+    let lay = c.layout(n.size);
+    body.kind = NodeKind::Frame(d::FrameProps { clips_content: true, ..Default::default() });
+    body.corner_radii = [lay.corner; 4];
+    body.fills = solid(c.theme.background());
+    if c.theme == d::CodeTheme::Light {
+        body.stroke.paints = solid(Color { a: 0.12, ..Color::BLACK });
+        body.stroke.weight = 1.0;
+        body.stroke.align = StrokeAlign::Inside;
+    } else {
+        body.stroke.paints.clear();
+        body.stroke.weight = 0.0;
+    }
+    body.effects = vec![Effect::DropShadow {
+        color: Color { a: 0.16, ..Color::BLACK },
+        offset: Vec2::new(0.0, 2.0),
+        radius: 6.0,
+        spread: 0.0,
+        visible: true,
+        show_behind: false,
+    }];
+    body.effects.extend(n.effects.iter().cloned());
+    if !c.text.content.is_empty() {
+        extras.push(child(n, 0, NodeKind::Text(c.styled_text()), lay.text_box));
+    }
+    if let Some(g) = lay.gutter {
+        let mut t = c.gutter_text();
+        t.auto_resize = TextAutoResize::None;
+        extras.push(child(n, 1, NodeKind::Text(t), g));
+    }
 }
 
 fn stamp_layer(base: &Node, slot: u64, l: &StampLayer, w: f32, h: f32) -> Node {

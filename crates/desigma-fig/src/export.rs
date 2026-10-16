@@ -343,7 +343,8 @@ fn export_node(doc: &Document, id: NodeId, parent_abs: Option<&Affine>, depth: u
         | NodeKind::Stamp { .. }
         | NodeKind::BoardSection(_)
         | NodeKind::Table(_)
-        | NodeKind::TableCell(_) => crate::board::type_name(&node.kind).unwrap_or("SECTION"),
+        | NodeKind::TableCell(_)
+        | NodeKind::CodeBlock(_) => crate::board::type_name(&node.kind).unwrap_or("SECTION"),
     };
     m.insert("type".into(), ty.into());
     crate::variables::export_node_variables(node, &mut m);
@@ -516,7 +517,8 @@ fn export_node(doc: &Document, id: NodeId, parent_abs: Option<&Affine>, depth: u
         | NodeKind::Stamp { .. }
         | NodeKind::BoardSection(_)
         | NodeKind::Table(_)
-        | NodeKind::TableCell(_) => {
+        | NodeKind::TableCell(_)
+        | NodeKind::CodeBlock(_) => {
             crate::board::export_fields(node, parent_abs.map(|p| p.translation()).unwrap_or(Vec2::ZERO), &mut m, &|t| figma_id(doc, t));
         }
         NodeKind::BooleanOp(op) => {

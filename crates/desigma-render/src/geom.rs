@@ -474,7 +474,8 @@ fn derived_shape(doc: &Document, n: &Node, tol: f32) -> Option<Shape> {
         | NodeKind::Stamp { .. }
         | NodeKind::BoardSection(_)
         | NodeKind::Table(_)
-        | NodeKind::TableCell(_) => {
+        | NodeKind::TableCell(_)
+        | NodeKind::CodeBlock(_) => {
             let body = crate::board::lower(doc, n)?;
             derived_shape(doc, &body, tol)
         }

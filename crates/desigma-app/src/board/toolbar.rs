@@ -22,16 +22,17 @@ struct Slot {
     more: bool,
 }
 
-const SLOTS: [Slot; 10] = [
+const SLOTS: [Slot; 11] = [
     Slot { tools: &[Tool::Move], menu: None, divider: false, more: false },
     Slot { tools: &[Tool::Hand], menu: None, divider: false, more: false },
     Slot { tools: &[Tool::Marker, Tool::Highlighter, Tool::Washi, Tool::Eraser], menu: Some(ToolMenu::Brush), divider: true, more: false },
-    Slot { tools: &[Tool::Sticky], menu: None, divider: false, more: false },
+    Slot { tools: &[Tool::Sticky], menu: Some(ToolMenu::Sticky), divider: false, more: false },
     Slot { tools: &[Tool::BoardShape], menu: Some(ToolMenu::Shape), divider: false, more: false },
     Slot { tools: &[Tool::Connector], menu: None, divider: false, more: false },
     Slot { tools: &[Tool::Text], menu: None, divider: false, more: false },
     Slot { tools: &[Tool::Section], menu: None, divider: false, more: false },
     Slot { tools: &[Tool::Stamp], menu: Some(ToolMenu::Stamp), divider: false, more: false },
+    Slot { tools: &[Tool::Code], menu: None, divider: false, more: false },
     Slot { tools: &[Tool::Table], menu: None, divider: false, more: true },
 ];
 
@@ -169,7 +170,8 @@ fn popup(app: &mut App, ui: &mut Ui) {
     let (cols, rows) = match menu {
         ToolMenu::Brush => (4, 3),
         ToolMenu::Shape => (5, 2),
-        ToolMenu::Stamp => (5, 1),
+        ToolMenu::Stamp => (6, 2),
+        ToolMenu::Sticky => (2, 1),
         ToolMenu::More => (1, 1),
     };
     let size = match menu {
@@ -209,9 +211,21 @@ fn popup(app: &mut App, ui: &mut Ui) {
                     }
                 }
             }
+            ToolMenu::Sticky => {
+                for (i, (wide, icon, tip)) in [(false, Icon::Sticky, "Sticky note"), (true, Icon::WideSticky, "Wide sticky note")].into_iter().enumerate() {
+                    let cell = Rect::from_min_size(inner.min + Vec2::new(i as f32 * CELL, 0.0), Vec2::splat(CELL));
+                    let resp = ui.interact(cell, ui.id().with(("board-sticky-kind", i)), Sense::click());
+                    cell_bg(&p, cell, app.board.wide == wide, resp.hovered());
+                    widgets::paint_icon_in(&p, cell, icon, 20.0, theme::ICON);
+                    widgets::record(ui, if wide { "board-sticky-wide" } else { "board-sticky-square" }, cell);
+                    if resp.on_hover_text(tip).clicked() {
+                        picked = Some(Pick::Sticky(wide));
+                    }
+                }
+            }
             ToolMenu::Stamp => {
                 for (i, k) in STAMP_KINDS.iter().enumerate() {
-                    let cell = Rect::from_min_size(inner.min + Vec2::new(i as f32 * CELL, 0.0), Vec2::splat(CELL));
+                    let cell = Rect::from_min_size(inner.min + Vec2::new((i % cols) as f32 * CELL, (i / cols) as f32 * CELL), Vec2::splat(CELL));
                     let sel = app.board.stamp == *k;
                     let resp = ui.interact(cell, ui.id().with(("board-stamp", i)), Sense::click());
                     cell_bg(&p, cell, sel, resp.hovered());
@@ -246,6 +260,11 @@ fn popup(app: &mut App, ui: &mut Ui) {
             app.board.tool_menu = None;
             app.set_tool(Tool::Stamp);
         }
+        Some(Pick::Sticky(wide)) => {
+            app.board.wide = wide;
+            app.board.tool_menu = None;
+            app.set_tool(Tool::Sticky);
+        }
         Some(Pick::Brush(t)) => {
             app.board.brush = t;
             app.set_tool(t);
@@ -269,6 +288,7 @@ enum Pick {
     More(Tool),
     Shape(ShapeKind),
     Stamp(String),
+    Sticky(bool),
     Brush(Tool),
     Ink(u32),
     Size(usize),
@@ -374,9 +394,6 @@ pub fn pattern_glyph(p: &egui::Painter, r: Rect, pattern: WashiPattern, base: Co
                 for j in 0..3 {
                     if (i + j) % 2 == 0 {
                         p.rect_filled(Rect::from_min_size(Pos2::new(r.left() + i as f32 * 4.0, r.top() + j as f32 * 4.0), Vec2::splat(4.0)), 0.0, ink);
-                    }
-                }
-            }
                     }
                 }
             }

@@ -411,7 +411,7 @@ impl Shell {
                     // A single text or vector layer is entered for editing; anything else selects its children.
                     let id = n.id;
                     if matches!(n.kind, desigma_doc::NodeKind::Text(_))
-                        || matches!(n.kind, desigma_doc::NodeKind::Sticky(_) | desigma_doc::NodeKind::ShapeWithText(_))
+                        || matches!(n.kind, desigma_doc::NodeKind::Sticky(_) | desigma_doc::NodeKind::ShapeWithText(_) | desigma_doc::NodeKind::CodeBlock(_))
                     {
                         interact::begin_text_edit(app, id);
                     } else if matches!(n.kind, desigma_doc::NodeKind::Table(_)) {
@@ -680,6 +680,7 @@ impl Shell {
                 crate::board::bar::show(&mut self.app, ui, canvas_rect);
                 crate::board::section::rename_ui(&mut self.app, ui, canvas_rect);
                 crate::board::canvas::zoom_pill(&mut self.app, ui, canvas_rect);
+                crate::board::session::show(&mut self.app, ui, canvas_rect);
             } else {
                 right::show(&mut self.app, ui, right_rect);
                 toolbar::show(&mut self.app, ui, if deck { canvas_rect } else { canvas_rect_for_toolbar(full) });

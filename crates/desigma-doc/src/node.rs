@@ -281,6 +281,8 @@ pub enum NodeKind {
     Table(TableProps),
     /// One cell of a [`NodeKind::Table`]; its box is derived from the table's grid.
     TableCell(TableCellProps),
+    /// Board code block: monospace code with syntax highlighting.
+    CodeBlock(CodeBlockProps),
     /// Anything the importer could not map, kept so nothing is silently lost.
     Unknown {
         type_name: String,
@@ -315,6 +317,7 @@ impl NodeKind {
                 | NodeKind::BoardSection(_)
                 | NodeKind::Table(_)
                 | NodeKind::TableCell(_)
+                | NodeKind::CodeBlock(_)
         )
     }
 
@@ -324,6 +327,7 @@ impl NodeKind {
             NodeKind::Sticky(s) => Some(&s.text),
             NodeKind::ShapeWithText(s) => Some(&s.text),
             NodeKind::TableCell(c) => Some(&c.text),
+            NodeKind::CodeBlock(c) => Some(&c.text),
             NodeKind::Connector(c) => c.label.as_ref(),
             _ => None,
         }
@@ -349,6 +353,7 @@ impl NodeKind {
             NodeKind::Sticky(s) => Some(&mut s.text),
             NodeKind::ShapeWithText(s) => Some(&mut s.text),
             NodeKind::TableCell(c) => Some(&mut c.text),
+            NodeKind::CodeBlock(c) => Some(&mut c.text),
             NodeKind::Connector(c) => c.label.as_mut(),
             _ => None,
         }
@@ -394,6 +399,7 @@ impl NodeKind {
             NodeKind::BoardSection(_) => "Section",
             NodeKind::Table(_) => "Table",
             NodeKind::TableCell(_) => "Cell",
+            NodeKind::CodeBlock(_) => "Code block",
             NodeKind::Unknown { .. } => "Layer",
         }
     }

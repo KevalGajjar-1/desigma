@@ -159,6 +159,7 @@ pub(crate) fn kind_icon(k: &NodeKind) -> Icon {
         NodeKind::BoardSection(_) => Icon::Section,
         NodeKind::Table(_) => Icon::Table,
         NodeKind::TableCell(_) => Icon::Rectangle,
+        NodeKind::CodeBlock(_) => Icon::Code,
         NodeKind::Unknown { .. } => Icon::Rectangle,
     }
 }

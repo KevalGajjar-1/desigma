@@ -11,6 +11,7 @@ pub mod demo;
 pub mod erase;
 pub mod preview;
 pub mod section;
+pub mod session;
 pub mod table;
 pub mod toolbar;
 
@@ -25,6 +26,7 @@ pub enum ToolMenu {
     Stamp,
     /// The "more" popover: tools that do not fit the bar (Table).
     More,
+    Sticky,
 }
 
 /// Which popover of the contextual toolbar is open.
@@ -35,12 +37,24 @@ pub enum BarMenu {
     EndCap,
     /// The colour grid of a section.
     SectionColor,
+    Lang,
 }
 
 /// Editor state of board mode.
 pub struct BoardState {
     /// Colour of the next sticky note.
     pub color: Color,
+    /// The Sticky tool draws wide notes.
+    pub wide: bool,
+    /// Language of the next code block.
+    pub lang: desigma_doc::CodeLang,
+    /// Votes per person the next voting session offers.
+    pub votes_each: u32,
+    /// Facilitation widgets: the vote setup popover and the results list are open.
+    pub vote_menu: bool,
+    /// The last code copied with the contextual bar's copy button.
+    pub copied: Option<String>,
+    pub results_open: bool,
     /// Shape the Shape tool draws.
     pub shape: ShapeKind,
     /// Stamp the Stamp tool places.
@@ -75,6 +89,12 @@ impl Default for BoardState {
     fn default() -> Self {
         Self {
             color: desigma_doc::STICKY_YELLOW,
+            wide: false,
+            lang: desigma_doc::CodeLang::Plain,
+            votes_each: desigma_doc::VOTES_DEFAULT,
+            vote_menu: false,
+            copied: None,
+            results_open: true,
             shape: ShapeKind::RoundedRect,
             stamp: "thumbs_up".into(),
             ink: color_of(crate::theme::BOARD_INK[0]),
@@ -118,5 +138,5 @@ impl App {
 
 /// Kinds a connector can attach to.
 pub fn connectable(kind: &NodeKind) -> bool {
-    matches!(kind, NodeKind::Sticky(_) | NodeKind::ShapeWithText(_) | NodeKind::Stamp { .. } | NodeKind::Text(_))
+    matches!(kind, NodeKind::Sticky(_) | NodeKind::ShapeWithText(_) | NodeKind::Stamp { .. } | NodeKind::Text(_) | NodeKind::CodeBlock(_))
 }

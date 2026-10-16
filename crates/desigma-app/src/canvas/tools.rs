@@ -29,6 +29,7 @@ pub enum Tool {
     Connector,
     Stamp,
     Table,
+    Code,
     Marker,
     Highlighter,
     Washi,
@@ -61,6 +62,7 @@ impl Tool {
             Tool::Connector => "Connector",
             Tool::Stamp => "Stamp",
             Tool::Table => "Table",
+            Tool::Code => "Code block",
             Tool::Marker => "Marker",
             Tool::Highlighter => "Highlighter",
             Tool::Washi => "Washi tape",
@@ -97,6 +99,7 @@ impl Tool {
             Tool::Highlighter => "Shift+M",
             Tool::Washi => "Shift+W",
             Tool::Eraser => "Shift+E",
+            Tool::Code => "Shift+C",
         }
     }
 
@@ -142,6 +145,7 @@ impl Tool {
             (X, false) => Tool::Connector,
             (T, false) => Tool::Text,
             (E, false) => Tool::Stamp,
+            (C, true) => Tool::Code,
             _ => return None,
         })
     }
@@ -163,6 +167,7 @@ impl Tool {
                 | Tool::BoardShape
                 | Tool::Stamp
                 | Tool::Table
+                | Tool::Code
         )
     }
 

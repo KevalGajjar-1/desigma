@@ -339,6 +339,7 @@ pub(crate) fn type_name(k: &NodeKind) -> Option<&'static str> {
         NodeKind::BoardSection(_) => Some("SECTION"),
         NodeKind::Table(_) => Some("TABLE"),
         NodeKind::TableCell(_) => Some("TABLE_CELL"),
+        NodeKind::CodeBlock(_) => Some("CODE_BLOCK"),
         _ => None,
     }
 }
@@ -388,6 +389,10 @@ pub(crate) fn export_fields(node: &Node, origin: Vec2, m: &mut Map<String, Value
         NodeKind::TableCell(c) => {
             m.insert("fills".into(), paints(&c.fill.map(Paint::solid).into_iter().collect::<Vec<_>>()));
             text_fields(m, &c.text);
+        }
+        NodeKind::CodeBlock(c) => {
+            m.insert("code".into(), c.text.content.clone().into());
+            m.insert("codeLanguage".into(), c.lang.label().into());
         }
         NodeKind::Connector(c) => {
             let end = |e: &ConnectorEnd| {
