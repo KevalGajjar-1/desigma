@@ -23,6 +23,7 @@ mod shadow_tests;
 mod text;
 mod tiles;
 pub mod vectorops;
+mod washi;
 
 use desigma_doc::{resolve_node, Document, Effect, Node, NodeId, NodeKind, Vec2};
 use geom::{node_shape, to_sk_transform, transformed_bounds, Shape};
@@ -615,6 +616,11 @@ impl Renderer<'_> {
     fn draw_strokes(&self, n: &Node, sh: &Shape, ts: sk::Transform, target: &mut sk::Pixmap, clip: Option<&sk::Mask>, alpha: f32) {
         let paints = self.visible_strokes(n);
         if paints.is_empty() {
+            return;
+        }
+        // washi tape is a patterned strip, not a line
+        if let Some(desigma_doc::Brush::Washi(pattern)) = n.brush {
+            washi::draw(n, pattern, &sh.paths, ts, target, clip, alpha);
             return;
         }
         // precomputed outline: already expanded by weight and alignment

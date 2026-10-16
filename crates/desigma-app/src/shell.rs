@@ -375,6 +375,8 @@ impl Shell {
             return;
         }
         match key {
+            // Shift+Backspace picks the eraser on a board
+            Key::Backspace if m.shift && app.is_board() => app.set_tool(Tool::Eraser),
             Key::Delete | Key::Backspace => menus::run(app, ctx, Action::Delete),
             // an open comment draft or thread takes the Escape itself (egui drops text focus on Escape,
             // so the shortcut handler cannot tell that the key was meant for the text box)

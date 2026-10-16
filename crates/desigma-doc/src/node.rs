@@ -60,6 +60,10 @@ pub struct Node {
     /// Presentation metadata; ordinary design nodes omit this field.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub slide: Option<SlideProps>,
+    /// How a board drawing stroke (marker, highlighter, washi tape) is drawn; `None` for
+    /// everything else.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub brush: Option<Brush>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -174,6 +178,7 @@ impl Node {
             export_settings: Vec::new(),
             dev: DevInfo::default(),
             slide: None,
+            brush: None,
         }
     }
 

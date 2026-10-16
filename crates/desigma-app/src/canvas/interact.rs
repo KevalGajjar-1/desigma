@@ -305,6 +305,7 @@ fn on_press(app: &mut App, rect: ERect, inp: &Inp) {
         PressAction::Draw(tool) => start_draw(app, tool, page),
         PressAction::Build => builder::press(app, page, inp.mods.alt),
         PressAction::PenPoint => pen_press(app, rect, pos, page, inp.mods),
+        PressAction::Erase => crate::board::erase::press(app, page),
         PressAction::Connect => {
             let from = hit_under(app, page, true)
                 .filter(|id| app.doc.get(*id).is_some_and(|n| crate::board::connectable(&n.kind)))
@@ -483,10 +484,18 @@ fn on_drag(app: &mut App, ui: &Ui, rect: ERect, inp: &Inp) {
             app.changed();
         }
         Interaction::Pencil(pts) => {
-            if pts.last().map(|l| dist(*l, cur) * zoom > 1.5).unwrap_or(true) {
+            let brush = app.tool.is_brush();
+            if brush && (inp.mods.shift || app.tool == Tool::Washi) && !pts.is_empty() {
+                // Shift (and washi tape always) draws a straight line; Shift also snaps it to 45 degrees
+                let first = pts[0];
+                let end = if inp.mods.shift { create::snap_to_45(first, cur) } else { cur };
+                pts.truncate(1);
+                pts.push(end);
+            } else if pts.last().map(|l| dist(*l, cur) * zoom > 1.5).unwrap_or(true) {
                 pts.push(cur);
             }
         }
+        Interaction::Erase(e) => crate::board::erase::drag(app, e, cur),
         Interaction::VectorDrag => vector::drag(app, cur, inp.mods),
         Interaction::Builder => builder::drag(app, cur),
         Interaction::PenDrag => {
@@ -724,15 +733,16 @@ fn on_release(app: &mut App, rect: ERect, inp: &Inp) {
         }
         Interaction::Pencil(pts) => {
             // the stroke is smoothed into a few bezier anchors; ending on its start closes the shape
-            let (dec, closed) = create::smooth_stroke(&pts, app.view.zoom);
+            let straight = app.tool.is_brush() && pts.len() == 2;
+            let (dec, closed) = if straight { (pts.iter().map(|p| PenPoint::new(*p)).collect(), false) } else { create::smooth_stroke(&pts, app.view.zoom) };
             let brush = app.tool.is_brush().then_some(app.tool);
             let mut tx = Tx::new();
             if let Some(id) = create::commit_pen(app, &mut tx, &dec, closed && brush.is_none()) {
                 if let Some(tool) = brush {
                     // marker and highlighter strokes stay open, thick and round
-                    let ink = app.board.ink;
+                    let (ink, size, pattern) = (app.board.ink, app.board.size, app.board.pattern);
                     if let Some(n) = tx.ed.node(&mut app.doc, id) {
-                        crate::board::create::brush_style(n, tool, ink);
+                        crate::board::create::brush_style(n, tool, ink, size, pattern);
                     }
                 }
                 app.run_tx(tx);
@@ -742,6 +752,7 @@ fn on_release(app: &mut App, rect: ERect, inp: &Inp) {
                 }
             }
         }
+        Interaction::Erase(e) => crate::board::erase::release(app, e),
         Interaction::VectorDrag => vector::release(app),
         Interaction::Builder => builder::release(app),
         Interaction::PenDrag | Interaction::Pan | Interaction::Marquee { .. } | Interaction::None => {}
@@ -1079,7 +1090,9 @@ fn update_hover_and_cursor(app: &mut App, rect: ERect, inp: &Inp, hovered: bool)
             Interaction::Pan => egui::CursorIcon::Grabbing,
             Interaction::Resize(r) => r.handle.cursor(),
             Interaction::Rotate(_) => egui::CursorIcon::Alias,
-            Interaction::Draw(_) | Interaction::Pencil(_) | Interaction::PenDrag | Interaction::Connect(_) => egui::CursorIcon::Crosshair,
+            Interaction::Draw(_) | Interaction::Pencil(_) | Interaction::Erase(_) | Interaction::PenDrag | Interaction::Connect(_) => {
+                egui::CursorIcon::Crosshair
+            }
             Interaction::Guide(g) => {
                 if g.axis == snap::GuideAxis::X {
                     egui::CursorIcon::ResizeHorizontal

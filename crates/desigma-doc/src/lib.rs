@@ -5,6 +5,7 @@
 //! Coordinates are in Figma units (1 unit = 1 CSS px at 100% zoom), y down.
 
 mod board;
+mod brush;
 mod comments;
 mod components;
 mod dev;
@@ -25,6 +26,7 @@ pub mod vector;
 mod vector_fit;
 
 pub use board::*;
+pub use brush::*;
 pub use comments::*;
 pub use components::*;
 pub use dev::*;

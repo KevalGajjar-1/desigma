@@ -936,6 +936,7 @@ mod comments;
 mod components;
 mod decks;
 mod dev;
+mod drawing;
 mod find;
 mod history;
 mod home;

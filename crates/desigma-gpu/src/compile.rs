@@ -418,6 +418,11 @@ impl Ctx<'_> {
             }
             return;
         }
+        // washi tape is drawn by the CPU renderer
+        if matches!(n.brush, Some(desigma_doc::Brush::Washi(_))) && !self.has_bg_blur(n) {
+            self.fallback(n, ts, clip);
+            return;
+        }
         if let Some(f) = &self.opts.force_fallback {
             if f(n) && !self.has_bg_blur(n) {
                 self.fallback(n, ts, clip);

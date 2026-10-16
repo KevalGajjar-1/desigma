@@ -62,6 +62,8 @@ fn hit_in(doc: &Document, parent: NodeId, parent_world: Affine, p: Vec2, tol: f3
         let inside = match &n.kind {
             // a connector is its line, not its bounding box
             NodeKind::Connector(_) => parent_world.invert().is_some_and(|pi| connector_hit(doc, cid, pi.apply(p), tol)),
+            // a drawn stroke is its ink, not its bounding box
+            NodeKind::Vector { .. } if n.brush.is_some() => n.brush_distance(local).is_some_and(|d| d <= tol),
             k => local_hit(k, n.size, local, tol),
         };
         if n.kind.is_container() {
