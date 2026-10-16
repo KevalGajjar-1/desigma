@@ -53,6 +53,8 @@ pub enum Icon {
     Connector,
     Marker,
     Highlighter,
+    Washi,
+    Eraser,
     Stamp,
     Table,
     // layer kinds
@@ -175,6 +177,8 @@ impl Icon {
         Icon::Connector,
         Icon::Marker,
         Icon::Highlighter,
+        Icon::Washi,
+        Icon::Eraser,
         Icon::Stamp,
         Icon::Table,
         Icon::Group,
@@ -284,6 +288,8 @@ impl Icon {
             Icon::Connector => "corner-down-right",
             Icon::Marker => "pencil-line",
             Icon::Highlighter => "highlighter",
+            Icon::Washi => "ribbon",
+            Icon::Eraser => "eraser",
             Icon::Stamp => "stamp",
             Icon::Table => "table",
             Icon::Group => "group",
@@ -451,6 +457,8 @@ lucide!(
     "sliders-horizontal",
     "square-dashed-bottom",
     "waves",
+    "eraser",
+    "ribbon",
 );
 
 /// SVG source of the Lucide icon behind `icon`.
@@ -558,7 +566,7 @@ mod tests {
         for i in Icon::ALL {
             assert!(seen.insert(*i), "{i:?} listed twice");
         }
-        assert_eq!(seen.len(), 104);
+        assert_eq!(seen.len(), 105);
     }
 
     #[test]

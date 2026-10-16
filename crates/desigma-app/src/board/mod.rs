@@ -8,6 +8,7 @@ pub mod canvas;
 pub mod connect;
 pub mod create;
 pub mod demo;
+pub mod erase;
 pub mod preview;
 pub mod section;
 pub mod table;
@@ -46,8 +47,12 @@ pub struct BoardState {
     pub stamp: String,
     /// Marker and connector ink.
     pub ink: Color,
-    /// Marker or highlighter: the brush the toolbar button shows.
+    /// Marker, highlighter, washi tape or eraser: the brush the toolbar button shows.
     pub brush: crate::canvas::tools::Tool,
+    /// Thickness of the next stroke: an index into `desigma_doc::BRUSH_SIZES`.
+    pub size: usize,
+    /// Pattern of the next washi tape.
+    pub pattern: desigma_doc::WashiPattern,
     /// Open toolbar popover and the button it hangs off.
     pub tool_menu: Option<(ToolMenu, egui::Rect)>,
     /// Open contextual toolbar popover and its anchor.
@@ -74,6 +79,8 @@ impl Default for BoardState {
             stamp: "thumbs_up".into(),
             ink: color_of(crate::theme::BOARD_INK[0]),
             brush: crate::canvas::tools::Tool::Marker,
+            size: 1,
+            pattern: Default::default(),
             tool_menu: None,
             bar_menu: None,
             dots: None,

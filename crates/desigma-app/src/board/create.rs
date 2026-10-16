@@ -83,17 +83,47 @@ pub fn types_into(tool: Tool) -> bool {
     matches!(tool, Tool::Sticky | Tool::BoardShape)
 }
 
-/// Styles a freshly drawn marker or highlighter stroke.
-pub fn brush_style(n: &mut Node, tool: Tool, ink: Color) {
-    let (weight, alpha) =
-        if tool == Tool::Highlighter { (theme::BOARD_HIGHLIGHTER_WIDTH, theme::BOARD_HIGHLIGHTER_ALPHA) } else { (theme::BOARD_MARKER_WIDTH, 1.0) };
-    n.stroke.paints = vec![Paint::solid(ink.with_alpha(alpha))];
-    n.stroke.weight = weight;
-    n.stroke.cap = StrokeCap::Round;
+/// Base width of a brush's stroke (thickness 1.0).
+pub fn brush_base_width(tool: Tool) -> f32 {
+    match tool {
+        Tool::Highlighter => theme::BOARD_HIGHLIGHTER_WIDTH,
+        Tool::Washi => theme::BOARD_WASHI_WIDTH,
+        _ => theme::BOARD_MARKER_WIDTH,
+    }
+}
+
+/// Stroke width of `tool` at thickness choice `size` (an index into [`BRUSH_SIZES`]).
+pub fn brush_width(tool: Tool, size: usize) -> f32 {
+    brush_base_width(tool) * BRUSH_SIZES[size.min(BRUSH_SIZES.len() - 1)]
+}
+
+/// Opacity of the ink of `tool`.
+pub fn brush_alpha(tool: Tool) -> f32 {
+    match tool {
+        Tool::Highlighter => theme::BOARD_HIGHLIGHTER_ALPHA,
+        Tool::Washi => theme::BOARD_WASHI_ALPHA,
+        _ => 1.0,
+    }
+}
+
+/// Styles a freshly drawn marker, highlighter or washi tape stroke. `size` picks the thickness
+/// from [`BRUSH_SIZES`]; `pattern` is only used by washi tape.
+pub fn brush_style(n: &mut Node, tool: Tool, ink: Color, size: usize, pattern: WashiPattern) {
+    n.stroke.paints = vec![Paint::solid(ink.with_alpha(brush_alpha(tool)))];
+    n.stroke.weight = brush_width(tool, size);
+    n.stroke.cap = if tool == Tool::Washi { StrokeCap::None } else { StrokeCap::Round };
     n.stroke.join = StrokeJoin::Round;
     n.stroke.align = StrokeAlign::Center;
     n.fills.clear();
-    n.name = if tool == Tool::Highlighter { "Highlighter".into() } else { "Marker".into() };
+    let (brush, name) = match tool {
+        Tool::Highlighter => (Brush::Highlighter, "Highlighter"),
+        Tool::Washi => (Brush::Washi(pattern), "Washi tape"),
+        _ => (Brush::Marker, "Marker"),
+    };
+    n.brush = Some(brush);
+    // the highlighter darkens what it covers, like ink over print
+    n.blend = if tool == Tool::Highlighter { BlendMode::Multiply } else { BlendMode::PassThrough };
+    n.name = name.into();
 }
 
 /// Creates the sticky note to the right of the selected (or edited) one, same colour, and starts

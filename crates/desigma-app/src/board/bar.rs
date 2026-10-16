@@ -5,6 +5,7 @@
 use super::toolbar::swatch;
 use super::{color_of, rgb_of, BarMenu};
 use crate::app::App;
+use crate::canvas::tools::Tool;
 use crate::canvas::Interaction;
 use crate::icons::{self, Icon};
 use crate::layout;
@@ -31,6 +32,10 @@ pub struct Caps {
     pub section: bool,
     /// Every selected node is a table (cell fill, add and remove rows and columns).
     pub table: bool,
+    /// Every selected node is a drawn stroke (thickness).
+    pub stroke: bool,
+    /// Every selected node is washi tape (pattern).
+    pub washi: bool,
 }
 
 /// Which controls apply to the nodes `ids`.
@@ -55,6 +60,9 @@ pub fn caps_of(doc: &Document, ids: &[NodeId]) -> Caps {
     c.author = kinds.iter().all(|k| matches!(k, NodeKind::Sticky(_)));
     c.section = kinds.iter().all(|k| matches!(k, NodeKind::BoardSection(_)));
     c.table = kinds.iter().all(|k| matches!(k, NodeKind::Table(_)));
+    let brushes: Vec<Option<Brush>> = ids.iter().filter_map(|i| doc.get(*i)).map(|n| n.brush).collect();
+    c.stroke = brushes.iter().all(|b| b.is_some());
+    c.washi = c.stroke && brushes.iter().all(|b| matches!(b, Some(Brush::Washi(_))));
     // a mixed selection keeps to the controls every node has
     if c.fill && c.ink {
         c.ink = false;
@@ -99,7 +107,9 @@ pub fn current_color(n: &Node) -> Option<u32> {
 
 /// Swatch palette for the selection.
 fn palette(caps: Caps) -> Vec<u32> {
-    if caps.ink {
+    if caps.stroke {
+        theme::BOARD_DRAW_INK.to_vec()
+    } else if caps.ink {
         theme::BOARD_INK.to_vec()
     } else {
         let mut v = theme::BOARD_PALETTE.to_vec();
@@ -108,6 +118,27 @@ fn palette(caps: Caps) -> Vec<u32> {
         }
         v
     }
+}
+
+/// The drawing tool that lays down `brush`.
+pub fn brush_tool(brush: Brush) -> Tool {
+    match brush {
+        Brush::Marker => Tool::Marker,
+        Brush::Highlighter => Tool::Highlighter,
+        Brush::Washi(_) => Tool::Washi,
+    }
+}
+
+/// Gives the stroke `n` the thickness choice `size` of its brush.
+pub fn set_thickness(n: &mut Node, size: usize) {
+    if let Some(b) = n.brush {
+        n.stroke.weight = super::create::brush_width(brush_tool(b), size);
+    }
+}
+
+/// Which thickness choice `n` has.
+pub fn thickness_of(n: &Node) -> Option<usize> {
+    n.brush.map(|b| brush_size_index(n.stroke.weight, super::create::brush_base_width(brush_tool(b))))
 }
 
 /// Next size above or below `cur` in [`SIZES`].
@@ -216,7 +247,7 @@ pub fn show(app: &mut App, ui: &mut Ui, canvas: ERect) {
     }
     let ids = app.top_selection();
     let caps = caps_of(&app.doc, &ids);
-    if !(caps.fill || caps.ink || caps.shape || caps.line || caps.text || caps.author || caps.section || caps.table) {
+    if !(caps.fill || caps.ink || caps.shape || caps.line || caps.text || caps.author || caps.section || caps.table || caps.stroke) {
         return;
     }
     let Some(sel) = app.selection_bounds() else { return };
@@ -283,6 +314,12 @@ pub fn show(app: &mut App, ui: &mut Ui, canvas: ERect) {
     if caps.table {
         add(table_palette().len() as f32 * SW, &mut width, &mut groups);
         add(TABLE_BTNS.len() as f32 * TBTN, &mut width, &mut groups);
+    }
+    if caps.stroke {
+        add(BRUSH_SIZES.len() as f32 * BTN, &mut width, &mut groups);
+    }
+    if caps.washi {
+        add(WashiPattern::ALL.len() as f32 * BTN, &mut width, &mut groups);
     }
     let bar = place(canvas, sel_screen, width);
 
@@ -529,6 +566,47 @@ pub fn show(app: &mut App, ui: &mut Ui, canvas: ERect) {
         }
     }
 
+    // thickness of drawn strokes
+    if caps.stroke {
+        divider(&mut x, &p);
+        let cur = first.as_ref().and_then(thickness_of);
+        for (i, k) in BRUSH_SIZES.iter().enumerate() {
+            let r = ERect::from_min_size(Pos2::new(x, cy - BTN / 2.0), EV::splat(BTN));
+            let resp = ui.interact(r, ui.id().with(("board-thickness", i)), Sense::click());
+            let sel = cur == Some(i);
+            widgets::button_bg(&p, r, &resp, sel, theme::cr(theme::RADIUS_MEDIUM));
+            p.circle_filled(r.center(), 2.0 + 3.0 * k, if sel { theme::ICON_SELECTED } else { theme::ICON });
+            widgets::record(ui, &format!("board-thickness-{i}"), r);
+            if resp.on_hover_text(["Thin", "Medium", "Thick"][i]).clicked() {
+                app.board.size = i;
+                edit(app, &ids, |n| set_thickness(n, i));
+            }
+            x += BTN;
+        }
+    }
+
+    // pattern of washi tape
+    if caps.washi {
+        divider(&mut x, &p);
+        let cur = match first.as_ref().and_then(|n| n.brush) {
+            Some(Brush::Washi(pat)) => Some(pat),
+            _ => None,
+        };
+        let base = first.as_ref().and_then(current_color).map(|c| super::color32(color_of(c))).unwrap_or(Color32::GRAY);
+        for pat in WashiPattern::ALL {
+            let r = ERect::from_min_size(Pos2::new(x, cy - BTN / 2.0), EV::splat(BTN));
+            let resp = ui.interact(r, ui.id().with(("board-washi", pat.label())), Sense::click());
+            widgets::button_bg(&p, r, &resp, cur == Some(pat), theme::cr(theme::RADIUS_MEDIUM));
+            super::toolbar::pattern_glyph(&p, ERect::from_center_size(r.center(), EV::new(BTN - 8.0, 16.0)), pat, base);
+            widgets::record(ui, &format!("board-washi-{pat:?}"), r);
+            if resp.on_hover_text(pat.label()).clicked() {
+                app.board.pattern = pat;
+                edit(app, &ids, |n| n.brush = Some(Brush::Washi(pat)));
+            }
+            x += BTN;
+        }
+    }
+
     popup(app, ui, &ids);
 }
 
@@ -699,11 +777,11 @@ mod tests {
             Node::connector(NodeId(0), ConnectorProps::default()),
         ]);
         let sticky = caps_of(&d, &ids[..1]);
-        assert_eq!(sticky, Caps { fill: true, ink: false, shape: false, line: false, text: true, author: true, section: false, table: false });
+        assert_eq!(sticky, Caps { fill: true, ink: false, shape: false, line: false, text: true, author: true, section: false, table: false, stroke: false, washi: false });
         let shape = caps_of(&d, &ids[1..2]);
         assert!(shape.fill && shape.shape && shape.text && !shape.line);
         let conn = caps_of(&d, &ids[2..]);
-        assert_eq!(conn, Caps { fill: false, ink: true, shape: false, line: true, text: false, author: false, section: false, table: false });
+        assert_eq!(conn, Caps { fill: false, ink: true, shape: false, line: true, text: false, author: false, section: false, table: false, stroke: false, washi: false });
         let mixed = caps_of(&d, &ids[..2]);
         assert!(mixed.fill && !mixed.shape && mixed.text);
     }

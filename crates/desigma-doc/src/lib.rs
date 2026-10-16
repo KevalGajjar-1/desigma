@@ -6,6 +6,7 @@
 
 mod board;
 mod board_blocks;
+mod brush;
 mod comments;
 mod components;
 mod dev;
@@ -27,6 +28,7 @@ mod vector_fit;
 
 pub use board::*;
 pub use board_blocks::*;
+pub use brush::*;
 pub use comments::*;
 pub use components::*;
 pub use dev::*;

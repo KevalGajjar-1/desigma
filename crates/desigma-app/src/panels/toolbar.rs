@@ -34,6 +34,8 @@ pub fn tool_icon(t: Tool) -> Icon {
         Tool::Table => Icon::Table,
         Tool::Marker => Icon::Marker,
         Tool::Highlighter => Icon::Highlighter,
+        Tool::Washi => Icon::Washi,
+        Tool::Eraser => Icon::Eraser,
     }
 }
 
