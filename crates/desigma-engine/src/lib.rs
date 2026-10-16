@@ -4,6 +4,7 @@ pub mod connect;
 pub mod edit;
 pub mod layout;
 mod resize;
+pub mod table;
 pub mod textmeasure;
 mod util;
 pub mod variables;

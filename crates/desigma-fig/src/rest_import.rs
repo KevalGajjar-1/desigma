@@ -327,6 +327,8 @@ struct Ctx {
     /// `.fig` instance overrides / derived data, keyed by instance.
     overrides: BTreeMap<NodeId, Overrides>,
     next_clone: u64,
+    /// The file is a FigJam board: `SECTION` is a board section.
+    figjam: bool,
     /// `.fig` override keys (`_overrideKey`): the id override paths use for a
     /// node. Clones inherit the key of the node they copy.
     override_keys: BTreeMap<NodeId, String>,
@@ -438,6 +440,7 @@ pub(crate) fn import_rest_value(v: &Value, expand_instances: bool) -> Result<Doc
         component_keys: BTreeMap::new(),
         overrides: BTreeMap::new(),
         next_clone: 0,
+        figjam: crate::board::is_figjam(v),
         override_keys: BTreeMap::new(),
         scales: BTreeMap::new(),
         library_keys: BTreeMap::new(),
@@ -581,8 +584,15 @@ impl Ctx {
         }
         if container {
             let info = ParentInfo { origin, layout: my_layout };
-            for c in farr(v, "children") {
-                self.import_node(c, id, info, depth + 1);
+            if fstr(v, "type") == Some("TABLE") {
+                for c in crate::board::table_children(v) {
+                    self.import_node(c, id, info, depth + 1);
+                }
+                crate::board::finish_table(&mut self.doc, id);
+            } else {
+                for c in farr(v, "children") {
+                    self.import_node(c, id, info, depth + 1);
+                }
             }
         }
     }
@@ -596,8 +606,8 @@ impl Ctx {
         let kind = match ty {
             "FRAME" => NodeKind::Frame(frame()),
             "GROUP" => NodeKind::Group,
-            "SECTION" => NodeKind::Section,
-            "STICKY" | "SHAPE_WITH_TEXT" | "STAMP" | "CONNECTOR" => {
+            "SECTION" if !self.figjam => NodeKind::Section,
+            "SECTION" | "STICKY" | "SHAPE_WITH_TEXT" | "STAMP" | "CONNECTOR" | "TABLE" | "TABLE_CELL" => {
                 crate::board::kind_from_json(ty, v, pinfo.origin).unwrap_or(NodeKind::Unknown { type_name: ty.to_string() })
             }
             "COMPONENT" => NodeKind::Component(frame()),

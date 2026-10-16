@@ -27,6 +27,10 @@ pub struct Caps {
     pub text: bool,
     /// Every selected node is a sticky note (the author line toggle).
     pub author: bool,
+    /// Every selected node is a section (colour, rename, hide contents).
+    pub section: bool,
+    /// Every selected node is a table (cell fill, add and remove rows and columns).
+    pub table: bool,
 }
 
 /// Which controls apply to the nodes `ids`.
@@ -49,6 +53,8 @@ pub fn caps_of(doc: &Document, ids: &[NodeId]) -> Caps {
     c.shape = kinds.iter().all(|k| matches!(k, NodeKind::ShapeWithText(_)));
     c.line = kinds.iter().all(|k| matches!(k, NodeKind::Connector(_)));
     c.author = kinds.iter().all(|k| matches!(k, NodeKind::Sticky(_)));
+    c.section = kinds.iter().all(|k| matches!(k, NodeKind::BoardSection(_)));
+    c.table = kinds.iter().all(|k| matches!(k, NodeKind::Table(_)));
     // a mixed selection keeps to the controls every node has
     if c.fill && c.ink {
         c.ink = false;
@@ -210,14 +216,20 @@ pub fn show(app: &mut App, ui: &mut Ui, canvas: ERect) {
     }
     let ids = app.top_selection();
     let caps = caps_of(&app.doc, &ids);
-    if !(caps.fill || caps.ink || caps.shape || caps.line || caps.text || caps.author) {
+    if !(caps.fill || caps.ink || caps.shape || caps.line || caps.text || caps.author || caps.section || caps.table) {
         return;
     }
     let Some(sel) = app.selection_bounds() else { return };
     let (a, b) = (app.view.to_screen(canvas.min, v2(sel.x, sel.y)), app.view.to_screen(canvas.min, v2(sel.x + sel.w, sel.y + sel.h)));
-    let sel_screen = ERect::from_two_pos(a, b);
+    let mut sel_screen = ERect::from_two_pos(a, b);
     if !sel_screen.intersects(canvas) {
         return;
+    }
+    // the bar clears what sticks out above the selection: a section's title pill, a table's + buttons
+    if caps.section {
+        sel_screen.min.y -= SECTION_TITLE_REACH * app.view.zoom;
+    } else if caps.table {
+        sel_screen.min.y -= super::table::PLUS_OFFSET + super::table::PLUS_RADIUS + 4.0;
     }
 
     let colors = if caps.fill || caps.ink { palette(caps) } else { vec![] };
@@ -235,6 +247,7 @@ pub fn show(app: &mut App, ui: &mut Ui, canvas: ERect) {
 
     // ---- layout: items left to right, widths first so the bar can be centred
     const SW: f32 = 24.0;
+    const TBTN: f32 = 62.0;
     const BTN: f32 = theme::BOARD_BAR_BTN;
     let sep = theme::BOARD_BAR_SEP;
     let mut width = theme::BOARD_BAR_PAD * 2.0;
@@ -262,6 +275,14 @@ pub fn show(app: &mut App, ui: &mut Ui, canvas: ERect) {
     }
     if caps.author {
         add(BTN, &mut width, &mut groups);
+    }
+    if caps.section {
+        add(BTN + 12.0, &mut width, &mut groups);
+        add(2.0 * BTN, &mut width, &mut groups);
+    }
+    if caps.table {
+        add(table_palette().len() as f32 * SW, &mut width, &mut groups);
+        add(TABLE_BTNS.len() as f32 * TBTN, &mut width, &mut groups);
     }
     let bar = place(canvas, sel_screen, width);
 
@@ -428,8 +449,103 @@ pub fn show(app: &mut App, ui: &mut Ui, canvas: ERect) {
         }
     }
 
+    // section: colour, rename, hide or show what is inside
+    if caps.section {
+        let cur = match first.as_ref().map(|n| &n.kind) {
+            Some(NodeKind::BoardSection(s)) => s.clone(),
+            _ => SectionProps::default(),
+        };
+        divider(&mut x, &p);
+        let r = ERect::from_min_size(Pos2::new(x, cy - BTN / 2.0), EV::new(BTN + 12.0, BTN));
+        let open = matches!(app.board.bar_menu, Some((BarMenu::SectionColor, _)));
+        let resp = ui.interact(r, ui.id().with("board-section-color-btn"), Sense::click());
+        widgets::button_bg(&p, r, &resp, open, theme::cr(theme::RADIUS_MEDIUM));
+        let dot = Pos2::new(r.left() + 14.0, cy);
+        p.circle_filled(dot, theme::BOARD_SWATCH / 2.0, super::color32(cur.color.color()));
+        p.circle_stroke(dot, theme::BOARD_SWATCH / 2.0 - 0.5, Stroke::new(1.0, theme::BORDER_TRANSLUCENT));
+        icons::paint(&p, Icon::ChevronDown, Pos2::new(r.right() - 8.0, cy), theme::CHEVRON_SMALL, theme::ICON_SECONDARY);
+        widgets::record(ui, "board-section-color", r);
+        if resp.on_hover_text("Section color").clicked() {
+            app.board.bar_menu = if open { None } else { Some((BarMenu::SectionColor, r)) };
+        }
+        x += r.width();
+        divider(&mut x, &p);
+        let r = ERect::from_min_size(Pos2::new(x, cy - BTN / 2.0), EV::splat(BTN));
+        let resp = ui.interact(r, ui.id().with("board-section-rename-btn"), Sense::click());
+        widgets::button_bg(&p, r, &resp, app.board.rename.is_some(), theme::cr(theme::RADIUS_MEDIUM));
+        widgets::paint_icon_in(&p, r, Icon::Pencil, 16.0, theme::ICON);
+        widgets::record(ui, "board-section-rename-btn", r);
+        if resp.on_hover_text("Rename").clicked() {
+            super::section::begin_rename(app, ids[0]);
+        }
+        x += BTN;
+        let r = ERect::from_min_size(Pos2::new(x, cy - BTN / 2.0), EV::splat(BTN));
+        let resp = ui.interact(r, ui.id().with("board-section-hide-btn"), Sense::click());
+        widgets::button_bg(&p, r, &resp, cur.contents_hidden, theme::cr(theme::RADIUS_MEDIUM));
+        widgets::paint_icon_in(
+            &p,
+            r,
+            if cur.contents_hidden { Icon::EyeOff } else { Icon::Eye },
+            16.0,
+            if cur.contents_hidden { theme::ICON_SELECTED } else { theme::ICON },
+        );
+        widgets::record(ui, "board-section-hide", r);
+        if resp.on_hover_text(if cur.contents_hidden { "Show contents" } else { "Hide contents" }).clicked() {
+            super::section::set_contents_hidden(app, &ids, !cur.contents_hidden);
+        }
+        x += BTN;
+    }
+
+    // table: cell fill, rows and columns
+    if caps.table {
+        let table = ids[0];
+        let cur = super::table::current_fill(app, table).map(rgb_of).unwrap_or(0xFFFFFF);
+        divider(&mut x, &p);
+        for (i, c) in table_palette().iter().enumerate() {
+            let r = ERect::from_min_size(Pos2::new(x, cy - SW / 2.0), EV::splat(SW));
+            let resp = ui.interact(r, ui.id().with(("board-table-swatch", i)), Sense::click());
+            swatch(&p, r.center(), *c, cur == *c, resp.hovered());
+            widgets::record(ui, &format!("board-table-fill-{i}"), r);
+            if resp.on_hover_text(if *c == 0xFFFFFF { "No fill" } else { "Cell fill" }).clicked() {
+                super::table::set_fill(app, table, (*c != 0xFFFFFF).then(|| color_of(*c)));
+            }
+            x += SW;
+        }
+        divider(&mut x, &p);
+        for (key, label, axis, add) in TABLE_BTNS {
+            let r = ERect::from_min_size(Pos2::new(x, cy - BTN / 2.0), EV::new(TBTN, BTN));
+            let resp = ui.interact(r, ui.id().with(key), Sense::click());
+            widgets::button_bg(&p, r, &resp, false, theme::cr(theme::RADIUS_MEDIUM));
+            p.text(r.center(), Align2::CENTER_CENTER, label, theme::font_body(), theme::TEXT);
+            widgets::record(ui, key, r);
+            if resp.clicked() {
+                if add {
+                    super::table::add(app, table, axis);
+                } else {
+                    super::table::remove(app, table, axis);
+                }
+            }
+            x += TBTN;
+        }
+    }
+
     popup(app, ui, &ids);
 }
+
+/// Fill swatches of a table cell: the board palette, and white (no fill).
+pub fn table_palette() -> Vec<u32> {
+    let mut v = theme::BOARD_PALETTE.to_vec();
+    v.push(0xFFFFFF);
+    v
+}
+
+/// The table buttons of the bar: record key, label, axis and whether it adds.
+const TABLE_BTNS: [(&str, &str, super::table::Axis, bool); 4] = [
+    ("board-table-add-row", "+ Row", super::table::Axis::Row, true),
+    ("board-table-remove-row", "- Row", super::table::Axis::Row, false),
+    ("board-table-add-col", "+ Column", super::table::Axis::Col, true),
+    ("board-table-remove-col", "- Column", super::table::Axis::Col, false),
+];
 
 /// The shape grid or cap list hanging off the bar.
 fn popup(app: &mut App, ui: &mut Ui, ids: &[NodeId]) {
@@ -439,6 +555,7 @@ fn popup(app: &mut App, ui: &mut Ui, ids: &[NodeId]) {
     let (size, rows_cols) = match menu {
         BarMenu::Shape => (EV::new(5.0 * 40.0 + pad * 2.0, 2.0 * 40.0 + pad * 2.0), (2, 5)),
         BarMenu::StartCap | BarMenu::EndCap => (EV::new(5.0 * 36.0 + pad * 2.0, 36.0 + pad * 2.0), (1, 5)),
+        BarMenu::SectionColor => (EV::new(8.0 * 32.0 + pad * 2.0, 2.0 * 32.0 + pad * 2.0), (2, 8)),
     };
     let screen = ctx.content_rect();
     let above = anchor.top() - 8.0 - size.y;
@@ -473,6 +590,18 @@ fn popup(app: &mut App, ui: &mut Ui, ids: &[NodeId]) {
                     widgets::record(ui, &format!("board-bar-shape-{k:?}"), cell);
                     if resp.on_hover_text(k.label()).clicked() {
                         picked = Some(Pick::Shape(*k));
+                    }
+                }
+            }
+            BarMenu::SectionColor => {
+                let cur = ids.first().and_then(|i| app.doc.get(*i)).and_then(|n| if let NodeKind::BoardSection(s) = &n.kind { Some(s.color) } else { None });
+                for (i, c) in SectionColor::ALL.iter().enumerate() {
+                    let cell = ERect::from_min_size(inner.min + EV::new((i % 8) as f32 * 32.0, (i / 8) as f32 * 32.0), EV::splat(32.0));
+                    let resp = ui.interact(cell, ui.id().with(("board-bar-section-color", i)), Sense::click());
+                    swatch(&p, cell.center(), c.rgb(), cur == Some(*c), resp.hovered());
+                    widgets::record(ui, &format!("board-section-color-{i}"), cell);
+                    if resp.on_hover_text(c.label()).clicked() {
+                        picked = Some(Pick::Section(*c));
                     }
                 }
             }
@@ -517,6 +646,10 @@ fn popup(app: &mut App, ui: &mut Ui, ids: &[NodeId]) {
             app.board.shape = k;
             app.board.bar_menu = None;
         }
+        Some(Pick::Section(c)) => {
+            super::section::set_color(app, ids, c);
+            app.board.bar_menu = None;
+        }
         Some(Pick::Cap(start, cap)) => {
             edit(app, ids, |n| {
                 if let NodeKind::Connector(c) = &mut n.kind {
@@ -540,6 +673,7 @@ fn popup(app: &mut App, ui: &mut Ui, ids: &[NodeId]) {
 enum Pick {
     Shape(ShapeKind),
     Cap(bool, ConnectorCap),
+    Section(SectionColor),
 }
 
 #[cfg(test)]
@@ -565,11 +699,11 @@ mod tests {
             Node::connector(NodeId(0), ConnectorProps::default()),
         ]);
         let sticky = caps_of(&d, &ids[..1]);
-        assert_eq!(sticky, Caps { fill: true, ink: false, shape: false, line: false, text: true, author: true });
+        assert_eq!(sticky, Caps { fill: true, ink: false, shape: false, line: false, text: true, author: true, section: false, table: false });
         let shape = caps_of(&d, &ids[1..2]);
         assert!(shape.fill && shape.shape && shape.text && !shape.line);
         let conn = caps_of(&d, &ids[2..]);
-        assert_eq!(conn, Caps { fill: false, ink: true, shape: false, line: true, text: false, author: false });
+        assert_eq!(conn, Caps { fill: false, ink: true, shape: false, line: true, text: false, author: false, section: false, table: false });
         let mixed = caps_of(&d, &ids[..2]);
         assert!(mixed.fill && !mixed.shape && mixed.text);
     }

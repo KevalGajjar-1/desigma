@@ -54,6 +54,7 @@ pub enum Icon {
     Marker,
     Highlighter,
     Stamp,
+    Table,
     // layer kinds
     Group,
     Vector,
@@ -175,6 +176,7 @@ impl Icon {
         Icon::Marker,
         Icon::Highlighter,
         Icon::Stamp,
+        Icon::Table,
         Icon::Group,
         Icon::Vector,
         Icon::Component,
@@ -283,6 +285,7 @@ impl Icon {
             Icon::Marker => "pencil-line",
             Icon::Highlighter => "highlighter",
             Icon::Stamp => "stamp",
+            Icon::Table => "table",
             Icon::Group => "group",
             Icon::Vector => "spline",
             Icon::Component => "component",
@@ -399,6 +402,7 @@ lucide!(
     "pencil-line",
     "highlighter",
     "stamp",
+    "table",
     "group",
     "spline",
     "component",
@@ -554,7 +558,7 @@ mod tests {
         for i in Icon::ALL {
             assert!(seen.insert(*i), "{i:?} listed twice");
         }
-        assert_eq!(seen.len(), 103);
+        assert_eq!(seen.len(), 104);
     }
 
     #[test]

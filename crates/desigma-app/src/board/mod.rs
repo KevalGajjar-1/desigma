@@ -9,6 +9,8 @@ pub mod connect;
 pub mod create;
 pub mod demo;
 pub mod preview;
+pub mod section;
+pub mod table;
 pub mod toolbar;
 
 use crate::app::App;
@@ -20,6 +22,8 @@ pub enum ToolMenu {
     Brush,
     Shape,
     Stamp,
+    /// The "more" popover: tools that do not fit the bar (Table).
+    More,
 }
 
 /// Which popover of the contextual toolbar is open.
@@ -28,6 +32,8 @@ pub enum BarMenu {
     Shape,
     StartCap,
     EndCap,
+    /// The colour grid of a section.
+    SectionColor,
 }
 
 /// Editor state of board mode.
@@ -52,6 +58,12 @@ pub struct BoardState {
     pub target: Option<NodeId>,
     /// Rendered previews of shapes and stamps for the popovers.
     pub previews: preview::Previews,
+    /// Section whose title is being renamed in place, and the text typed so far.
+    pub rename: Option<(NodeId, String)>,
+    /// The table cell last edited or clicked: what the contextual bar's table controls act on.
+    pub cell: Option<NodeId>,
+    /// The table under the pointer (kept while the pointer reaches for its + buttons).
+    pub hover_table: Option<NodeId>,
 }
 
 impl Default for BoardState {
@@ -67,6 +79,9 @@ impl Default for BoardState {
             dots: None,
             target: None,
             previews: Default::default(),
+            rename: None,
+            cell: None,
+            hover_table: None,
         }
     }
 }

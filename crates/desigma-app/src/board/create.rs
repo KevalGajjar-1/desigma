@@ -60,6 +60,8 @@ pub fn click_rect(tool: Tool, at: Vec2) -> Rect {
     let (w, h) = match tool {
         Tool::Sticky => (STICKY_SIZE, STICKY_SIZE),
         Tool::Stamp => (theme::BOARD_STAMP_SIZE, theme::BOARD_STAMP_SIZE),
+        Tool::Table => (TABLE_DEFAULT_COLS as f32 * TABLE_COL_W, TABLE_DEFAULT_ROWS as f32 * TABLE_ROW_H),
+        Tool::Section => (SECTION_DEFAULT_SIZE.x, SECTION_DEFAULT_SIZE.y),
         _ => (theme::BOARD_SHAPE_W, theme::BOARD_SHAPE_H),
     };
     Rect::new((at.x - w / 2.0).round(), (at.y - h / 2.0).round(), w, h)
@@ -68,6 +70,12 @@ pub fn click_rect(tool: Tool, at: Vec2) -> Rect {
 /// Whether dragging out this tool keeps the box square.
 pub fn keeps_square(tool: Tool) -> bool {
     matches!(tool, Tool::Sticky | Tool::Stamp)
+}
+
+/// Whether a plain click with this tool places the item at its default size (rather than a small
+/// default box at the click, which is what the design tools do).
+pub fn click_places(tool: Tool, board: bool) -> bool {
+    types_into(tool) || matches!(tool, Tool::Stamp | Tool::Table) || (board && tool == Tool::Section)
 }
 
 /// Whether a click with this tool starts typing into the new item.

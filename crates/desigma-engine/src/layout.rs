@@ -216,6 +216,10 @@ pub fn layout_node(doc: &mut Document, ed: &mut Edit, id: NodeId) {
         fit_group(doc, ed, id);
         return;
     }
+    if matches!(doc.get(id).map(|n| &n.kind), Some(NodeKind::Table(_))) {
+        crate::table::sync_table(doc, ed, id);
+        return;
+    }
     // gap / padding bound to variables count with the value of the mode in effect
     let Some(al) = doc.get(id).map(|n| resolve_node(doc, n)).and_then(|n| n.kind.frame_props().and_then(|f| f.auto_layout)) else { return };
     let horiz = al.direction == LayoutDirection::Horizontal;
@@ -285,6 +289,9 @@ pub fn relayout_up(doc: &mut Document, ed: &mut Edit, start: NodeId) {
     crate::connect::reroute_touched(doc, ed);
     let mut cur = doc.get(start).and_then(|n| n.parent);
     while let Some(p) = cur {
+        if matches!(doc.get(p).map(|n| &n.kind), Some(NodeKind::Table(_))) {
+            crate::table::sync_table(doc, ed, p);
+        }
         let is_group = matches!(doc.get(p).map(|n| &n.kind), Some(NodeKind::Group));
         let is_al = doc.get(p).and_then(|n| n.kind.frame_props()).map(|f| f.auto_layout.is_some()).unwrap_or(false);
         if is_group {
@@ -305,7 +312,9 @@ pub fn relayout_around(doc: &mut Document, ed: &mut Edit, id: NodeId) {
 /// Applies children constraints when a (non auto-layout) frame is resized.
 pub fn apply_constraints(doc: &mut Document, ed: &mut Edit, frame: NodeId, old: Vec2, new: Vec2) {
     let Some(f) = doc.get(frame) else { return };
-    if f.kind.frame_props().map(|p| p.auto_layout.is_some()).unwrap_or(false) || matches!(f.kind, NodeKind::Group) {
+    if f.kind.frame_props().map(|p| p.auto_layout.is_some()).unwrap_or(false)
+        || matches!(f.kind, NodeKind::Group | NodeKind::BoardSection(_) | NodeKind::Table(_))
+    {
         return;
     }
     let dw = new.x - old.x;

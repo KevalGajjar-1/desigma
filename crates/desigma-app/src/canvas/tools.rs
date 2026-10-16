@@ -28,6 +28,7 @@ pub enum Tool {
     BoardShape,
     Connector,
     Stamp,
+    Table,
     Marker,
     Highlighter,
 }
@@ -57,6 +58,7 @@ impl Tool {
             Tool::BoardShape => "Shape",
             Tool::Connector => "Connector",
             Tool::Stamp => "Stamp",
+            Tool::Table => "Table",
             Tool::Marker => "Marker",
             Tool::Highlighter => "Highlighter",
         }
@@ -86,6 +88,7 @@ impl Tool {
             Tool::BoardShape => "R",
             Tool::Connector => "X",
             Tool::Stamp => "E",
+            Tool::Table => "Shift+T",
             Tool::Marker => "P",
             Tool::Highlighter => "Shift+P",
         }
@@ -115,7 +118,7 @@ impl Tool {
     }
 
     /// Shortcut keys of a board file (no modifiers except shift): V move, H hand, P marker,
-    /// Shift+P highlighter, S sticky note, R shape, X connector, T text, Shift+S section, E stamp.
+    /// Shift+P highlighter, S sticky note, R shape, X connector, T text, Shift+S section, Shift+T table, E stamp.
     pub fn from_key_board(key: egui::Key, shift: bool) -> Option<Tool> {
         use egui::Key::*;
         Some(match (key, shift) {
@@ -125,6 +128,7 @@ impl Tool {
             (P, true) => Tool::Highlighter,
             (S, false) => Tool::Sticky,
             (S, true) => Tool::Section,
+            (T, true) => Tool::Table,
             (R, false) => Tool::BoardShape,
             (X, false) => Tool::Connector,
             (T, false) => Tool::Text,
@@ -149,6 +153,7 @@ impl Tool {
                 | Tool::Sticky
                 | Tool::BoardShape
                 | Tool::Stamp
+                | Tool::Table
         )
     }
 

@@ -412,6 +412,10 @@ impl Shell {
                         || matches!(n.kind, desigma_doc::NodeKind::Sticky(_) | desigma_doc::NodeKind::ShapeWithText(_))
                     {
                         interact::begin_text_edit(app, id);
+                    } else if matches!(n.kind, desigma_doc::NodeKind::Table(_)) {
+                        crate::board::table::tab_selected(app, true);
+                    } else if matches!(n.kind, desigma_doc::NodeKind::BoardSection(_)) {
+                        crate::board::section::begin_rename(app, id);
                     } else if matches!(n.kind, desigma_doc::NodeKind::Connector(_)) {
                         crate::board::create::edit_label(app, id);
                     } else if canvas::vector::is_vector(app, id) {
@@ -425,8 +429,12 @@ impl Shell {
                 }
             }
             // board: Tab starts the next sticky note to the right of the selected one
-            Key::Tab if app.is_board() && !m.shift => {
-                crate::board::create::tab_next(app);
+            Key::Tab if app.is_board() => {
+                if m.shift {
+                    crate::board::table::tab_selected(app, false);
+                } else if !crate::board::create::tab_next(app) {
+                    crate::board::table::tab_selected(app, true);
+                }
             }
             Key::Backslash => menus::run(app, ctx, Action::SelectParent),
             Key::ArrowLeft | Key::ArrowRight | Key::ArrowUp | Key::ArrowDown => {
@@ -668,6 +676,7 @@ impl Shell {
             if board {
                 crate::board::toolbar::show(&mut self.app, ui, canvas_rect_for_toolbar(full));
                 crate::board::bar::show(&mut self.app, ui, canvas_rect);
+                crate::board::section::rename_ui(&mut self.app, ui, canvas_rect);
                 crate::board::canvas::zoom_pill(&mut self.app, ui, canvas_rect);
             } else {
                 right::show(&mut self.app, ui, right_rect);
