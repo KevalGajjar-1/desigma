@@ -1,5 +1,6 @@
 //! The bottom toolbar of a board: Move, Hand, Marker / Highlighter, Sticky, Shape, Connector, Text,
-//! Section and Stamp, with popovers for the brush, the shape and the stamp.
+//! Section and Stamp, and a "more" button for the rest (Table), with popovers for the brush, the shape,
+//! the stamp and the extra tools.
 
 use super::{color32, color_of, rgb_of, ToolMenu};
 use crate::app::App;
@@ -17,18 +18,21 @@ struct Slot {
     menu: Option<ToolMenu>,
     /// A divider before the slot.
     divider: bool,
+    /// The "more" button: it opens a popover of extra tools instead of picking its tool.
+    more: bool,
 }
 
-const SLOTS: [Slot; 9] = [
-    Slot { tools: &[Tool::Move], menu: None, divider: false },
-    Slot { tools: &[Tool::Hand], menu: None, divider: false },
-    Slot { tools: &[Tool::Marker, Tool::Highlighter], menu: Some(ToolMenu::Brush), divider: true },
-    Slot { tools: &[Tool::Sticky], menu: None, divider: false },
-    Slot { tools: &[Tool::BoardShape], menu: Some(ToolMenu::Shape), divider: false },
-    Slot { tools: &[Tool::Connector], menu: None, divider: false },
-    Slot { tools: &[Tool::Text], menu: None, divider: false },
-    Slot { tools: &[Tool::Section], menu: None, divider: false },
-    Slot { tools: &[Tool::Stamp], menu: Some(ToolMenu::Stamp), divider: false },
+const SLOTS: [Slot; 10] = [
+    Slot { tools: &[Tool::Move], menu: None, divider: false, more: false },
+    Slot { tools: &[Tool::Hand], menu: None, divider: false, more: false },
+    Slot { tools: &[Tool::Marker, Tool::Highlighter], menu: Some(ToolMenu::Brush), divider: true, more: false },
+    Slot { tools: &[Tool::Sticky], menu: None, divider: false, more: false },
+    Slot { tools: &[Tool::BoardShape], menu: Some(ToolMenu::Shape), divider: false, more: false },
+    Slot { tools: &[Tool::Connector], menu: None, divider: false, more: false },
+    Slot { tools: &[Tool::Text], menu: None, divider: false, more: false },
+    Slot { tools: &[Tool::Section], menu: None, divider: false, more: false },
+    Slot { tools: &[Tool::Stamp], menu: Some(ToolMenu::Stamp), divider: false, more: false },
+    Slot { tools: &[Tool::Table], menu: None, divider: false, more: true },
 ];
 
 const SLOT_GAP: f32 = 4.0;
@@ -109,12 +113,24 @@ pub fn show(app: &mut App, ui: &mut Ui, screen: Rect) {
         if fill != Color32::TRANSPARENT {
             p.rect_filled(br, theme::cr(theme::RADIUS_MEDIUM), fill);
         }
-        icons::paint(&p, tool_icon(tool), br.center(), theme::TOOL_ICON_SIZE, if selected { Color32::WHITE } else { theme::ICON });
+        let icon = if s.more && !selected { Icon::Plus } else { tool_icon(tool) };
+        icons::paint(&p, icon, br.center(), theme::TOOL_ICON_SIZE, if selected { Color32::WHITE } else { theme::ICON });
         if resp.clicked() {
-            app.board.tool_menu = None;
-            app.set_tool(tool);
+            if s.more {
+                let open = app.board.tool_menu.map(|m| m.0) == Some(ToolMenu::More);
+                app.board.tool_menu = if open { None } else { Some((ToolMenu::More, br)) };
+            } else {
+                app.board.tool_menu = None;
+                app.set_tool(tool);
+            }
         }
-        let tip = if tool.shortcut().is_empty() { tool.label().to_string() } else { format!("{}   {}", tool.label(), tool.shortcut()) };
+        let tip = if s.more {
+            "More".to_string()
+        } else if tool.shortcut().is_empty() {
+            tool.label().to_string()
+        } else {
+            format!("{}   {}", tool.label(), tool.shortcut())
+        };
         resp.on_hover_text(tip);
         widgets::record(ui, &format!("board-tool-{tool:?}"), br);
         x += theme::TOOL_BUTTON;
@@ -154,9 +170,11 @@ fn popup(app: &mut App, ui: &mut Ui) {
         ToolMenu::Brush => (4, 3),
         ToolMenu::Shape => (5, 2),
         ToolMenu::Stamp => (5, 1),
+        ToolMenu::More => (1, 1),
     };
     let size = match menu {
         ToolMenu::Brush => Vec2::new(8.0 * 26.0 + pad * 2.0, 2.0 * 32.0 + 34.0 + pad * 2.0),
+        ToolMenu::More => Vec2::new(200.0 + pad * 2.0, MORE_TOOLS.len() as f32 * 32.0 + pad * 2.0),
         _ => Vec2::new(cols as f32 * CELL + pad * 2.0, rows as f32 * CELL + pad * 2.0),
     };
     let screen = ctx.content_rect();
@@ -170,6 +188,7 @@ fn popup(app: &mut App, ui: &mut Ui) {
         let inner = rect.shrink(pad);
         match menu {
             ToolMenu::Brush => brush_menu(app, ui, inner, &mut picked),
+            ToolMenu::More => more_menu(app, ui, inner, &mut picked),
             ToolMenu::Shape => {
                 for (i, k) in ShapeKind::ALL.iter().enumerate() {
                     let cell = Rect::from_min_size(inner.min + Vec2::new((i % cols) as f32 * CELL, (i / cols) as f32 * CELL), Vec2::splat(CELL));
@@ -232,6 +251,10 @@ fn popup(app: &mut App, ui: &mut Ui) {
             app.set_tool(t);
         }
         Some(Pick::Ink(c)) => app.board.ink = color_of(c),
+        Some(Pick::More(t)) => {
+            app.board.tool_menu = None;
+            app.set_tool(t);
+        }
         None => {
             if outside || esc {
                 app.board.tool_menu = None;
@@ -241,6 +264,7 @@ fn popup(app: &mut App, ui: &mut Ui) {
 }
 
 enum Pick {
+    More(Tool),
     Shape(ShapeKind),
     Stamp(String),
     Brush(Tool),
@@ -253,6 +277,30 @@ fn cell_bg(p: &egui::Painter, cell: Rect, selected: bool, hover: bool) {
         p.rect_filled(r, theme::cr(theme::RADIUS_MEDIUM), theme::BG_SELECTED);
     } else if hover {
         p.rect_filled(r, theme::cr(theme::RADIUS_MEDIUM), theme::BG_HOVER);
+    }
+}
+
+/// The tools in the "more" popover.
+const MORE_TOOLS: [Tool; 1] = [Tool::Table];
+
+/// One row per extra tool, with its icon, name and shortcut.
+fn more_menu(app: &App, ui: &mut Ui, inner: Rect, picked: &mut Option<Pick>) {
+    let p = ui.painter().clone();
+    for (i, t) in MORE_TOOLS.into_iter().enumerate() {
+        let row = Rect::from_min_size(inner.min + Vec2::new(0.0, i as f32 * 32.0), Vec2::new(inner.width(), 32.0));
+        let resp = ui.interact(row, ui.id().with(("board-more", i)), Sense::click());
+        if app.tool == t {
+            p.rect_filled(row, theme::cr(theme::RADIUS_MEDIUM), theme::BG_SELECTED);
+        } else if resp.hovered() {
+            p.rect_filled(row, theme::cr(theme::RADIUS_MEDIUM), theme::BG_HOVER);
+        }
+        icons::paint(&p, tool_icon(t), Pos2::new(row.left() + 18.0, row.center().y), 16.0, theme::ICON);
+        p.text(Pos2::new(row.left() + 36.0, row.center().y), Align2::LEFT_CENTER, t.label(), theme::font_body(), theme::TEXT);
+        p.text(Pos2::new(row.right() - 8.0, row.center().y), Align2::RIGHT_CENTER, t.shortcut(), theme::font_body(), theme::TEXT_TERTIARY);
+        widgets::record(ui, &format!("board-more-{t:?}"), row);
+        if resp.clicked() {
+            *picked = Some(Pick::More(t));
+        }
     }
 }
 

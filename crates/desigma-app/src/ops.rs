@@ -239,7 +239,7 @@ impl App {
     pub(crate) fn container_for_insert(&self) -> NodeId {
         if let [only] = self.selection.as_slice() {
             if let Some(n) = self.doc.get(*only) {
-                if n.kind.is_container() && !matches!(n.kind, NodeKind::Instance { .. }) {
+                if n.kind.is_container() && !matches!(n.kind, NodeKind::Instance { .. } | NodeKind::Table(_)) {
                     return *only;
                 }
                 if let Some(p) = n.parent {

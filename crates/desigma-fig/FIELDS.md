@@ -36,6 +36,8 @@ and render its frames with `--example fig_render`.
 | Layout grids | `layoutGrids` (`pattern`/`type`/`axis`, `sectionSize`, `gutterSize`, `count`, `offset`) | **unconfirmed** (no node in either file has the field) |
 | Guides | `guides`: present as an empty list on symbols and instances; element shape (`axis`, `offset`) | field confirmed, element shape unconfirmed |
 | Export settings | `exportSettings [{imageType PNG/SVG, constraint {type CONTENT_SCALE, value}, suffix, contentsOnly, colorProfile, svg*}]` | confirmed (JPEG/PDF, `CONTENT_WIDTH/HEIGHT` unconfirmed) |
+| FigJam sections | In a FigJam file `SECTION` maps to a board section: `fills` (nearest of the 16 section colours), `sectionContentsHidden`, children. In a design file it stays a design section | `SECTION` confirmed, `sectionContentsHidden` unconfirmed (no FigJam file at hand) |
+| FigJam tables | `TABLE` (`numRows`, `numColumns`) with `TABLE_CELL` children (`rowIndex`, `columnIndex`, `characters`, `fills`, `size`). Column widths come from the first row's cells, row heights from the first column's; missing cells are padded, extras dropped | **unconfirmed**: the field names follow the plugin API's table node; no FigJam file with a table was available to check them |
 | Dev status / annotations | `sectionStatusInfo {status, prevStatus, lastUpdateUnixTimestamp}` exists on symbols; not mapped. No `devStatus` or annotation fields appear | unconfirmed |
 | Plugin / edit metadata | `pluginData [{pluginID, key, value}]`, `editInfo {createdAt, lastEditedAt, userId}` | confirmed, ignored |
 

@@ -103,6 +103,8 @@ pub enum Interaction {
     Guide(rulers::GuideDrag),
     /// Dragging a connector out of a board node (or from empty canvas).
     Connect(crate::board::connect::ConnectDrag),
+    /// Dragging the divider between two table columns or rows.
+    Table(crate::board::table::TableDrag),
 }
 
 pub use textsession::TextSession;
@@ -162,6 +164,7 @@ impl App {
                 c.tx.cancel(&mut self.doc);
                 self.board.target = None;
             }
+            Interaction::Table(d) => d.tx.cancel(&mut self.doc),
             Interaction::VectorDrag => {
                 if let Some(v) = self.canvas.vedit.as_mut() {
                     v.marquee = None;

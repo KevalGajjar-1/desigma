@@ -556,7 +556,7 @@ fn section_tool_makes_a_section_that_adopts_notes_dropped_into_it() {
     s.drag(s.screen(100.0, 100.0), s.screen(800.0, 600.0));
     s.mods = Modifiers::NONE;
     let sec = s.app().selection[0];
-    assert!(matches!(s.app().doc.get(sec).unwrap().kind, NodeKind::Section));
+    assert!(matches!(s.app().doc.get(sec).unwrap().kind, NodeKind::BoardSection(_)));
     // a sticky placed inside becomes its child
     s.key(Key::S);
     let at = s.screen(300.0, 300.0);

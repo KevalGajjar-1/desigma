@@ -10,8 +10,8 @@
 use crate::text::text_geometry;
 use desigma_doc as d;
 use desigma_doc::{
-    Affine, ArcData, Color, ConnectorCap, Document, Effect, Node, NodeId, NodeKind, Paint, Path, PathCmd, Rect, ShapeKind, StampLayer, StickyProps,
-    StrokeAlign, StrokeCap, StrokeJoin, TextAlignH, TextAlignV, TextAutoResize, TextProps, Vec2,
+    Affine, ArcData, Color, ConnectorCap, Document, Effect, Node, NodeId, NodeKind, Paint, Path, PathCmd, Rect, SectionProps, ShapeKind, StampLayer,
+    StickyProps, StrokeAlign, StrokeCap, StrokeJoin, TableProps, TextAlignH, TextAlignV, TextAutoResize, TextProps, Vec2,
 };
 use std::borrow::Cow;
 use std::cell::RefCell;
@@ -165,8 +165,32 @@ pub fn text_frame(doc: &Document, n: &Node) -> Option<TextFrame> {
             let route = local_route(doc, n)?;
             Some(label_frame(route.midpoint(), label).1)
         }
+        NodeKind::TableCell(c) => Some(fit_into(&c.text, cell_text_box(n.size), c.text.style.font_size, d::STICKY_FONT_MIN)),
         _ => None,
     }
+}
+
+/// The text box inside a table cell of `size`.
+fn cell_text_box(size: Vec2) -> Rect {
+    let p = d::TABLE_CELL_PAD;
+    Rect::new(p, p, (size.x - 2.0 * p).max(1.0), (size.y - 2.0 * p).max(1.0))
+}
+
+/// The title pill of a section, in the section's local space (above its top left corner).
+/// The pill hugs the title, within the section's width.
+pub fn section_title_rect(n: &Node) -> Rect {
+    let props = section_title_props(&n.name);
+    let tw = if n.name.is_empty() { 0.0 } else { text_geometry(&props, Vec2::ZERO).width.max(1.0) };
+    let w = (tw + 2.0 * d::SECTION_PILL_PAD).max(48.0).min(n.size.x.max(48.0));
+    Rect::new(0.0, -(d::SECTION_PILL_H + d::SECTION_PILL_GAP), w, d::SECTION_PILL_H)
+}
+
+fn section_title_props(title: &str) -> TextProps {
+    let mut t = d::board_text(d::SECTION_TITLE_SIZE, TextAlignH::Left, TextAlignV::Center);
+    t.content = title.to_string();
+    t.style.font_weight = 600;
+    t.auto_resize = TextAutoResize::WidthAndHeight;
+    t
 }
 
 /// Lowers `n` (a board item) to a body node with synthetic children, or `None` for other kinds.
@@ -215,9 +239,13 @@ pub fn lower(doc: &Document, n: &Node) -> Option<Node> {
             }
         }
         NodeKind::Connector(_) => lower_connector(doc, n, &mut body, &mut extras)?,
+        NodeKind::BoardSection(s) => lower_section(n, s, &mut body, &mut extras),
+        NodeKind::Table(t) => lower_table(doc, n, t, &mut body, &mut extras),
         _ => return None,
     }
-    body.children = extras.iter().map(|e| e.id).collect();
+    // a section keeps its real (visible) children under the title pill
+    body.children = if matches!(n.kind, NodeKind::BoardSection(_)) { d::section_visible_children(n).to_vec() } else { Vec::new() };
+    body.children.extend(extras.iter().map(|e| e.id));
     SYNTH.with(|s| {
         let mut s = s.borrow_mut();
         // ids of deleted items are never reused: forget their children when the table gets big
@@ -243,7 +271,7 @@ pub fn lowered_document(doc: &Document) -> Option<Document> {
     for id in items {
         let Some(n) = doc.get(id) else { continue };
         let Some(body) = lower(doc, n) else { continue };
-        for c in &body.children {
+        for c in body.children.iter().filter(|c| is_synthetic(**c)) {
             if let Some(k) = get(doc, *c) {
                 out.nodes.insert(*c, k.into_owned());
             }
@@ -292,6 +320,80 @@ fn lower_sticky(n: &Node, s: &StickyProps, body: &mut Node, extras: &mut Vec<Nod
         t.style.fills = solid(Color { a: 0.55, ..Color::rgb(0x1E, 0x1E, 0x1E) });
         extras.push(child(n, 1, NodeKind::Text(t), bx));
     }
+}
+
+fn lower_section(n: &Node, s: &SectionProps, body: &mut Node, extras: &mut Vec<Node>) {
+    body.kind = NodeKind::Rectangle;
+    body.corner_radii = [d::SECTION_RADIUS; 4];
+    body.corner_smoothing = 0.0;
+    body.fills = solid(s.color.fill());
+    body.stroke.paints.clear();
+    body.stroke.weight = 0.0;
+    // the title pill sits on the top left corner, outside the box
+    let pill = section_title_rect(n);
+    let mut bg = child(n, 0, NodeKind::Rectangle, pill);
+    bg.fills = solid(s.color.color());
+    bg.corner_radii = [pill.h / 2.0; 4];
+    bg.stroke.weight = 0.0;
+    extras.push(bg);
+    if !n.name.is_empty() {
+        let mut t = section_title_props(&n.name);
+        t.auto_resize = TextAutoResize::Truncate;
+        t.max_lines = Some(1);
+        let bx = Rect::new(pill.x + d::SECTION_PILL_PAD, pill.y, (pill.w - 2.0 * d::SECTION_PILL_PAD).max(1.0), pill.h);
+        extras.push(child(n, 1, NodeKind::Text(t), bx));
+    }
+}
+
+fn lower_table(doc: &Document, n: &Node, t: &TableProps, body: &mut Node, extras: &mut Vec<Node>) {
+    body.kind = NodeKind::Rectangle;
+    body.corner_radii = [0.0; 4];
+    body.fills = solid(Color::WHITE);
+    body.stroke.paints = solid(d::TABLE_LINE);
+    body.stroke.weight = 1.0;
+    body.stroke.align = StrokeAlign::Inside;
+    let size = t.size();
+    body.size = size;
+    // cell fills first, then the grid, then the text
+    let mut texts = Vec::new();
+    for (i, cid) in n.children.iter().enumerate() {
+        let Some(cell) = doc.get(*cid) else { continue };
+        let NodeKind::TableCell(c) = &cell.kind else { continue };
+        let (r, col) = t.cell_pos(i);
+        let rect = t.cell_rect(r, col);
+        if let Some(fill) = c.fill {
+            let mut f = child(cell, 1, NodeKind::Rectangle, rect);
+            f.parent = Some(n.id);
+            f.fills = solid(fill);
+            f.stroke.weight = 0.0;
+            extras.push(f);
+        }
+        if let Some(mut tx) = fitted_text(cell, 0, fit_into(&c.text, cell_text_box(Vec2::new(rect.w, rect.h)), c.text.style.font_size, d::STICKY_FONT_MIN)) {
+            tx.parent = Some(n.id);
+            tx.transform = Affine::translate(rect.x + tx.transform.tx, rect.y + tx.transform.ty);
+            texts.push(tx);
+        }
+    }
+    let mut cmds = Vec::new();
+    for c in 1..t.cols() {
+        let x = t.col_x(c);
+        cmds.push(PathCmd::MoveTo(Vec2::new(x, 0.0)));
+        cmds.push(PathCmd::LineTo(Vec2::new(x, size.y)));
+    }
+    for r in 1..t.rows() {
+        let y = t.row_y(r);
+        cmds.push(PathCmd::MoveTo(Vec2::new(0.0, y)));
+        cmds.push(PathCmd::LineTo(Vec2::new(size.x, y)));
+    }
+    if !cmds.is_empty() {
+        let mut g = child(n, 0, vector(vec![Path { cmds, fill_rule: d::FillRule::NonZero }]), Rect::new(0.0, 0.0, size.x, size.y));
+        g.fills.clear();
+        g.stroke.paints = solid(d::TABLE_LINE);
+        g.stroke.weight = 1.0;
+        g.stroke.align = StrokeAlign::Center;
+        extras.push(g);
+    }
+    extras.extend(texts);
 }
 
 fn stamp_layer(base: &Node, slot: u64, l: &StampLayer, w: f32, h: f32) -> Node {
