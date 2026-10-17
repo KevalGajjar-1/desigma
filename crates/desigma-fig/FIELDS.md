@@ -78,6 +78,7 @@ and render its frames with `--example fig_render`.
 | Instance | `symbolData {symbolID, symbolOverrides [...], uniformScaleFactor}`, `derivedSymbolData [...]`, `derivedSymbolDataLayoutVersion`, `propsAreBubbled`. **Instances never store children** | confirmed |
 | Override paths | `guidPath {guids [..]}` holds `overrideKey` values, not node guids (1 to 3 entries; nested instances take two or more) | confirmed |
 | Override content | any NodeChange fields: `size`, `transform`, `fillPaints`, `strokePaints`, `strokeWeight`, `textData`, `fontName`, `styleIdForFill` (`{assetRef}`), `fillGeometry`, `strokeGeometry`, ... | confirmed |
+| Nested instance swap | override entry `{guidPath: [<slot>], overriddenSymbolID: <SYMBOL guid>}` replaces the nested instance's component; deeper entries under `[<slot>, ...]` then address the swapped component's children | confirmed (product UI file: list rows swapping their icon slot) |
 | Derived data | per path: `size`, `transform`, `fillGeometry`, `strokeGeometry` | confirmed |
 | Scale | `uniformScaleFactor` != 1 on instances made with the scale tool: copied contents scale by it | confirmed |
 | Property defs | `componentPropDefs [{id, name, type BOOL/TEXT/VARIANT/INSTANCE_SWAP, initialValue {boolValue / textValue{characters} / guidValue}, varValue, preferredValues, sortPosition}]` on the set; variants carry bare `{id, parentPropDefId}` aliases | confirmed |

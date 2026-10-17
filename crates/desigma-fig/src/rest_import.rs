@@ -882,7 +882,7 @@ impl Ctx {
         // Instances whose component is unknown still honour their own overrides.
         let rest: Vec<NodeId> = self.overrides.keys().copied().filter(|i| !done.contains(i)).collect();
         for inst in rest {
-            self.apply_overrides(inst);
+            self.apply_overrides(inst, &targets, &mut done);
         }
         self.apply_rest_overrides();
         self.resolve_proto();
@@ -1019,7 +1019,7 @@ impl Ctx {
         }
         // Property values first: an instance swap changes which nodes the overrides address.
         self.apply_props(inst, targets, done);
-        self.apply_overrides(inst);
+        self.apply_overrides(inst, targets, done);
     }
 
     /// Scales the copied children of an instance made with the scale tool
@@ -1228,8 +1228,15 @@ impl Ctx {
 
     /// Applies `.fig` `symbolOverrides` and then `derivedSymbolData` to the
     /// instance's copied subtree.
-    fn apply_overrides(&mut self, inst: NodeId) {
+    fn apply_overrides(&mut self, inst: NodeId, targets: &BTreeMap<NodeId, NodeId>, done: &mut BTreeSet<NodeId>) {
         let Some(ov) = self.overrides.remove(&inst) else { return };
+        // Nested instance swaps (`overriddenSymbolID`) first: they change which
+        // nodes the deeper overrides address.
+        for e in &ov.set {
+            let Some(cid) = e.set.get("componentId").and_then(Value::as_str) else { continue };
+            let (Some(t), Some(&target)) = (self.resolve_path(inst, &e.path), self.ids.get(cid)) else { continue };
+            self.swap_nested(t, target, targets, done);
+        }
         for e in &ov.set {
             if let Some(t) = self.resolve_path(inst, &e.path) {
                 self.apply_override(t, &e.set, false);

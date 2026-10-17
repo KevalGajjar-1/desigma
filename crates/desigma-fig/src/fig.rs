@@ -776,6 +776,10 @@ fn convert_override(o: &Value, lk: &Lk) -> Map<String, Value> {
         copy(&mut m, o, k, k);
     }
     copy(&mut m, o, "mask", "isMask");
+    // Instance swap of a nested instance: the override names the new SYMBOL.
+    if let Some(g) = o.get("overriddenSymbolID").and_then(guid_str) {
+        m.insert("componentId".into(), g.into());
+    }
     if let Some(t) = o.get("transform") {
         m.insert("relativeTransform".into(), matrix_json(t));
     }
