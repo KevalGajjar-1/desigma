@@ -57,6 +57,8 @@ pub struct Options {
     /// Write the showcase sample files into this library directory and exit (screenshot aid).
     pub seed_library: Option<PathBuf>,
     pub help: bool,
+    /// Print `desigma <version>` and exit.
+    pub version: bool,
 }
 
 impl Options {
@@ -68,8 +70,9 @@ impl Options {
 }
 
 /// Values of `--panel`: `variables` / `variables-floating` open the local variables view,
-/// `libraries` the Libraries modal; the others are inspector popups opened on the selection for screenshots.
-pub const PANELS: [&str; 20] = [
+/// `libraries` the Libraries modal, `updater` / `updater-banner` check the update feed (`DESIGMA_UPDATE_URL`)
+/// and show the update dialog or banner; the others are inspector popups opened on the selection for screenshots.
+pub const PANELS: [&str; 22] = [
     "plugins",
     "plugin-install",
     "interaction",
@@ -90,6 +93,8 @@ pub const PANELS: [&str; 20] = [
     "version-history",
     "dev-annotate",
     "dev-compare",
+    "updater",
+    "updater-banner",
 ];
 
 pub fn parse_size(s: &str) -> Option<(u32, u32)> {
@@ -185,6 +190,7 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Options, String> 
             "--dev-demo" => o.dev_demo = true,
             "--seed-library" => o.seed_library = Some(it.next().ok_or("--seed-library needs a directory")?.into()),
             "-h" | "--help" => o.help = true,
+            "-V" | "--version" => o.version = true,
             s if s.starts_with("--") => return Err(format!("unknown option {s}")),
             _ => {
                 if o.file.is_some() {
@@ -197,7 +203,7 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Options, String> 
     Ok(o)
 }
 
-pub const USAGE: &str = "usage: desigma [FILE] [--screenshot OUT.png] [--size WxH] [--scale FACTOR] [--select LAYER|none] [--menu main|main/File|shape|palette] [--panel interaction|present-variables|variables|variables-floating|libraries|picker|picker-page|fill-d9|picker-gradient|effects-menu|stroke-settings|type-details|effect-noise|effect-texture|effect-glass|version-history|dev-annotate|dev-compare]\n               [--zoom PERCENT] [--rulers] [--grid] [--gpu] [--home] [--library DIR] [--layout-grid grid|columns|rows] [--edit-text LAYER [--select-text START-END]]\n  FILE  .fig, .json (Figma REST or native), .svg or .desigma; without a file the projects home screen opens
+pub const USAGE: &str = "usage: desigma [FILE] [--screenshot OUT.png] [--size WxH] [--scale FACTOR] [--select LAYER|none] [--menu main|main/File|shape|palette] [--panel interaction|present-variables|variables|variables-floating|libraries|picker|picker-page|fill-d9|picker-gradient|effects-menu|stroke-settings|type-details|effect-noise|effect-texture|effect-glass|version-history|dev-annotate|dev-compare|updater|updater-banner]\n               [--zoom PERCENT] [--rulers] [--grid] [--gpu] [--home] [--library DIR] [--layout-grid grid|columns|rows] [--edit-text LAYER [--select-text START-END]]\n  FILE  .fig, .json (Figma REST or native), .svg or .desigma; without a file the projects home screen opens
   --scale    with --screenshot: device pixel ratio (2 writes a PNG twice --size, rendered crisp rather than upscaled)
   --home     show the home screen (also in --screenshot mode)
   --present  open presentation preview; --fullscreen starts it in native fullscreen (F11 toggles, Esc returns)
@@ -205,7 +211,8 @@ pub const USAGE: &str = "usage: desigma [FILE] [--screenshot OUT.png] [--size Wx
   --library  use DIR as the projects library instead of the default location
   --dev      open Dev mode with a code language (css|tailwind|swiftui|compose|react); --dev-demo marks the selection Ready for dev with an annotation
   --seed-library  write the showcase sample files (a project with three files) into DIR and exit
-  --find     open the Find and replace panel searching for TEXT (--replace-with TEXT shows the replace row)";
+  --find     open the Find and replace panel searching for TEXT (--replace-with TEXT shows the replace row)
+  --version  print the version and exit";
 
 #[cfg(test)]
 mod tests {
@@ -322,6 +329,13 @@ mod tests {
         let o = p(&["--find", "quarter", "--replace-with", "period"]).unwrap();
         assert_eq!((o.find.as_deref(), o.replace_with.as_deref()), (Some("quarter"), Some("period")));
         assert!(p(&["--find"]).is_err() && p(&["--replace-with"]).is_err());
+    }
+
+    #[test]
+    fn parses_version() {
+        assert!(p(&["--version"]).unwrap().version && p(&["-V"]).unwrap().version);
+        assert!(!p(&[]).unwrap().version);
+        assert!(p(&["--panel", "updater"]).is_ok() && p(&["--panel", "updater-banner"]).is_ok());
     }
 
     #[test]

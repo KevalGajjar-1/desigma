@@ -953,3 +953,4 @@ mod assets_thumbs;
 mod libraries;
 mod lint;
 mod plugins;
+mod updater;
