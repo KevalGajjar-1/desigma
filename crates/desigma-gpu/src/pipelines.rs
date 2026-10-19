@@ -81,8 +81,13 @@ pub struct FxParams {
     /// Viewport size of the pass (see `fx.wgsl`).
     pub out_w: f32,
     pub out_h: f32,
-    pub pad: [f32; 2],
+    // WGSL rounds P's total size to its largest member alignment (vec2: 8).
+    // Include that tail padding in uploads and min_binding_size as well.
+    pub pad: [f32; 3],
 }
+
+// Must equal WGSL `P` (104 bytes): a smaller min_binding_size fails the `displace` pipeline.
+const _: () = assert!(size_of::<FxParams>() == 104);
 
 pub struct Layouts {
     pub fx: wgpu::BindGroupLayout,
