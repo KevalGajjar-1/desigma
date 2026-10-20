@@ -670,7 +670,7 @@ impl<'a> FrameRun<'a> {
                         dispersion: 0.0,
                         out_w: w as f32,
                         out_h: h as f32,
-                        pad: [0.0; 2],
+                        pad: [0.0; 3],
                     };
                     let ub = self.r.ring.alloc(&self.r.dev, &self.r.queue, &params);
                     let bg = uniform_bg(
@@ -993,6 +993,9 @@ impl<'a> FrameRun<'a> {
                 Op::Backdrop(_) => {}
             }
         }
+        // GL resolves MSAA with glBlitFramebuffer, which obeys the last scissor
+        // (gfx-rs/wgpu#10620): end on a full-target scissor so all of it resolves.
+        pass.set_scissor_rect(0, 0, prog.rect.w() as u32, prog.rect.h() as u32);
     }
 
     /// Records one composite quad into an open pass (`ms`: multisampled target).
@@ -1061,6 +1064,8 @@ impl<'a> FrameRun<'a> {
         pass.set_viewport(0.0, 0.0, prog.rect.w() as f32, prog.rect.h() as f32, 0.0, 1.0);
         pass.set_bind_group(0, &globals, &[]);
         self.write_composite(&mut pass, prog.rect, &spec, true);
+        // Full-target scissor before the GL resolve, see `encode_segment`.
+        pass.set_scissor_rect(0, 0, prog.rect.w() as u32, prog.rect.h() as u32);
         self.stats.composites += 1;
     }
 
@@ -1215,7 +1220,7 @@ impl<'a> FrameRun<'a> {
                     dispersion: gp.dispersion,
                     out_w: sc.w() as f32,
                     out_h: sc.h() as f32,
-                    pad: [0.0; 2],
+                    pad: [0.0; 3],
                 };
                 let ub = self.r.ring.alloc(&self.r.dev, &self.r.queue, &params);
                 let bgf = uniform_bg(
