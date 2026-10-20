@@ -280,10 +280,10 @@ Build the local server with `cargo build --locked -p desigma-mcp`, then configur
 Open **Plugins** from the editor rail or main menu, choose **Install plugin**, and paste a manifest URL from [desigma-plugins](https://github.com/deepfounder-ai/desigma-plugins). GitHub `blob` and raw URLs are supported, for example:
 
 ```text
-https://github.com/deepfounder-ai/desigma-plugins/blob/main/plugins/icon-browser/manifest.json
+https://github.com/deepfounder-ai/desigma-plugins/blob/main/plugins/install-demo/manifest.json
 ```
 
-The registry is private. Before launching the editor, set `DESIGMA_PLUGINS_TOKEN` to a GitHub token with read access to that repository's contents. The installer uses the GitHub contents API, does not discover credentials automatically, and never puts credentials in URLs or installed metadata. Prefer a commit SHA in place of `main` for a fixed package revision.
+The registry is public, so no token is needed. The installer uses the GitHub contents API, which allows 60 unauthenticated requests per hour; if you hit that limit, set `DESIGMA_PLUGINS_TOKEN` to any GitHub token before launching the editor. The installer does not discover credentials automatically and never puts credentials in URLs or installed metadata. Prefer a commit SHA in place of `main` for a fixed package revision.
 
 Schema 2 plugins include a root HTML panel and declared HTML/CSS/JavaScript assets. Choose **Open** on an installed plugin to launch its panel in your browser. Icon Browser can insert static SVG into the current document as editable layers; one Undo removes each insertion. **Stop**, switching documents, or returning to the library revokes the session. Schema 1 packages remain installable but do not run.
 
