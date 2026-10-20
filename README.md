@@ -280,7 +280,7 @@ Build the local server with `cargo build --locked -p desigma-mcp`, then configur
 Open **Plugins** from the editor rail or main menu, choose **Install plugin**, and paste a manifest URL from [desigma-plugins](https://github.com/deepfounder-ai/desigma-plugins). GitHub `blob` and raw URLs are supported, for example:
 
 ```text
-https://github.com/deepfounder-ai/desigma-plugins/blob/main/plugins/install-demo/manifest.json
+https://github.com/deepfounder-ai/desigma-plugins/blob/main/plugins/icon-browser/manifest.json
 ```
 
 The registry is public, so no token is needed. The installer uses the GitHub contents API, which allows 60 unauthenticated requests per hour; if you hit that limit, set `DESIGMA_PLUGINS_TOKEN` to any GitHub token before launching the editor. The installer does not discover credentials automatically and never puts credentials in URLs or installed metadata. Prefer a commit SHA in place of `main` for a fixed package revision.
