@@ -40,6 +40,8 @@ impl Shell {
         }
         opts.home = opts.wants_home();
         let screenshot = opts.screenshot.is_some();
+        // "Open in new window" children leave update checks to the first window
+        let launch = !screenshot && opts.open_id.is_none();
         let (gpu_flag, library) = (opts.gpu, opts.library.clone());
         let mut shell = Self::build(&cc.egui_ctx, opts);
         if let Some(rs) = &cc.wgpu_render_state {
@@ -51,6 +53,7 @@ impl Shell {
         // GPU canvas on by default; screenshots stay on the deterministic CPU path unless --gpu
         let saved = library.as_deref().and_then(|l| crate::comments::settings::load_flag(l, "use_gpu"));
         shell.app.canvas.gpu.pref = if screenshot { gpu_flag } else { gpu_flag || saved.unwrap_or(true) };
+        shell.app.updater.start(library.as_deref(), launch);
         shell
     }
 
@@ -200,6 +203,7 @@ impl Shell {
             }
             Some("version-history") => crate::history::preset::apply(&mut app, opts.library.clone()),
             Some(p @ ("dev-annotate" | "dev-compare")) => crate::dev::preset::panel(&mut app, p),
+            Some(p @ ("updater" | "updater-banner")) => crate::updater::preset(&mut app, p),
             Some(panel @ ("variables" | "variables-floating")) => {
                 app.vars.full = panel == "variables";
                 app.open_variables();
@@ -265,7 +269,12 @@ impl Shell {
     }
 
     fn handle_keys(&mut self, ctx: &Context) {
-        if self.app.plugins.open || self.app.dialog.is_some() || self.app.history.save_modal.is_some() || self.app.dev.compare.is_some() {
+        if self.app.plugins.open
+            || self.app.dialog.is_some()
+            || self.app.history.save_modal.is_some()
+            || self.app.dev.compare.is_some()
+            || self.app.updater.dialog
+        {
             return;
         }
         let typing = ctx.egui_wants_keyboard_input();
@@ -605,6 +614,7 @@ impl Shell {
         let ctx = ui.ctx().clone();
         self.app.now = ctx.input(|i| i.time);
         self.app.poll_plugins();
+        self.app.poll_updater(&ctx);
         self.drive_screenshot(&ctx);
         if ctx.input(|i| i.viewport().close_requested()) {
             crate::decks::ui::flush_notes(&mut self.app);
@@ -615,6 +625,7 @@ impl Shell {
         if self.app.home.is_some() {
             self.home_frame(ui, &ctx);
             crate::plugins::ui::show(&mut self.app, &ctx);
+            crate::updater::ui::show(&mut self.app, &ctx);
             return;
         }
         self.app.autosave_tick(&ctx);
@@ -697,6 +708,7 @@ impl Shell {
         crate::dev::compare::show(&mut self.app, &ctx);
         crate::libraries::show(&mut self.app, &ctx);
         crate::plugins::ui::show(&mut self.app, &ctx);
+        crate::updater::ui::show(&mut self.app, &ctx);
         self.toast(ui, full);
 
         self.sync_title(&ctx);

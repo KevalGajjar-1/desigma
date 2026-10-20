@@ -921,6 +921,7 @@ dependencies = [
  "resvg",
  "rfd",
  "roxmltree",
+ "semver",
  "serde",
  "serde_json",
  "unicode-segmentation",
