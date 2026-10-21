@@ -82,3 +82,38 @@ fn imported_stale_id_counter_does_not_overwrite_existing_nodes() {
     assert!(s.call("desigma_create_node", json!({"parent_id":page,"kind":"rectangle"})).unwrap_err().contains("exhausted"));
     assert_eq!(s.engine.doc.to_json().unwrap(), before);
 }
+
+#[test]
+fn export_image_writes_png_inside_workspace_only() {
+    let dir = Workspace::new();
+    let mut s = Session::new(&dir.0).unwrap();
+    let page = s.call("desigma_get_document", json!({})).unwrap()["pages"][0]["node_id"].clone();
+    let id = s.call("desigma_create_node", json!({"parent_id":page,"kind":"rectangle","width":40,"height":20})).unwrap()["node"]["id"].clone();
+    let out = s.call("desigma_export_image", json!({"node_id":id,"scale":2,"path":"shot.png"})).unwrap();
+    assert_eq!((out["width"].as_u64().unwrap(), out["height"].as_u64().unwrap()), (80, 40));
+    let bytes = fs::read(dir.0.join("shot.png")).unwrap();
+    assert_eq!(&bytes[..8], b"\x89PNG\r\n\x1a\n");
+    // overwrite of a .png is allowed; anything else is not
+    s.call("desigma_export_image", json!({"node_id":id,"path":"shot.png"})).unwrap();
+    assert!(s.call("desigma_export_image", json!({"node_id":id,"path":"shot.jpg"})).is_err());
+    assert!(s.call("desigma_export_image", json!({"node_id":id,"path":"../shot.png"})).is_err());
+    assert!(s.call("desigma_export_image", json!({"node_id":id,"path":"missing/shot.png"})).is_err());
+}
+
+/// Overwrite is allowed for a real .png this session already wrote, but a
+/// symlink at the leaf must never be followed: that would let a workspace
+/// file silently overwrite something outside it.
+#[cfg(unix)]
+#[test]
+fn export_image_refuses_to_write_through_a_symlink() {
+    let dir = Workspace::new();
+    let outside = Workspace::new();
+    let target = outside.0.join("outside.png");
+    fs::write(&target, b"untouched").unwrap();
+    std::os::unix::fs::symlink(&target, dir.0.join("link.png")).unwrap();
+    let mut s = Session::new(&dir.0).unwrap();
+    let page = s.call("desigma_get_document", json!({})).unwrap()["pages"][0]["node_id"].clone();
+    let id = s.call("desigma_create_node", json!({"parent_id":page,"kind":"rectangle"})).unwrap()["node"]["id"].clone();
+    assert!(s.call("desigma_export_image", json!({"node_id":id,"path":"link.png"})).is_err());
+    assert_eq!(fs::read(&target).unwrap(), b"untouched");
+}

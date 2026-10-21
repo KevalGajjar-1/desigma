@@ -77,6 +77,31 @@ impl Session {
         Ok(parent.join(requested.file_name().ok_or("Save path needs a filename")?))
     }
 
+    fn png_path(&self, path: &str) -> Result<PathBuf, String> {
+        let requested = self.root.join(path);
+        if requested.extension().and_then(|x| x.to_str()) != Some("png") {
+            return Err("Export path must end in .png".into());
+        }
+        let parent = requested
+            .parent()
+            .ok_or("Export path needs a parent directory")?
+            .canonicalize()
+            .map_err(|e| format!("Export directory must already exist: {e}"))?;
+        if !parent.starts_with(&self.root) {
+            return Err("Path must stay inside the configured workspace".into());
+        }
+        let resolved = parent.join(requested.file_name().ok_or("Export path needs a filename")?);
+        // Overwrite is allowed, but only of a plain file we already own: a
+        // symlink (or any other non-regular entry) at the leaf could point
+        // outside the workspace entirely, so `fs::write` must never follow it.
+        if let Ok(meta) = fs::symlink_metadata(&resolved) {
+            if meta.file_type().is_symlink() || !meta.is_file() {
+                return Err("Export path must be a regular .png file inside the workspace".into());
+            }
+        }
+        Ok(resolved)
+    }
+
     pub fn call(&mut self, name: &str, args: Value) -> Result<Value, String> {
         match name {
             "desigma_open_file" => {
@@ -125,6 +150,13 @@ impl Session {
                 }
                 self.dirty = false;
                 Ok(json!({"path": path, "saved": true}))
+            }
+            "desigma_export_image" => {
+                let a: crate::engine::ExportArgs = parse(args)?;
+                let path = self.png_path(&a.path)?;
+                let (png, width, height) = crate::engine::export_image(&self.engine, a.node_id, a.scale)?;
+                fs::write(&path, png).map_err(|e| format!("Cannot write PNG: {e}"))?;
+                Ok(json!({"path":path,"width":width,"height":height}))
             }
             _ => {
                 let result = self.engine.call(name, args)?;

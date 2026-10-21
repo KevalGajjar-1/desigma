@@ -159,6 +159,39 @@ fn node<H: Host>(host: &H, id: u64) -> Result<&Node, String> {
     host.doc().get(NodeId(id)).ok_or_else(|| format!("node {id} not found"))
 }
 
+/// Renders one layer to PNG bytes. Shared by the MCP session (which writes the
+/// file) and, eventually, the editor bridge (which can hand the bytes to the UI
+/// directly).
+pub fn export_image<H: Host>(host: &H, node_id: u64, scale: f32) -> Result<(Vec<u8>, u32, u32), String> {
+    let id = node(host, node_id)?.id;
+    if !(0.25..=4.0).contains(&scale) {
+        return Err("scale must be between 0.25 and 4".into());
+    }
+    // Resolve variable bindings first: a bound width/height, or effect
+    // overflow (shadow/blur/outside stroke), can make the actual render far
+    // larger than the node's own stored size.
+    let doc = desigma_doc::apply_bound_variables(host.doc());
+    let (w, h) = desigma_export::render_size(&doc, id, scale).ok_or("layer cannot be rendered")?;
+    if u64::from(w) * u64::from(h) > 32_000_000 {
+        return Err("export exceeds 32 megapixels; lower the scale or export a smaller layer".into());
+    }
+    let pm = desigma_export::render_export(&doc, id, scale).ok_or("layer cannot be rendered")?;
+    let png = pm.encode_png().map_err(|e| format!("cannot encode PNG: {e}"))?;
+    Ok((png, pm.width(), pm.height()))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExportArgs {
+    pub node_id: u64,
+    #[serde(default = "default_scale")]
+    pub scale: f32,
+    pub path: String,
+}
+fn default_scale() -> f32 {
+    1.0
+}
+
 fn create<H: Host>(host: &mut H, a: CreateArgs) -> Result<Value, String> {
     let parent = node(host, a.parent_id)?;
     if !parent.kind.is_container() {
@@ -391,6 +424,14 @@ pub fn tools() -> Vec<Value> {
     );
     add("undo", "Undo the latest successful edit in this session; returns changed=false if the stack is empty.", json!({}), vec![], false, false);
     add("redo", "Redo the most recently undone edit in this session; returns changed=false if the stack is empty.", json!({}), vec![], false, false);
+    add(
+        "export_image",
+        "Render one layer to a PNG file inside the workspace (transparent background, effects included). Overwrites an existing .png.",
+        json!({"node_id":id,"scale":{"type":"number","minimum":0.25,"maximum":4,"default":1},"path":{"type":"string","description":"Relative .png path inside the workspace; parent directory must exist."}}),
+        vec!["node_id", "path"],
+        true,
+        true,
+    );
     out
 }
 
@@ -502,6 +543,45 @@ mod tests {
         }
         assert!(e.call("desigma_list_nodes", json!({"limit":501})).is_err());
         assert!(e.call("desigma_get_node", json!({"node_id":"2"})).is_err());
+    }
+
+    /// The node's own stored size (100x100) is tiny, but a variable bound to
+    /// `width` resolves to 400000: the megapixel guard must measure the
+    /// resolved, post-`apply_bound_variables` size that `render_export` will
+    /// actually allocate, not the raw document's.
+    #[test]
+    fn export_image_rejects_pixel_counts_from_resolved_variable_bindings() {
+        use desigma_doc::{Variable, VariableCollection, VariableKind, VariableMode, VariableValue};
+        let mut e = Engine::default();
+        let id = create(&mut e, "rectangle", "Big");
+        e.doc.variable_collections.insert(
+            "size".into(),
+            VariableCollection {
+                id: "size".into(),
+                name: "size".into(),
+                modes: vec![VariableMode { id: "m".into(), name: "M".into() }],
+                default_mode: "m".into(),
+                variables: vec![],
+                key: None,
+            },
+        );
+        e.doc.variables.insert(
+            "big".into(),
+            Variable {
+                id: "big".into(),
+                name: "big".into(),
+                collection: "size".into(),
+                kind: VariableKind::Number,
+                values: [("m".into(), VariableValue::Number(400_000.0))].into_iter().collect(),
+                description: String::new(),
+                scopes: vec![],
+                hidden_from_publishing: false,
+                key: None,
+            },
+        );
+        e.doc.get_mut(NodeId(id)).unwrap().variables.bindings.insert("width".into(), "big".into());
+        let err = export_image(&e, id, 1.0).unwrap_err();
+        assert!(err.contains("32 megapixel"), "{err}");
     }
 
     /// A host that counts commands proves `call` does not depend on `Engine`'s own history.
