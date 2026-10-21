@@ -152,6 +152,43 @@ pub fn call<H: Host>(host: &mut H, name: &str, args: Value) -> Result<Value, Str
     }
 }
 
+/// Reject broken graphs before recursive exporters or inherited-mode resolution use them.
+pub fn validate_document(doc: &Document) -> Result<(), String> {
+    use std::collections::BTreeSet;
+    if doc.nodes.len() > 100_000 {
+        return Err("Document exceeds the 100000 layer limit".into());
+    }
+    for (id, node) in &doc.nodes {
+        if *id != node.id || id.0 == 0 {
+            return Err("Document has inconsistent node IDs".into());
+        }
+        let mut seen = BTreeSet::new();
+        let mut current = Some(*id);
+        while let Some(parent) = current {
+            if !seen.insert(parent) || seen.len() > 256 {
+                return Err("Document contains a cycle or exceeds 256 nesting levels".into());
+            }
+            let ancestor = doc.get(parent).ok_or("Document references a missing parent")?;
+            current = ancestor.parent;
+        }
+        let mut children = BTreeSet::new();
+        for child in &node.children {
+            if !children.insert(child) || doc.get(*child).is_none_or(|n| n.parent != Some(*id)) {
+                return Err("Document has duplicate or inconsistent child links".into());
+            }
+        }
+        if let Some(parent) = node.parent {
+            if !doc.get(parent).is_some_and(|n| n.children.contains(id)) {
+                return Err("Document has inconsistent parent links".into());
+            }
+        }
+    }
+    if doc.pages.iter().any(|id| doc.get(*id).is_none_or(|n| n.parent.is_some() || !matches!(n.kind, NodeKind::Page { .. }))) {
+        return Err("Document has invalid page roots".into());
+    }
+    Ok(())
+}
+
 fn node<H: Host>(host: &H, id: u64) -> Result<&Node, String> {
     if id == 0 {
         return Err("node IDs must be positive integers".into());
@@ -384,7 +421,7 @@ pub fn tools() -> Vec<Value> {
             "inputSchema":{"type":"object","properties":properties,"required":required,"additionalProperties":false},
             "annotations":{"readOnlyHint":read_only,"destructiveHint":!read_only,"idempotentHint":idempotent,"openWorldHint":false}}));
     };
-    add("get_document", "Summarize the current in-memory document, pages, counts, and undo state.", json!({}), vec![], true, true);
+    add("get_document", "Summarize the current document, pages, counts, and undo state. session is \"file\" or \"editor\"; the editor adds its file path and has_undo (its undo stack is non-empty, which stays true after the user saves).", json!({}), vec![], true, true);
     add(
         "list_nodes",
         "List node summaries in numeric ID order. Query matches names case-insensitively; parent_id filters direct children. Use next_offset to paginate.",
@@ -422,14 +459,21 @@ pub fn tools() -> Vec<Value> {
         false,
         false,
     );
-    add("undo", "Undo the latest successful edit in this session; returns changed=false if the stack is empty.", json!({}), vec![], false, false);
-    add("redo", "Redo the most recently undone edit in this session; returns changed=false if the stack is empty.", json!({}), vec![], false, false);
+    add("undo", "Undo the latest successful edit; returns changed=false if the stack is empty. In the editor the stack is shared with the user, so this may undo their latest edit.", json!({}), vec![], false, false);
+    add(
+        "redo",
+        "Redo the most recently undone edit (in the editor, shared with the user); returns changed=false if the stack is empty.",
+        json!({}),
+        vec![],
+        false,
+        false,
+    );
     add(
         "export_image",
         "Render one layer to a PNG file inside the workspace (transparent background, effects included). Overwrites an existing .png.",
         json!({"node_id":id,"scale":{"type":"number","minimum":0.25,"maximum":4,"default":1},"path":{"type":"string","description":"Relative .png path inside the workspace; parent directory must exist."}}),
         vec!["node_id", "path"],
-        true,
+        false,
         true,
     );
     out
@@ -620,5 +664,12 @@ mod tests {
         call(&mut h, "desigma_update_node", json!({"node_id":id,"x":10.0})).unwrap();
         assert_eq!(h.execs, 2);
         assert!(call(&mut h, "desigma_undo", json!({})).unwrap()["changed"].as_bool().unwrap());
+    }
+
+    #[test]
+    fn export_image_is_annotated_as_a_writing_idempotent_tool() {
+        let t = tools().into_iter().find(|t| t["name"] == "desigma_export_image").unwrap();
+        assert_eq!(t["annotations"]["readOnlyHint"], false);
+        assert_eq!(t["annotations"]["idempotentHint"], true);
     }
 }

@@ -8,10 +8,12 @@ async fn stdio_handshake_discovery_edit_and_error_recovery() {
     tokio::time::timeout(std::time::Duration::from_secs(30), async {
         let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_desigma-mcp"));
         command.arg("--workspace").arg(env!("CARGO_MANIFEST_DIR"));
+        // Empty = disabled: this subprocess must never probe a developer's real editor.
+        command.env(desigma_mcp::live::ENV_FILE, "");
         let client = ().serve(TokioChildProcess::new(command).unwrap()).await.unwrap();
         assert_eq!(client.peer_info().unwrap().server_info.as_ref().unwrap().name, "desigma-mcp");
         let tools = client.list_all_tools().await.unwrap();
-        assert_eq!(tools.len(), 14);
+        assert_eq!(tools.len(), 16);
         assert!(tools.iter().all(|t| t.annotations.is_some()));
         let call = |name: &'static str, args: Value| CallToolRequestParams::new(name).with_arguments(args.as_object().unwrap().clone());
         let doc = client.call_tool(call("desigma_get_document", json!({}))).await.unwrap();
