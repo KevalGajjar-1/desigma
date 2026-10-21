@@ -1,5 +1,6 @@
 mod app;
 mod board;
+mod bridge;
 mod canvas;
 mod cli;
 mod clipboard;
