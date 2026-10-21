@@ -19,6 +19,7 @@ mod layout;
 mod libraries;
 #[cfg(test)]
 mod lint;
+mod loopback;
 mod ops;
 mod panels;
 mod plugins;
