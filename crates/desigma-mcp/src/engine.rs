@@ -16,200 +16,235 @@ impl Default for Engine {
     }
 }
 
+/// What a tool call needs from its document owner: the MCP file session or the editor.
+pub trait Host {
+    fn doc(&self) -> &Document;
+    fn exec(&mut self, cmd: Command) -> Result<(), String>;
+    fn undo(&mut self) -> Result<bool, String>;
+    fn redo(&mut self) -> Result<bool, String>;
+    fn can_undo(&self) -> bool;
+    fn can_redo(&self) -> bool;
+    /// Allocates a fresh node id on the document.
+    fn alloc_id(&mut self) -> Result<NodeId, String>;
+}
+
+impl Host for Engine {
+    fn doc(&self) -> &Document {
+        &self.doc
+    }
+    fn exec(&mut self, cmd: Command) -> Result<(), String> {
+        self.history.exec(&mut self.doc, cmd).map_err(|e| e.to_string())
+    }
+    fn undo(&mut self) -> Result<bool, String> {
+        self.history.undo(&mut self.doc).map_err(|e| e.to_string())
+    }
+    fn redo(&mut self) -> Result<bool, String> {
+        self.history.redo(&mut self.doc).map_err(|e| e.to_string())
+    }
+    fn can_undo(&self) -> bool {
+        self.history.can_undo()
+    }
+    fn can_redo(&self) -> bool {
+        self.history.can_redo()
+    }
+    fn alloc_id(&mut self) -> Result<NodeId, String> {
+        self.doc.try_alloc_id().ok_or_else(|| "Document has exhausted node IDs".into())
+    }
+}
+
 impl Engine {
     pub fn call(&mut self, name: &str, args: Value) -> Result<Value, String> {
-        match name {
-            "desigma_get_document" => {
-                let _: Empty = parse(args)?;
-                Ok(json!({"name":self.doc.name,"kind":self.doc.kind,
-                    "pages":self.doc.pages.iter().filter_map(|id|self.doc.get(*id)).map(summary).collect::<Vec<_>>(),
-                    "node_count":self.doc.nodes.len(),"variable_count":self.doc.variables.len(),
-                    "can_undo":self.history.can_undo(),"can_redo":self.history.can_redo()}))
+        call(self, name, args)
+    }
+}
+
+pub fn call<H: Host>(host: &mut H, name: &str, args: Value) -> Result<Value, String> {
+    match name {
+        "desigma_get_document" => {
+            let _: Empty = parse(args)?;
+            Ok(json!({"name":host.doc().name,"kind":host.doc().kind,
+                "pages":host.doc().pages.iter().filter_map(|id|host.doc().get(*id)).map(summary).collect::<Vec<_>>(),
+                "node_count":host.doc().nodes.len(),"variable_count":host.doc().variables.len(),
+                "can_undo":host.can_undo(),"can_redo":host.can_redo()}))
+        }
+        "desigma_list_nodes" => {
+            let a: ListArgs = parse(args)?;
+            if a.limit == 0 || a.limit > 500 {
+                return Err("limit must be between 1 and 500".into());
             }
-            "desigma_list_nodes" => {
-                let a: ListArgs = parse(args)?;
-                if a.limit == 0 || a.limit > 500 {
-                    return Err("limit must be between 1 and 500".into());
-                }
-                if let Some(id) = a.parent_id {
-                    self.node(id)?;
-                }
-                if let Some(q) = &a.query {
-                    bounded_text("query", q, 1024)?;
-                }
-                let query = a.query.unwrap_or_default().to_lowercase();
-                let matching: Vec<_> = self
-                    .doc
-                    .nodes
-                    .values()
-                    .filter(|n| a.parent_id.is_none_or(|id| n.parent == Some(NodeId(id))) && n.name.to_lowercase().contains(&query))
-                    .collect();
-                let nodes: Vec<_> = matching.iter().skip(a.offset).take(a.limit).map(|n| summary(n)).collect();
-                let next = a.offset.saturating_add(nodes.len());
-                Ok(json!({"nodes":nodes,"total":matching.len(),"offset":a.offset,
-                    "next_offset":(next < matching.len()).then_some(next)}))
+            if let Some(id) = a.parent_id {
+                node(host, id)?;
             }
-            "desigma_get_node" => {
-                let a: NodeArgs = parse(args)?;
-                Ok(json!({"node":self.node(a.node_id)?}))
+            if let Some(q) = &a.query {
+                bounded_text("query", q, 1024)?;
             }
-            "desigma_get_variables" => {
-                let a: VariablesArgs = parse(args)?;
-                let effective = if let Some(id) = a.node_id {
-                    let n = self.node(id)?;
-                    Some(
-                        n.variables
-                            .bindings
-                            .iter()
-                            .map(|(property, variable)| {
-                                json!({
-                                    "property":property,"variable_id":variable,
-                                    "mode_id":self.doc.variables.get(variable).and_then(|v|self.doc.variable_mode(n.id,&v.collection)),
-                                    "value":self.doc.resolve_variable(n.id,variable)
-                                })
+            let query = a.query.unwrap_or_default().to_lowercase();
+            let matching: Vec<_> = host
+                .doc()
+                .nodes
+                .values()
+                .filter(|n| a.parent_id.is_none_or(|id| n.parent == Some(NodeId(id))) && n.name.to_lowercase().contains(&query))
+                .collect();
+            let nodes: Vec<_> = matching.iter().skip(a.offset).take(a.limit).map(|n| summary(n)).collect();
+            let next = a.offset.saturating_add(nodes.len());
+            Ok(json!({"nodes":nodes,"total":matching.len(),"offset":a.offset,
+                "next_offset":(next < matching.len()).then_some(next)}))
+        }
+        "desigma_get_node" => {
+            let a: NodeArgs = parse(args)?;
+            Ok(json!({"node":node(host, a.node_id)?}))
+        }
+        "desigma_get_variables" => {
+            let a: VariablesArgs = parse(args)?;
+            let effective = if let Some(id) = a.node_id {
+                let n = node(host, id)?;
+                Some(
+                    n.variables
+                        .bindings
+                        .iter()
+                        .map(|(property, variable)| {
+                            json!({
+                                "property":property,"variable_id":variable,
+                                "mode_id":host.doc().variables.get(variable).and_then(|v|host.doc().variable_mode(n.id,&v.collection)),
+                                "value":host.doc().resolve_variable(n.id,variable)
                             })
-                            .collect::<Vec<_>>(),
-                    )
-                } else {
-                    None
-                };
-                Ok(json!({"variables":self.doc.variables,"collections":self.doc.variable_collections,"effective_bindings":effective}))
-            }
-            "desigma_generate_code" => {
-                let a: CodeArgs = parse(args)?;
-                let id = self.node(a.node_id)?.id;
-                let doc = desigma_doc::apply_bound_variables(&self.doc);
-                let code = match a.language.as_str() {
-                    "css" => desigma_export::css_for(&doc, id),
-                    "tailwind" => desigma_export::tailwind_for(&doc, id),
-                    "react" => desigma_export::react_for(&doc, id),
-                    "swiftui" => desigma_export::swiftui_for(&doc, id),
-                    "compose" => desigma_export::compose_for(&doc, id),
-                    "svg" => desigma_export::export_svg(&doc, id, &Default::default()),
-                    _ => return Err("language must be css, tailwind, react, swiftui, compose, or svg".into()),
-                };
-                Ok(json!({"node_id":id,"language":a.language,"code":code}))
-            }
-            "desigma_create_node" => self.create(parse(args)?),
-            "desigma_update_node" => self.update(parse(args)?),
-            "desigma_delete_node" => {
-                let a: NodeArgs = parse(args)?;
-                let n = self.node(a.node_id)?;
-                if n.parent.is_none() {
-                    return Err("page roots cannot be deleted by this tool".into());
-                }
-                let id = n.id;
-                self.exec(Command::Remove { id })?;
-                Ok(json!({"node_id":id,"deleted":true}))
-            }
-            "desigma_undo" | "desigma_redo" => {
-                let _: Empty = parse(args)?;
-                let changed =
-                    if name == "desigma_undo" { self.history.undo(&mut self.doc) } else { self.history.redo(&mut self.doc) }.map_err(|e| e.to_string())?;
-                Ok(json!({"changed":changed,"can_undo":self.history.can_undo(),"can_redo":self.history.can_redo()}))
-            }
-            _ => Err(format!("unknown tool: {name}")),
-        }
-    }
-
-    fn node(&self, id: u64) -> Result<&Node, String> {
-        if id == 0 {
-            return Err("node IDs must be positive integers".into());
-        }
-        self.doc.get(NodeId(id)).ok_or_else(|| format!("node {id} not found"))
-    }
-
-    fn exec(&mut self, command: Command) -> Result<(), String> {
-        self.history.exec(&mut self.doc, command).map_err(|e| e.to_string())
-    }
-
-    fn create(&mut self, a: CreateArgs) -> Result<Value, String> {
-        let parent = self.node(a.parent_id)?;
-        if !parent.kind.is_container() {
-            return Err("parent_id must identify a container".into());
-        }
-        let index = parent.children.len();
-        geometry(a.x, a.y, a.width, a.height)?;
-        if let Some(name) = &a.name {
-            bounded_text("name", name, 1024)?;
-        }
-        if let Some(text) = &a.text {
-            bounded_text("text", text, 100_000)?;
-        }
-        if a.kind != "text" && a.text.is_some() {
-            return Err("text can only be set on text nodes".into());
-        }
-        let rect = Rect::new(a.x, a.y, a.width, a.height);
-        // Allocate only after every argument has passed validation.
-        let constructor: fn(NodeId, Rect) -> Node = match a.kind.as_str() {
-            "frame" => Node::frame,
-            "rectangle" => Node::rectangle,
-            "ellipse" => Node::ellipse,
-            "text" => |id, r| Node::text(id, r, "", TextStyle::default()),
-            _ => return Err("kind must be frame, rectangle, ellipse, or text".into()),
-        };
-        // Imported native files may carry a stale allocation counter. Derive a
-        // fresh ID from the actual nodes instead of risking an overwrite.
-        let id = self.doc.try_alloc_id().ok_or("Document has exhausted node IDs")?;
-        let mut node = constructor(id, rect);
-        if let Some(name) = a.name {
-            node.name = name;
-        }
-        if let (Some(text), NodeKind::Text(props)) = (a.text, &mut node.kind) {
-            props.content = text;
-        }
-        self.exec(Command::Insert { parent: NodeId(a.parent_id), index, nodes: vec![node] })?;
-        Ok(json!({"node":self.doc.get(id),"changed":true}))
-    }
-
-    fn update(&mut self, a: UpdateArgs) -> Result<Value, String> {
-        let mut node = self.node(a.node_id)?.clone();
-        if node.parent.is_none() {
-            return Err("page roots cannot be updated by this tool".into());
-        }
-        if let Some(name) = a.name {
-            bounded_text("name", &name, 1024)?;
-            node.name = name;
-        }
-        if let Some(x) = a.x {
-            node.transform.tx = x;
-        }
-        if let Some(y) = a.y {
-            node.transform.ty = y;
-        }
-        if let Some(width) = a.width {
-            node.size.x = width;
-        }
-        if let Some(height) = a.height {
-            node.size.y = height;
-        }
-        geometry(node.transform.tx, node.transform.ty, node.size.x, node.size.y)?;
-        if let Some(visible) = a.visible {
-            node.visible = visible;
-        }
-        if let Some(opacity) = a.opacity {
-            if !opacity.is_finite() || !(0.0..=1.0).contains(&opacity) {
-                return Err("opacity must be between 0 and 1".into());
-            }
-            node.opacity = opacity;
-        }
-        if let Some(text) = a.text {
-            bounded_text("text", &text, 100_000)?;
-            let NodeKind::Text(props) = &mut node.kind else {
-                return Err("text can only be set on text nodes".into());
+                        })
+                        .collect::<Vec<_>>(),
+                )
+            } else {
+                None
             };
-            if props.content != text {
-                props.content = text;
-                props.runs.clear();
-                props.lists.clear();
+            Ok(json!({"variables":host.doc().variables,"collections":host.doc().variable_collections,"effective_bindings":effective}))
+        }
+        "desigma_generate_code" => {
+            let a: CodeArgs = parse(args)?;
+            let id = node(host, a.node_id)?.id;
+            let doc = desigma_doc::apply_bound_variables(host.doc());
+            let code = match a.language.as_str() {
+                "css" => desigma_export::css_for(&doc, id),
+                "tailwind" => desigma_export::tailwind_for(&doc, id),
+                "react" => desigma_export::react_for(&doc, id),
+                "swiftui" => desigma_export::swiftui_for(&doc, id),
+                "compose" => desigma_export::compose_for(&doc, id),
+                "svg" => desigma_export::export_svg(&doc, id, &Default::default()),
+                _ => return Err("language must be css, tailwind, react, swiftui, compose, or svg".into()),
+            };
+            Ok(json!({"node_id":id,"language":a.language,"code":code}))
+        }
+        "desigma_create_node" => create(host, parse(args)?),
+        "desigma_update_node" => update(host, parse(args)?),
+        "desigma_delete_node" => {
+            let a: NodeArgs = parse(args)?;
+            let n = node(host, a.node_id)?;
+            if n.parent.is_none() {
+                return Err("page roots cannot be deleted by this tool".into());
             }
+            let id = n.id;
+            host.exec(Command::Remove { id })?;
+            Ok(json!({"node_id":id,"deleted":true}))
         }
-        let changed = self.doc.get(node.id) != Some(&node);
-        if changed {
-            self.exec(Command::Update { node: Box::new(node) })?;
+        "desigma_undo" | "desigma_redo" => {
+            let _: Empty = parse(args)?;
+            let changed = if name == "desigma_undo" { host.undo() } else { host.redo() }?;
+            Ok(json!({"changed":changed,"can_undo":host.can_undo(),"can_redo":host.can_redo()}))
         }
-        Ok(json!({"node":self.doc.get(NodeId(a.node_id)),"changed":changed}))
+        _ => Err(format!("unknown tool: {name}")),
     }
+}
+
+fn node<H: Host>(host: &H, id: u64) -> Result<&Node, String> {
+    if id == 0 {
+        return Err("node IDs must be positive integers".into());
+    }
+    host.doc().get(NodeId(id)).ok_or_else(|| format!("node {id} not found"))
+}
+
+fn create<H: Host>(host: &mut H, a: CreateArgs) -> Result<Value, String> {
+    let parent = node(host, a.parent_id)?;
+    if !parent.kind.is_container() {
+        return Err("parent_id must identify a container".into());
+    }
+    let index = parent.children.len();
+    geometry(a.x, a.y, a.width, a.height)?;
+    if let Some(name) = &a.name {
+        bounded_text("name", name, 1024)?;
+    }
+    if let Some(text) = &a.text {
+        bounded_text("text", text, 100_000)?;
+    }
+    if a.kind != "text" && a.text.is_some() {
+        return Err("text can only be set on text nodes".into());
+    }
+    let rect = Rect::new(a.x, a.y, a.width, a.height);
+    // Allocate only after every argument has passed validation.
+    let constructor: fn(NodeId, Rect) -> Node = match a.kind.as_str() {
+        "frame" => Node::frame,
+        "rectangle" => Node::rectangle,
+        "ellipse" => Node::ellipse,
+        "text" => |id, r| Node::text(id, r, "", TextStyle::default()),
+        _ => return Err("kind must be frame, rectangle, ellipse, or text".into()),
+    };
+    // Imported native files may carry a stale allocation counter. Derive a
+    // fresh ID from the actual nodes instead of risking an overwrite.
+    let id = host.alloc_id()?;
+    let mut node = constructor(id, rect);
+    if let Some(name) = a.name {
+        node.name = name;
+    }
+    if let (Some(text), NodeKind::Text(props)) = (a.text, &mut node.kind) {
+        props.content = text;
+    }
+    host.exec(Command::Insert { parent: NodeId(a.parent_id), index, nodes: vec![node] })?;
+    Ok(json!({"node":host.doc().get(id),"changed":true}))
+}
+
+fn update<H: Host>(host: &mut H, a: UpdateArgs) -> Result<Value, String> {
+    let mut node = node(host, a.node_id)?.clone();
+    if node.parent.is_none() {
+        return Err("page roots cannot be updated by this tool".into());
+    }
+    if let Some(name) = a.name {
+        bounded_text("name", &name, 1024)?;
+        node.name = name;
+    }
+    if let Some(x) = a.x {
+        node.transform.tx = x;
+    }
+    if let Some(y) = a.y {
+        node.transform.ty = y;
+    }
+    if let Some(width) = a.width {
+        node.size.x = width;
+    }
+    if let Some(height) = a.height {
+        node.size.y = height;
+    }
+    geometry(node.transform.tx, node.transform.ty, node.size.x, node.size.y)?;
+    if let Some(visible) = a.visible {
+        node.visible = visible;
+    }
+    if let Some(opacity) = a.opacity {
+        if !opacity.is_finite() || !(0.0..=1.0).contains(&opacity) {
+            return Err("opacity must be between 0 and 1".into());
+        }
+        node.opacity = opacity;
+    }
+    if let Some(text) = a.text {
+        bounded_text("text", &text, 100_000)?;
+        let NodeKind::Text(props) = &mut node.kind else {
+            return Err("text can only be set on text nodes".into());
+        };
+        if props.content != text {
+            props.content = text;
+            props.runs.clear();
+            props.lists.clear();
+        }
+    }
+    let changed = host.doc().get(node.id) != Some(&node);
+    if changed {
+        host.exec(Command::Update { node: Box::new(node) })?;
+    }
+    Ok(json!({"node":host.doc().get(NodeId(a.node_id)),"changed":changed}))
 }
 
 fn summary(n: &Node) -> Value {
@@ -467,5 +502,43 @@ mod tests {
         }
         assert!(e.call("desigma_list_nodes", json!({"limit":501})).is_err());
         assert!(e.call("desigma_get_node", json!({"node_id":"2"})).is_err());
+    }
+
+    /// A host that counts commands proves `call` does not depend on `Engine`'s own history.
+    #[test]
+    fn free_call_runs_on_any_host() {
+        struct Counting {
+            e: Engine,
+            execs: usize,
+        }
+        impl Host for Counting {
+            fn doc(&self) -> &Document {
+                &self.e.doc
+            }
+            fn exec(&mut self, cmd: Command) -> Result<(), String> {
+                self.execs += 1;
+                self.e.exec(cmd)
+            }
+            fn undo(&mut self) -> Result<bool, String> {
+                self.e.undo()
+            }
+            fn redo(&mut self) -> Result<bool, String> {
+                self.e.redo()
+            }
+            fn can_undo(&self) -> bool {
+                self.e.can_undo()
+            }
+            fn can_redo(&self) -> bool {
+                self.e.can_redo()
+            }
+            fn alloc_id(&mut self) -> Result<NodeId, String> {
+                self.e.alloc_id()
+            }
+        }
+        let mut h = Counting { e: Engine::default(), execs: 0 };
+        let id = call(&mut h, "desigma_create_node", json!({"parent_id":1,"kind":"frame","name":"A"})).unwrap()["node"]["id"].as_u64().unwrap();
+        call(&mut h, "desigma_update_node", json!({"node_id":id,"x":10.0})).unwrap();
+        assert_eq!(h.execs, 2);
+        assert!(call(&mut h, "desigma_undo", json!({})).unwrap()["changed"].as_bool().unwrap());
     }
 }

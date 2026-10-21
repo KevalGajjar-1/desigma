@@ -1,3 +1,4 @@
+#![cfg(feature = "server")]
 //! Real MCP client/server lifecycle across a subprocess, not a mocked dispatcher.
 use rmcp::{model::CallToolRequestParams, transport::TokioChildProcess, ServiceExt};
 use serde_json::{json, Value};

@@ -1,3 +1,4 @@
+#![cfg(feature = "server")]
 use desigma_mcp::server::Session;
 use serde_json::json;
 use std::{fs, path::PathBuf};
