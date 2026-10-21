@@ -19,7 +19,8 @@ pub struct Request {
     pub body: Vec<u8>,
 }
 
-/// Reads one HTTP/1.1 request within `deadline`; `stopped` aborts early. Body is fully consumed before any rejection.
+/// Reads one HTTP/1.1 request within `deadline`; `stopped` aborts early. The body is consumed before a
+/// rejection only when its `Content-Length` is within `MAX_BODY`.
 pub fn read_request(stream: &mut TcpStream, stopped: &AtomicBool, deadline: Instant) -> Result<Request, Failure> {
     let mut header = Vec::new();
     while !header.ends_with(b"\r\n\r\n") {

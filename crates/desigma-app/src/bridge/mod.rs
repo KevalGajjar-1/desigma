@@ -25,8 +25,19 @@ impl Host for AppHost<'_> {
         &self.0.doc
     }
     fn exec(&mut self, cmd: Command) -> Result<(), String> {
+        let doc = &mut self.0.doc;
+        // Lay out what the edit touched, as the editor's own create/delete/property handlers do.
+        let around = match &cmd {
+            Command::Insert { parent, .. } => Some(*parent),
+            Command::Remove { id } => doc.get(*id).and_then(|n| n.parent),
+            Command::Update { node } => Some(node.id),
+            _ => None,
+        };
         let mut tx = crate::edit::Tx::new();
-        tx.cmd(&mut self.0.doc, cmd).map_err(|e| e.to_string())?;
+        tx.cmd(doc, cmd).map_err(|e| e.to_string())?;
+        if let Some(id) = around.filter(|id| doc.get(*id).is_some()) {
+            crate::layout::relayout_around(doc, &mut tx.ed, id);
+        }
         if self.0.run_tx(tx) {
             Ok(())
         } else {
@@ -93,6 +104,8 @@ fn one() -> f32 {
 fn parse<T: serde::de::DeserializeOwned>(args: Value) -> Result<T, String> {
     serde_json::from_value(args).map_err(|e| format!("invalid arguments: {e}"))
 }
+
+const UNSAVED: &str = "Unsaved changes in the editor: ask the user to save them first (discard_changes=true throws them away)";
 
 const MUTATING: &[&str] = &[
     "desigma_create_node",
@@ -174,24 +187,37 @@ impl App {
             crate::canvas::interact::finish_text(self, true);
         }
         match name {
-            "desigma_get_document" => {
-                let mut v = engine::call(&mut AppHost(self), name, args)?;
-                v["session"] = json!("editor");
-                v["path"] = json!(self.file_path);
-                v["dirty"] = json!(self.hist.can_undo());
-                Ok(v)
-            }
+            "desigma_get_document" => self.bridge_document(args),
             "desigma_get_selection" => {
                 let _: serde_json::Map<String, Value> = parse(args)?;
                 Ok(json!({"nodes": self.selection.iter().filter_map(|id| self.doc.get(*id)).map(engine::summary).collect::<Vec<_>>()}))
             }
             "desigma_select_nodes" => {
                 let a: SelectArgs = parse(args)?;
-                let ids: Vec<NodeId> = a.node_ids.iter().map(|&i| NodeId(i)).collect();
-                if let Some(missing) = ids.iter().find(|id| self.doc.get(**id).is_none_or(|n| n.parent.is_none())) {
-                    return Err(format!("node {} not found or is a page", missing.0));
+                if a.node_ids.is_empty() || a.node_ids.len() > 500 {
+                    return Err("node_ids must list 1..500 layers".into());
+                }
+                let mut ids: Vec<NodeId> = Vec::new();
+                for id in a.node_ids.iter().map(|&i| NodeId(i)) {
+                    if self.doc.get(id).is_none_or(|n| n.parent.is_none()) {
+                        return Err(format!("node {} not found or is a page", id.0));
+                    }
+                    if !ids.contains(&id) {
+                        ids.push(id);
+                    }
+                }
+                let page = self.doc.page_of(ids[0]);
+                if ids.iter().any(|id| self.doc.page_of(*id) != page) {
+                    return Err("select_nodes: all layers must be on one page".into());
+                }
+                // the same page switch as Find's "go to result"
+                if let Some(pg) = page.filter(|pg| *pg != self.page) {
+                    crate::decks::ui::flush_notes(self);
+                    self.page = pg;
+                    self.canvas.reset_interaction();
                 }
                 self.selection = ids;
+                self.sanitize();
                 if a.reveal {
                     self.fit_selection();
                 }
@@ -210,17 +236,15 @@ impl App {
             "desigma_open_file" => {
                 let a: OpenArgs = parse(args)?;
                 if self.hist.can_undo() && !a.discard_changes {
-                    return Err("Unsaved changes in the editor: save them, or set discard_changes=true".into());
+                    return Err(UNSAVED.into());
                 }
                 if !a.path.is_absolute() {
                     return Err("Open path must be absolute".into());
                 }
                 let doc = crate::io::load_path(&a.path)?;
+                engine::validate_document(&doc)?;
                 self.replace_document(doc, Some(a.path));
-                engine::call(&mut AppHost(self), "desigma_get_document", json!({})).map(|mut v| {
-                    v["session"] = json!("editor");
-                    v
-                })
+                self.bridge_document(json!({}))
             }
             "desigma_save_file" => {
                 let a: SaveArgs = parse(args)?;
@@ -239,18 +263,28 @@ impl App {
             }
             "desigma_new_document" => {
                 let a: NewArgs = parse(args)?;
+                if a.name.trim().is_empty() || a.name.len() > 1024 {
+                    return Err("name must contain 1..1024 bytes".into());
+                }
                 if self.hist.can_undo() && !a.discard_changes {
-                    return Err("Unsaved changes in the editor: save them, or set discard_changes=true".into());
+                    return Err(UNSAVED.into());
                 }
                 let mut d = Document::new(&a.name);
                 d.add_page("Page 1");
                 self.replace_document(d, None);
-                engine::call(&mut AppHost(self), "desigma_get_document", json!({})).map(|mut v| {
-                    v["session"] = json!("editor");
-                    v
-                })
+                self.bridge_document(json!({}))
             }
             _ => engine::call(&mut AppHost(self), name, args),
         }
+    }
+
+    /// `desigma_get_document` plus what only the editor knows. `has_undo` is the editor's undo
+    /// stack, not "unsaved": it stays true after the user saves.
+    fn bridge_document(&mut self, args: Value) -> Result<Value, String> {
+        let mut v = engine::call(&mut AppHost(self), "desigma_get_document", args)?;
+        v["session"] = json!("editor");
+        v["path"] = json!(self.file_path);
+        v["has_undo"] = json!(self.hist.can_undo());
+        Ok(v)
     }
 }

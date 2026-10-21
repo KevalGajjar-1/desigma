@@ -548,6 +548,13 @@ impl eframe::App for Shell {
         });
     }
 
+    /// Runs even while the window is minimized or occluded (eframe then skips `ui`), so agent
+    /// calls keep being answered; the bridge server requests a repaint for each one.
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.app.now = ctx.input(|i| i.time);
+        self.app.poll_bridge();
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.app.poll_fonts();
         if self.app.fonts.is_loading() {
@@ -621,7 +628,6 @@ impl Shell {
         let ctx = ui.ctx().clone();
         self.app.now = ctx.input(|i| i.time);
         self.app.poll_plugins();
-        self.app.poll_bridge();
         self.app.poll_updater(&ctx);
         self.drive_screenshot(&ctx);
         if ctx.input(|i| i.viewport().close_requested()) {

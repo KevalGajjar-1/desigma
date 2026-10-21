@@ -40,7 +40,11 @@ impl Sim {
         // like the real window: Tab presses of a text session are taken out before egui sees them
         let mut raw = raw;
         eframe::App::raw_input_hook(shell, &ctx, &mut raw);
-        let out = ctx.run_ui(raw, |ui| shell.draw(ui));
+        // like eframe: `logic` runs before every UI pass
+        let out = ctx.run_ui(raw, |ui| {
+            eframe::App::logic(shell, ui.ctx(), &mut eframe::Frame::_new_kittest());
+            shell.draw(ui)
+        });
         self.cursor = out.platform_output.cursor_icon;
         self.shapes = out.shapes;
     }

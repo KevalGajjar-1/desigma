@@ -256,7 +256,10 @@ impl Server {
         loop {
             if self.stopped.load(Ordering::Acquire) || Instant::now() >= deadline {
                 cancelled.store(true, Ordering::Release);
-                return Err(("503 Service Unavailable", "Editor did not answer in time".to_string()));
+                return Err((
+                    "503 Service Unavailable",
+                    "Editor did not answer within 5 s; the call may still have been applied — read the document before retrying".to_string(),
+                ));
             }
             match receive.recv_timeout(Duration::from_millis(25)) {
                 Ok(Ok(result)) => return Ok(serde_json::to_vec(&json!({"result":result})).unwrap_or_default()),
