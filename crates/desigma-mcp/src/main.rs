@@ -7,7 +7,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let root = match (args.next(), args.next(), args.next()) {
         (Some(flag), Some(path), None) if flag == "--workspace" => std::path::PathBuf::from(path),
         (Some(flag), None, None) if flag == "--help" => {
-            eprintln!("desigma-mcp --workspace DIRECTORY\nLocal MCP server over stdio; edits are isolated until explicitly saved to a new file.");
+            eprintln!("desigma-mcp --workspace DIRECTORY\nLocal MCP server over stdio. Edits the document open in Desigma when its agent bridge is on; otherwise\nworks on an isolated file session that is kept until explicitly saved to a new file.");
             return Ok(());
         }
         _ => return Err("Usage: desigma-mcp --workspace DIRECTORY".into()),
