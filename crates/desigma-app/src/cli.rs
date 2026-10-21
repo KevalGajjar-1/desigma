@@ -32,6 +32,8 @@ pub struct Options {
     /// Draw the canvas with the GPU renderer (`--screenshot` otherwise always uses the
     /// deterministic CPU renderer; normal launches use the GPU unless it is turned off).
     pub gpu: bool,
+    /// --bridge: accept MCP tool calls from desigma-mcp for this launch.
+    pub bridge: bool,
     /// Force the pixel grid on (it appears from 800% zoom).
     pub grid: bool,
     /// Enter text editing on the first text layer with this name (select it with `--select-text`).
@@ -158,6 +160,7 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Options, String> 
             }
             "--rulers" => o.rulers = true,
             "--gpu" => o.gpu = true,
+            "--bridge" => o.bridge = true,
             "--grid" => o.grid = true,
             "--zoom" => {
                 let v = it.next().ok_or("--zoom needs a percentage (e.g. 800)")?;
@@ -203,11 +206,12 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Options, String> 
     Ok(o)
 }
 
-pub const USAGE: &str = "usage: desigma [FILE] [--screenshot OUT.png] [--size WxH] [--scale FACTOR] [--select LAYER|none] [--menu main|main/File|shape|palette] [--panel interaction|present-variables|variables|variables-floating|libraries|picker|picker-page|fill-d9|picker-gradient|effects-menu|stroke-settings|type-details|effect-noise|effect-texture|effect-glass|version-history|dev-annotate|dev-compare|updater|updater-banner]\n               [--zoom PERCENT] [--rulers] [--grid] [--gpu] [--home] [--library DIR] [--layout-grid grid|columns|rows] [--edit-text LAYER [--select-text START-END]]\n  FILE  .fig, .json (Figma REST or native), .svg or .desigma; without a file the projects home screen opens
+pub const USAGE: &str = "usage: desigma [FILE] [--screenshot OUT.png] [--size WxH] [--scale FACTOR] [--select LAYER|none] [--menu main|main/File|shape|palette] [--panel interaction|present-variables|variables|variables-floating|libraries|picker|picker-page|fill-d9|picker-gradient|effects-menu|stroke-settings|type-details|effect-noise|effect-texture|effect-glass|version-history|dev-annotate|dev-compare|updater|updater-banner]\n               [--zoom PERCENT] [--rulers] [--grid] [--gpu] [--bridge] [--home] [--library DIR] [--layout-grid grid|columns|rows] [--edit-text LAYER [--select-text START-END]]\n  FILE  .fig, .json (Figma REST or native), .svg or .desigma; without a file the projects home screen opens
   --scale    with --screenshot: device pixel ratio (2 writes a PNG twice --size, rendered crisp rather than upscaled)
   --home     show the home screen (also in --screenshot mode)
   --present  open presentation preview; --fullscreen starts it in native fullscreen (F11 toggles, Esc returns)
   --gpu      draw the canvas on the GPU; --screenshot uses the CPU renderer unless this is given
+  --bridge   let desigma-mcp control this editor (Preferences → Allow MCP agents… makes it permanent)
   --library  use DIR as the projects library instead of the default location
   --dev      open Dev mode with a code language (css|tailwind|swiftui|compose|react); --dev-demo marks the selection Ready for dev with an annotation
   --seed-library  write the showcase sample files (a project with three files) into DIR and exit
@@ -227,6 +231,12 @@ mod tests {
         assert!(!p(&["--screenshot", "x.png"]).unwrap().gpu);
         let o = p(&["--gpu", "--screenshot", "x.png"]).unwrap();
         assert!(o.gpu && o.screenshot.is_some());
+    }
+
+    #[test]
+    fn bridge_flag_is_off_unless_given() {
+        assert!(!p(&[]).unwrap().bridge);
+        assert!(p(&["--bridge"]).unwrap().bridge);
     }
 
     #[test]

@@ -105,3 +105,29 @@ fn bridge_refuses_mutations_while_a_gesture_runs() {
     assert!(body["error"].as_str().unwrap().contains("busy"), "{body}");
     assert_eq!(s.app().doc.nodes.len(), before);
 }
+
+#[test]
+fn preference_toggle_starts_the_bridge_saves_the_flag_and_the_pill_turns_it_off() {
+    use crate::comments::settings;
+    use crate::panels::menus::{self, Action};
+    let dir = std::env::temp_dir().join(format!("desigma_bridge_pref_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let mut s = Sim::with(Options { library: Some(dir.clone()), ..Default::default() });
+    let ctx = s.ctx.clone();
+    menus::run(&mut s.shell.app, &ctx, Action::ToggleAgentBridge);
+    assert!(s.app().bridge.bridge.is_some());
+    assert_eq!(settings::load_flag(&dir, crate::bridge::FLAG), Some(true));
+    assert!(dir.join(crate::bridge::DISCOVERY_FILE).exists());
+    s.frame(vec![]);
+    let off = s.rect_of("bridge-off");
+    s.click(off.center());
+    assert!(s.app().bridge.bridge.is_none());
+    assert_eq!(settings::load_flag(&dir, crate::bridge::FLAG), Some(false));
+    assert!(!dir.join(crate::bridge::DISCOVERY_FILE).exists());
+    menus::run(&mut s.shell.app, &ctx, Action::ToggleAgentBridge);
+    assert!(s.app().bridge.bridge.is_some());
+    menus::run(&mut s.shell.app, &ctx, Action::ToggleAgentBridge);
+    assert!(s.app().bridge.bridge.is_none());
+    assert_eq!(settings::load_flag(&dir, crate::bridge::FLAG), Some(false));
+    let _ = std::fs::remove_dir_all(&dir);
+}

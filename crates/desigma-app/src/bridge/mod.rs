@@ -1,5 +1,6 @@
 //! Agent bridge: desigma-mcp drives the live document through the tool engine.
 pub mod server;
+pub mod ui;
 pub use server::{Bridge, DISCOVERY_FILE};
 
 use crate::app::App;
@@ -8,6 +9,9 @@ use desigma_mcp::engine::{self, Host};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::path::PathBuf;
+
+/// Settings flag for Preferences → Allow MCP agents to control this editor.
+pub const FLAG: &str = "agent_bridge";
 
 #[derive(Default)]
 pub struct BridgeState {
@@ -103,8 +107,6 @@ const MUTATING: &[&str] = &[
 ];
 
 impl App {
-    // Called from the Preferences toggle and `--bridge` launch, wired in the next commit.
-    #[allow(dead_code)]
     pub fn start_bridge(&mut self, ctx: &egui::Context) -> Result<(), String> {
         if self.bridge.bridge.is_some() {
             return Ok(());
@@ -122,10 +124,26 @@ impl App {
         Ok(())
     }
 
-    // Called from the Preferences toggle and the status pill, wired in the next commit.
-    #[allow(dead_code)]
     pub fn stop_bridge(&mut self) {
         self.bridge.bridge = None;
+    }
+
+    /// Preferences → Allow MCP agents to control this editor (and the pill's Off button).
+    pub fn toggle_agent_bridge(&mut self, ctx: &egui::Context) {
+        let on = self.bridge.bridge.is_none();
+        if on {
+            if let Err(e) = self.start_bridge(ctx) {
+                self.show_toast(e, true);
+                return;
+            }
+        } else {
+            self.stop_bridge();
+        }
+        if let Some(lib) = &self.lib {
+            if let Err(e) = crate::comments::settings::save_flag(lib.root(), FLAG, on) {
+                self.show_toast(e, true);
+            }
+        }
     }
 
     pub fn poll_bridge(&mut self) {

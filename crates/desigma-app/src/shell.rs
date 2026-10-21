@@ -42,7 +42,7 @@ impl Shell {
         let screenshot = opts.screenshot.is_some();
         // "Open in new window" children leave update checks to the first window
         let launch = !screenshot && opts.open_id.is_none();
-        let (gpu_flag, library) = (opts.gpu, opts.library.clone());
+        let (gpu_flag, bridge_flag, library) = (opts.gpu, opts.bridge, opts.library.clone());
         let mut shell = Self::build(&cc.egui_ctx, opts);
         if let Some(rs) = &cc.wgpu_render_state {
             if let Some(max) = canvas::gpu::init(rs) {
@@ -54,6 +54,13 @@ impl Shell {
         let saved = library.as_deref().and_then(|l| crate::comments::settings::load_flag(l, "use_gpu"));
         shell.app.canvas.gpu.pref = if screenshot { gpu_flag } else { gpu_flag || saved.unwrap_or(true) };
         shell.app.updater.start(library.as_deref(), launch);
+        // --bridge turns the agent bridge on for this launch only; the Preferences toggle saves it
+        let saved_bridge = library.as_deref().and_then(|l| crate::comments::settings::load_flag(l, crate::bridge::FLAG)) == Some(true);
+        if launch && (bridge_flag || saved_bridge) {
+            if let Err(e) = shell.app.start_bridge(&cc.egui_ctx) {
+                shell.app.show_toast(e, true);
+            }
+        }
         shell
     }
 
@@ -710,6 +717,7 @@ impl Shell {
         crate::libraries::show(&mut self.app, &ctx);
         crate::plugins::ui::show(&mut self.app, &ctx);
         crate::updater::ui::show(&mut self.app, &ctx);
+        crate::bridge::ui::show(&mut self.app, &ctx);
         self.toast(ui, full);
 
         self.sync_title(&ctx);

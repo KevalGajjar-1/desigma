@@ -103,6 +103,8 @@ pub enum Action {
     ToggleGpu,
     /// Preferences -> Check for updates automatically.
     ToggleUpdateCheck,
+    /// Preferences -> Allow MCP agents to control this editor.
+    ToggleAgentBridge,
     /// Help -> Check for updates.
     CheckForUpdates,
     Shortcuts,
@@ -221,6 +223,7 @@ pub fn run(app: &mut App, ctx: &Context, a: Action) {
         Action::YourName => app.ask_author_name(),
         Action::ToggleGpu => app.toggle_gpu(),
         Action::ToggleUpdateCheck => app.toggle_update_check(),
+        Action::ToggleAgentBridge => app.toggle_agent_bridge(ctx),
         Action::CheckForUpdates => app.check_for_updates(ctx, true),
         Action::Shortcuts => app.show_shortcuts(),
         Action::AboutDesigma => app.show_about(),
@@ -475,6 +478,7 @@ fn main_nodes(app: &App) -> Vec<Node> {
                 leaf("Check for updates automatically", "", Action::ToggleUpdateCheck)
                     .on(crate::RELEASE_BUILD && !app.updater.no_auto_check)
                     .off(!crate::RELEASE_BUILD),
+                leaf("Allow MCP agents to control this editor", "", Action::ToggleAgentBridge).on(app.bridge.bridge.is_some()),
             ],
         ),
         leaf("Libraries", "", Action::About).off(true).sep(),
