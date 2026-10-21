@@ -52,6 +52,8 @@ pub struct Bridge {
     receiver: Receiver<BridgeRequest>,
     stopped: Arc<AtomicBool>,
     state: Arc<Mutex<Shared>>,
+    // Read by the status pill, added in the next commit.
+    #[allow(dead_code)]
     pub last_call: Arc<Mutex<Option<String>>>,
 }
 
@@ -109,9 +111,12 @@ impl Bridge {
         Ok(Self { port, token, discovery, receiver, stopped, state, last_call })
     }
 
+    // Shown by the status pill, added in the next commit.
+    #[allow(dead_code)]
     pub fn port(&self) -> u16 {
         self.port
     }
+    #[cfg(test)]
     pub fn token(&self) -> &str {
         &self.token
     }

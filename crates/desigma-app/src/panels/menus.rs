@@ -127,8 +127,12 @@ pub fn run(app: &mut App, ctx: &Context, a: Action) {
         Action::Export => app.export_selection(),
         Action::ExportSlidePdf => app.export_deck_pdf(false),
         Action::ExportDeckPdf => app.export_deck_pdf(true),
-        Action::Undo => app.undo(),
-        Action::Redo => app.redo(),
+        Action::Undo => {
+            app.undo();
+        }
+        Action::Redo => {
+            app.redo();
+        }
         Action::SelectAll => app.select_all_layers(),
         Action::SelectInverse => app.select_inverse(),
         Action::SelectChildren => app.select_children(),

@@ -911,6 +911,7 @@ dependencies = [
  "desigma-fonts",
  "desigma-gpu",
  "desigma-library",
+ "desigma-mcp",
  "desigma-render",
  "desigma-svg",
  "eframe",

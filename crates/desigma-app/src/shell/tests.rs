@@ -950,6 +950,7 @@ mod variables;
 mod vector;
 
 mod assets_thumbs;
+mod bridge;
 mod libraries;
 mod lint;
 mod plugins;

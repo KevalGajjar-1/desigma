@@ -329,9 +329,12 @@ fn keys(app: &mut App, ctx: &Context, view: &VariableStore) {
                 });
                 app.vars.selected = copies;
             }
-            Key::Z if modifiers.command && !modifiers.shift => app.undo(),
-            Key::Z if modifiers.command => app.redo(),
-            Key::Y if modifiers.command => app.redo(),
+            Key::Z if modifiers.command && !modifiers.shift => {
+                app.undo();
+            }
+            Key::Z | Key::Y if modifiers.command => {
+                app.redo();
+            }
             _ => {}
         }
     }

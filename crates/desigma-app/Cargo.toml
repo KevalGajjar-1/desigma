@@ -30,6 +30,7 @@ desigma-fonts.workspace = true
 desigma-export.workspace = true
 desigma-svg.workspace = true
 desigma-gpu.workspace = true
+desigma-mcp.workspace = true
 arboard = "3"
 eframe = "0.35.0"
 rfd = "0.17.2"

@@ -614,6 +614,7 @@ impl Shell {
         let ctx = ui.ctx().clone();
         self.app.now = ctx.input(|i| i.time);
         self.app.poll_plugins();
+        self.app.poll_bridge();
         self.app.poll_updater(&ctx);
         self.drive_screenshot(&ctx);
         if ctx.input(|i| i.viewport().close_requested()) {

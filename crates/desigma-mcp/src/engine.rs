@@ -280,7 +280,7 @@ fn update<H: Host>(host: &mut H, a: UpdateArgs) -> Result<Value, String> {
     Ok(json!({"node":host.doc().get(NodeId(a.node_id)),"changed":changed}))
 }
 
-fn summary(n: &Node) -> Value {
+pub fn summary(n: &Node) -> Value {
     json!({"node_id":n.id,"name":n.name,"kind":n.kind.default_name(),"parent_id":n.parent,
         "child_count":n.children.len(),"visible":n.visible,"x":n.transform.tx,"y":n.transform.ty,
         "width":n.size.x,"height":n.size.y})
