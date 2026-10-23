@@ -54,6 +54,12 @@ pub const RELEASE_BUILD: bool = option_env!("DESIGMA_VERSION").is_some();
 /// desigma opens (including Present and "open in new window" processes) starts through `main`, so
 /// they all get it.
 fn window_icon() -> Option<egui::IconData> {
+    // macOS shows the window icon in the Dock when desigma runs as a bare binary (cargo run), where
+    // the squircle needs the same transparent margin the .icns has; elsewhere the edge-to-edge art
+    // fills title bars and taskbars as intended.
+    #[cfg(target_os = "macos")]
+    const PNG: &[u8] = include_bytes!("../../../assets/icon/desigma.iconset/icon_256x256.png");
+    #[cfg(not(target_os = "macos"))]
     const PNG: &[u8] = include_bytes!("../../../assets/icon/png/icon_256.png");
     let img = image::load_from_memory_with_format(PNG, image::ImageFormat::Png).ok()?.into_rgba8();
     let (width, height) = img.dimensions();
