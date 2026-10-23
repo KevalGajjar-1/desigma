@@ -1,5 +1,6 @@
 mod app;
 mod board;
+mod bridge;
 mod canvas;
 mod cli;
 mod clipboard;
@@ -19,6 +20,7 @@ mod layout;
 mod libraries;
 #[cfg(test)]
 mod lint;
+mod loopback;
 mod ops;
 mod panels;
 mod plugins;

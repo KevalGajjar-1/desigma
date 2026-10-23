@@ -194,31 +194,41 @@ impl App {
         self.sanitize();
     }
 
-    pub fn undo(&mut self) {
+    /// Returns whether the document changed (a history step or a pending version restore).
+    pub fn undo(&mut self) -> bool {
         if self.try_undo_restore() {
-            return;
+            return true;
         }
         match self.hist.undo(&mut self.doc) {
             Ok(true) => {
                 self.changed();
                 self.sanitize();
+                true
             }
-            Ok(false) => {}
-            Err(e) => self.show_toast(format!("Undo failed: {e}"), true),
+            Ok(false) => false,
+            Err(e) => {
+                self.show_toast(format!("Undo failed: {e}"), true);
+                false
+            }
         }
     }
 
-    pub fn redo(&mut self) {
+    /// Returns whether the document changed (a history step or a pending version restore).
+    pub fn redo(&mut self) -> bool {
         if self.try_redo_restore() {
-            return;
+            return true;
         }
         match self.hist.redo(&mut self.doc) {
             Ok(true) => {
                 self.changed();
                 self.sanitize();
+                true
             }
-            Ok(false) => {}
-            Err(e) => self.show_toast(format!("Redo failed: {e}"), true),
+            Ok(false) => false,
+            Err(e) => {
+                self.show_toast(format!("Redo failed: {e}"), true);
+                false
+            }
         }
     }
 
@@ -794,6 +804,9 @@ impl App {
         self.selection.clear();
         self.hover = None;
         self.file_path = path;
+        if let Some(b) = &self.bridge.bridge {
+            b.update_document(&self.doc.name, self.file_path.as_deref());
+        }
         self.canvas.reset_interaction();
         // a design tool means nothing on a board and the other way round
         self.tool = Tool::Move;

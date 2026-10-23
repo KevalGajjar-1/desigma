@@ -29,7 +29,7 @@ pub use codegen::{is_vector_asset, vector_assets};
 pub use compose::compose_for;
 pub use css::{css_for, font_family_css, paint_css, text_style_css};
 pub use pdf::export_pdf;
-pub use raster::{export_jpg, export_png, render_export, rgba_bytes, ExportScale};
+pub use raster::{export_jpg, export_png, render_export, render_size, rgba_bytes, ExportScale};
 pub use react::{react_for, react_with, ReactOptions};
 pub use svg::{export_svg, SvgOptions};
 pub use swiftui::swiftui_for;
