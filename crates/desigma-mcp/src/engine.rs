@@ -148,6 +148,7 @@ pub fn call<H: Host>(host: &mut H, name: &str, args: Value) -> Result<Value, Str
             let changed = if name == "desigma_undo" { host.undo() } else { host.redo() }?;
             Ok(json!({"changed":changed,"can_undo":host.can_undo(),"can_redo":host.can_redo()}))
         }
+        n if crate::motion::EDIT_TOOLS.contains(&n) => crate::motion::call(host, n, args),
         _ => Err(format!("unknown tool: {name}")),
     }
 }
@@ -476,6 +477,7 @@ pub fn tools() -> Vec<Value> {
         false,
         true,
     );
+    out.extend(crate::motion::tools());
     out
 }
 

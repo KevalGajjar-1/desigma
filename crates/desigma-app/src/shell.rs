@@ -654,6 +654,7 @@ impl Shell {
         self.app.autosave_tick(&ctx);
         self.app.history_tick();
         self.app.dev_tick(&ctx);
+        self.app.motion_tick(&ctx);
         if self.app.proto.present.is_some() {
             crate::present::show(&mut self.app, ui);
             return;

@@ -128,8 +128,10 @@ pub fn paint(app: &mut App, ui: &Ui, rect: ERect) -> bool {
     let rev = super::tiles::take_rev(app);
     let start = std::time::Instant::now();
     let vp = Viewport { offset: app.view.offset, zoom: app.view.zoom, dpr: ppp };
-    let (doc, page) = (&app.doc, app.page);
-    let g = &mut app.canvas.gpu;
+    let page = app.page;
+    let c = &mut app.canvas;
+    let doc = c.motion.document(app.motion.enabled, &app.doc);
+    let g = &mut c.gpu;
     let frame = g.compiler.compile(doc, page, rev, &vp, size);
     g.last_stats = Some(frame.stats());
     g.last_compile_ms = start.elapsed().as_secs_f32() * 1000.0;
@@ -138,6 +140,6 @@ pub fn paint(app: &mut App, ui: &Ui, rect: ERect) -> bool {
         ui.ctx().request_repaint();
     }
     ui.painter().with_clip_rect(rect).add(egui_wgpu::Callback::new_paint_callback(rect, Cb { frame: Arc::new(frame) }));
-    app.canvas.last_render_ms = start.elapsed().as_secs_f32() * 1000.0;
+    c.last_render_ms = start.elapsed().as_secs_f32() * 1000.0;
     true
 }

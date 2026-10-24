@@ -1,6 +1,7 @@
 //! Motion (Beta) mode: UI state shared by the inspector, timeline and playback.
 
 pub mod inspector;
+pub mod playback;
 pub mod timeline;
 
 /// State of Motion mode shared between its panels. Created identically by the inspector, the

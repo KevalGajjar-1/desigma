@@ -130,6 +130,8 @@ pub struct CanvasState {
     pub tiles: tiles::TileView,
     /// GPU canvas renderer state (preference, availability, caches).
     pub gpu: gpu::GpuView,
+    /// Motion mode: the evaluated page and the playback clock.
+    pub motion: crate::motion::playback::Playback,
     pub inter: Interaction,
     pub guides: Vec<snap::Guide>,
     pub measures: Vec<snap::Measure>,

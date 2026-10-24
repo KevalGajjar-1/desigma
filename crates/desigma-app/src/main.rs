@@ -85,6 +85,16 @@ fn main() {
         println!("desigma {VERSION}");
         return;
     }
+    if let Some(file) = &opts.export_animation {
+        match motion::playback::export::run_cli(file, opts.format.as_deref(), opts.out.as_deref(), opts.fps, opts.scale, opts.select.as_deref()) {
+            Ok(msg) => println!("desigma: {msg}"),
+            Err(e) => {
+                eprintln!("desigma: {e}");
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
     if let Some(dir) = &opts.seed_library {
         match showcase::seed_library(dir) {
             Ok(()) => println!("desigma: wrote the showcase sample files to {}", dir.display()),

@@ -233,6 +233,19 @@ impl App {
                 std::fs::write(&a.path, png).map_err(|e| format!("Cannot write PNG: {e}"))?;
                 Ok(json!({"path":a.path,"width":width,"height":height}))
             }
+            "desigma_export_animation" => {
+                let a: desigma_mcp::motion::ExportAnimArgs = parse(args)?;
+                let path = std::path::PathBuf::from(&a.path);
+                let ext = desigma_mcp::motion::extension(&a.format)?;
+                if path.extension().and_then(|e| e.to_str()) != Some(ext) || !path.is_absolute() {
+                    return Err(format!("Export path must be an absolute .{ext} path"));
+                }
+                let (bytes, mut info) = desigma_mcp::motion::export(&AppHost(self), &a)?;
+                std::fs::write(&path, &bytes).map_err(|e| format!("Cannot write animation: {e}"))?;
+                info["path"] = json!(path);
+                info["bytes"] = json!(bytes.len());
+                Ok(info)
+            }
             "desigma_open_file" => {
                 let a: OpenArgs = parse(args)?;
                 if self.hist.can_undo() && !a.discard_changes {

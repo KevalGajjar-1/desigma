@@ -123,8 +123,6 @@ pub struct TimelineUi {
     clipboard: Vec<CopiedKey>,
     /// The last copy was keyframes (Ctrl+V pastes keyframes instead of layers).
     keys_active: bool,
-    /// Sub-millisecond remainder of the playback clock.
-    frac: f32,
 }
 
 impl Default for TimelineUi {
@@ -140,7 +138,6 @@ impl Default for TimelineUi {
             drag: None,
             clipboard: Vec::new(),
             keys_active: false,
-            frac: 0.0,
         }
     }
 }
@@ -598,30 +595,6 @@ fn toggle_play(app: &mut App) {
     }
 }
 
-/// Moves the playhead with the clock while playing; stops at the end unless looping.
-fn advance(app: &mut App, st: &mut TimelineUi, ctx: &Context) {
-    if !app.motion.playing {
-        st.frac = 0.0;
-        return;
-    }
-    let dt = ctx.input(|i| i.unstable_dt).clamp(0.0, 0.1) * 1000.0;
-    let tl = app.doc.timeline(app.page);
-    st.frac += dt;
-    let whole = st.frac.floor();
-    st.frac -= whole;
-    let mut t = app.motion.playhead_ms as f32 + whole;
-    if t >= tl.duration_ms as f32 {
-        if tl.looping {
-            t = t.rem_euclid(tl.duration_ms.max(1) as f32);
-        } else {
-            t = tl.duration_ms as f32;
-            app.motion.playing = false;
-        }
-    }
-    app.motion.playhead_ms = t as u32;
-    ctx.request_repaint();
-}
-
 // ---- painting helpers -------------------------------------------------------------------------
 
 #[cfg(test)]
@@ -660,7 +633,7 @@ pub fn show(app: &mut App, ui: &mut Ui, rect: Rect) {
     let ctx = ui.ctx().clone();
     ctx.data_mut(|d| d.insert_temp(egui::Id::new("motion-timeline-rect"), rect));
     let mut st = load(&ctx);
-    advance(app, &mut st, &ctx);
+    // the playhead is advanced by `playback::Playback::tick` (one clock for editing and export)
     sanitize(app);
     let tl = app.doc.timeline(app.page);
     if app.motion.playhead_ms > tl.duration_ms {
