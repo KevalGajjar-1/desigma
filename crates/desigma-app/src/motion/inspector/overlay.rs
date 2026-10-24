@@ -5,17 +5,40 @@
 use super::*;
 use crate::canvas::MoveState;
 use crate::util::parent_world;
+use desigma_doc::Document;
 
 /// Pink (Y) and green (X) axis colours of the gizmo.
 const AXIS_Y: Color32 = theme::GUIDE_COLOR;
 const AXIS_X: Color32 = Color32::from_rgb(0x3D, 0xD6, 0x8C);
 const RING_R: f32 = 18.0;
 
-/// Screen position of the centre of `id` when its layout position is `pos`.
+/// Page-space centre of `id` in `doc`, which must be the evaluated (drawn) document: the node's
+/// animated size, rotation, scale and its parents' animation are all part of the result.
+pub fn node_centre(doc: &Document, id: NodeId) -> Option<DVec2> {
+    let n = doc.get(id)?;
+    Some(doc.world_transform(id).apply(DVec2::new(n.size.x * 0.5, n.size.y * 0.5)))
+}
+
+/// Screen position of the transform gizmo of `id`: the centre of the layer as drawn at the
+/// playhead (keyframes and clips included).
+pub fn gizmo_centre(app: &App, rect: Rect, id: NodeId) -> Option<Pos2> {
+    Some(app.view.to_screen(rect.min, node_centre(app.shown_doc(), id)?))
+}
+
+/// Screen position of the centre of `id` when its layout position is `pos`: the same space as
+/// [`gizmo_centre`] (the drawn document's parent chain and size).
 fn centre_at(app: &App, rect: Rect, id: NodeId, pos: DVec2) -> Option<Pos2> {
-    let n = app.doc.get(id)?;
+    let doc = app.shown_doc();
+    let n = doc.get(id)?;
     let c = DVec2::new(pos.x + n.size.x * 0.5, pos.y + n.size.y * 0.5);
-    Some(app.view.to_screen(rect.min, parent_world(&app.doc, id).apply(c)))
+    Some(app.view.to_screen(rect.min, parent_world(doc, id).apply(c)))
+}
+
+/// Screen position of the centre of `id` along its motion path at time `t_ms` (the keyframed
+/// Position, no clips), in the same space as [`gizmo_centre`].
+pub fn path_point(app: &App, rect: Rect, id: NodeId, t_ms: f32) -> Option<Pos2> {
+    let v = app.doc.get(id)?.motion.track(AnimProperty::Position)?.value_at(t_ms)?.vec2()?;
+    centre_at(app, rect, id, v)
 }
 
 fn arrow(p: &Painter, from: Pos2, to: Pos2, col: Color32) {
@@ -39,7 +62,7 @@ pub fn paint_overlay(app: &App, ui: &Ui, rect: Rect) {
         let Some(n) = app.doc.get(*id) else { continue };
         let Some(track) = n.motion.track(AnimProperty::Position).filter(|t| !t.is_empty()) else { continue };
         let (Some(t0), Some(t1)) = (track.start_ms(), track.end_ms()) else { continue };
-        let at = |t: f32| track.value_at(t).and_then(|v| v.vec2()).and_then(|v| centre_at(app, rect, *id, v));
+        let at = |t: f32| path_point(app, rect, *id, t);
         // The path: a thin line with a dot per frame (thinned while zoomed out).
         let mut pts = Vec::new();
         let mut t = t0 as f32;
@@ -65,9 +88,8 @@ pub fn paint_overlay(app: &App, ui: &Ui, rect: Rect) {
             let fill = if on { theme::CANVAS_SELECTION } else { theme::CANVAS_HANDLE_FILL };
             p.add(Shape::convex_polygon(diamond_shape(c, 5.0), fill, Stroke::new(1.25, theme::CANVAS_SELECTION)));
         }
-        // Gizmo at the position now (clips included).
-        let cur = motion::value_at(n, AnimProperty::Position, now).and_then(|v| v.vec2());
-        if let Some(c) = cur.and_then(|v| centre_at(app, rect, *id, v)) {
+        // Gizmo on the layer's centre now (clips included).
+        if let Some(c) = gizmo_centre(app, rect, *id).filter(|_| !app.motion_ins.gizmo_hidden) {
             p.circle_filled(c, RING_R, theme::CANVAS_SELECTION.gamma_multiply(0.12));
             p.circle_stroke(c, RING_R, Stroke::new(1.5, theme::CANVAS_SELECTION));
             arrow(&p, c + Vec2::new(0.0, -RING_R), c + Vec2::new(0.0, -RING_R - 22.0), AXIS_Y);

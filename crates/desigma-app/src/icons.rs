@@ -140,6 +140,11 @@ pub enum Icon {
     ChevronsDownUp,
     MoveArrows,
     Maximize,
+    /// Transform gizmo toggle of the Motion inspector.
+    Crosshair,
+    /// Proportional scale on / off.
+    Link,
+    Unlink,
 }
 
 impl Icon {
@@ -266,6 +271,9 @@ impl Icon {
         Icon::ChevronsDownUp,
         Icon::MoveArrows,
         Icon::Maximize,
+        Icon::Crosshair,
+        Icon::Link,
+        Icon::Unlink,
     ];
 
     /// Name of the vendored Lucide icon that stands in for this one (None for the logo).
@@ -391,6 +399,9 @@ impl Icon {
             Icon::ChevronsDownUp => "chevrons-down-up",
             Icon::MoveArrows => "move",
             Icon::Maximize => "maximize-2",
+            Icon::Crosshair => "crosshair",
+            Icon::Link => "link",
+            Icon::Unlink => "unlink",
         })
     }
 }
@@ -517,6 +528,9 @@ lucide!(
     "chevron-left",
     "move",
     "maximize-2",
+    "crosshair",
+    "link",
+    "unlink",
 );
 
 /// SVG source of the Lucide icon behind `icon`.
@@ -624,7 +638,7 @@ mod tests {
         for i in Icon::ALL {
             assert!(seen.insert(*i), "{i:?} listed twice");
         }
-        assert_eq!(seen.len(), 120);
+        assert_eq!(seen.len(), 123);
     }
 
     #[test]

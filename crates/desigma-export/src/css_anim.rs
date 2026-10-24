@@ -53,6 +53,8 @@ fn declaration(node: &Node, p: AnimProperty, v: &AnimValue) -> Option<String> {
         }
         (AnimProperty::StrokeColor, AnimValue::Color(c)) => format!("border-color: {}", css_color(c, 1.0)),
         (AnimProperty::StrokeWeight, AnimValue::Scalar(v)) => format!("border-width: {}px", num(*v)),
+        (AnimProperty::BlurRadius, AnimValue::Scalar(v)) => format!("filter: blur({}px)", num(v.max(0.0))),
+        // the shadow properties share one `box-shadow` rule: see `shadow_frames`
         _ => return None,
     })
 }
@@ -90,12 +92,50 @@ fn frames(node: &Node, p: AnimProperty, duration: u32, baked: bool) -> Vec<(u32,
     out
 }
 
+const SHADOW_PROPS: [AnimProperty; 4] = [AnimProperty::ShadowX, AnimProperty::ShadowY, AnimProperty::ShadowBlur, AnimProperty::ShadowColor];
+
+fn is_shadow(p: AnimProperty) -> bool {
+    SHADOW_PROPS.contains(&p)
+}
+
+/// Keyframes of the `box-shadow` of the first drop shadow: CSS cannot animate the offset, blur
+/// and colour of a shadow separately, so the keyframe times of all animated shadow properties are
+/// merged and each frame prints the full shadow. The easing of a frame is the one of the first
+/// animated shadow track that has a key there.
+fn shadow_frames(node: &Node, duration: u32) -> Vec<(u32, String, Option<Ease>)> {
+    let tracks: Vec<&Track> = SHADOW_PROPS.iter().filter_map(|p| node.motion.track(*p)).filter(|t| t.visible && !t.is_empty()).collect();
+    let spread = match node.effects.iter().find(|e| matches!(e, desigma_doc::Effect::DropShadow { .. })) {
+        Some(desigma_doc::Effect::DropShadow { spread, .. }) => *spread,
+        _ => return vec![],
+    };
+    let mut times: BTreeSet<u32> = tracks.iter().flat_map(|t| t.keys.iter().map(|k| k.time_ms.min(duration))).collect();
+    times.insert(0);
+    times.insert(duration);
+    let times: Vec<u32> = times.into_iter().collect();
+    let mut out = Vec::new();
+    for (i, t) in times.iter().enumerate() {
+        let num_at = |p| value_at(node, p, *t as f32).and_then(|v| v.scalar()).unwrap_or(0.0);
+        let col = value_at(node, AnimProperty::ShadowColor, *t as f32).and_then(|v| v.color()).unwrap_or(desigma_doc::Color::BLACK);
+        let v = format!(
+            "{}px {}px {}px {}px {}",
+            num2(num_at(AnimProperty::ShadowX)),
+            num2(num_at(AnimProperty::ShadowY)),
+            num2(num_at(AnimProperty::ShadowBlur)),
+            num2(spread),
+            css_color(&col, 1.0)
+        );
+        let timing = (i + 1 < times.len()).then(|| tracks.iter().find_map(|tr| tr.key_at(*t).map(|k| k.easing)).unwrap_or(Ease::Linear));
+        out.push((*t, v, timing));
+    }
+    out
+}
+
 fn animated_properties(node: &Node) -> Vec<(AnimProperty, bool)> {
     let mut clip_props: BTreeSet<AnimProperty> = BTreeSet::new();
     for c in node.motion.clips.iter().filter(|c| c.visible) {
         clip_props.extend(c.kind.properties().iter().copied());
     }
-    let mut all: BTreeSet<AnimProperty> = node.motion.tracks.iter().filter(|t| !t.is_empty()).map(|t| t.property).collect();
+    let mut all: BTreeSet<AnimProperty> = node.motion.tracks.iter().filter(|t| !t.is_empty() && t.visible).map(|t| t.property).collect();
     all.extend(clip_props.iter().copied());
     all.into_iter().map(|p| (p, clip_props.contains(&p))).collect()
 }
@@ -125,7 +165,26 @@ pub fn css_animation_for(doc: &Document, node: NodeId) -> String {
             class = format!("{class}-{i}");
         }
         let mut names: Vec<String> = Vec::new();
+        let sh = shadow_frames(n, tl.duration_ms);
+        if props.iter().any(|(p, _)| is_shadow(*p)) && sh.len() >= 2 {
+            let name = format!("{class}-shadow");
+            if !out.is_empty() {
+                out.line(0, "");
+            }
+            out.line(0, format!("@keyframes {name} {{"));
+            for (t, v, timing) in &sh {
+                match timing.as_ref().map(timing_function) {
+                    Some(f) => out.line(1, format!("{} {{ box-shadow: {v}; animation-timing-function: {f}; }}", pct(*t, tl.duration_ms))),
+                    None => out.line(1, format!("{} {{ box-shadow: {v}; }}", pct(*t, tl.duration_ms))),
+                }
+            }
+            out.line(0, "}");
+            names.push(name);
+        }
         for (p, baked) in props {
+            if is_shadow(p) {
+                continue;
+            }
             let fr = frames(n, p, tl.duration_ms, baked);
             if fr.len() < 2 {
                 continue;
@@ -485,5 +544,40 @@ mod tests {
         assert_eq!(css_animation_for(&d, id), "");
         assert_eq!(swiftui_animation_for(&d, id), "");
         assert_eq!(compose_animation_for(&d, id), "");
+    }
+
+    #[test]
+    fn shadow_blur_and_hidden_tracks_in_css() {
+        use desigma_doc::Effect;
+        let (mut d, frame, id) = doc(true);
+        let mut n = d.get(id).unwrap().clone();
+        n.effects = vec![
+            Effect::DropShadow { color: Color::rgba(0, 0, 0, 64), offset: Vec2::new(0.0, 4.0), radius: 4.0, spread: 2.0, visible: true, show_behind: false },
+            Effect::LayerBlur { radius: 0.0, visible: true },
+        ];
+        let sx = n.motion.ensure_track(AnimProperty::ShadowX);
+        sx.set_key(0, AnimValue::Scalar(0.0), Some(Ease::EaseOut));
+        sx.set_key(1000, AnimValue::Scalar(10.0), None);
+        let sb = n.motion.ensure_track(AnimProperty::ShadowBlur);
+        sb.set_key(500, AnimValue::Scalar(20.0), None);
+        let bl = n.motion.ensure_track(AnimProperty::BlurRadius);
+        bl.set_key(0, AnimValue::Scalar(0.0), None);
+        bl.set_key(1000, AnimValue::Scalar(8.0), None);
+        *d.get_mut(id).unwrap() = n;
+        let css = css_animation_for(&d, frame);
+        assert!(css.contains("@keyframes card-shadow {"), "{css}");
+        assert!(css.contains("0% { box-shadow: 0px 4px 20px 2px rgba(0, 0, 0, 0.25); animation-timing-function: cubic-bezier(0, 0, 0.58, 1); }"), "{css}");
+        assert!(css.contains("25% { box-shadow: ") && css.contains("50% { box-shadow: 10px 4px 20px 2px"), "{css}");
+        assert!(css.contains("@keyframes card-layer-blur {") && css.contains("50% { filter: blur(8px); }"), "{css}");
+        assert!(css.contains("card-shadow 2000ms linear both infinite"), "{css}");
+        // a hidden track leaves the export
+        let mut n = d.get(id).unwrap().clone();
+        n.motion.track_mut(AnimProperty::Opacity).unwrap().visible = false;
+        n.motion.track_mut(AnimProperty::ShadowX).unwrap().visible = false;
+        n.motion.track_mut(AnimProperty::ShadowBlur).unwrap().visible = false;
+        *d.get_mut(id).unwrap() = n;
+        let css = css_animation_for(&d, frame);
+        assert!(!css.contains("card-opacity") && !css.contains("card-shadow"), "{css}");
+        assert!(css.contains("card-position"), "{css}");
     }
 }

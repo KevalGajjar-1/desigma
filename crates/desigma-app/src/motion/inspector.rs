@@ -15,6 +15,8 @@ mod overlay;
 #[cfg(test)]
 pub use library::visible as library_visible;
 pub use overlay::{commit_move, paint_overlay};
+#[cfg(test)]
+pub use overlay::{gizmo_centre, path_point};
 
 use crate::app::App;
 use crate::icons::{self, Icon};
@@ -43,6 +45,18 @@ pub struct InspectorState {
     pub library_anchor: Option<Rect>,
     /// Custom easing presets saved with the "+" of the preset menu (kept per app session).
     pub saved_eases: Vec<(String, Ease)>,
+    /// The scale lock of the Transform section is off (on by default, as in Figma): with it on,
+    /// changing one scale axis scales the other proportionally.
+    pub scale_unlocked: bool,
+    /// The transform gizmo on the canvas is hidden (the crosshair button of the Transform header).
+    pub gizmo_hidden: bool,
+}
+
+impl InspectorState {
+    /// Whether the proportional scale lock is on.
+    pub fn scale_locked(&self) -> bool {
+        !self.scale_unlocked
+    }
 }
 
 // ---------------------------------------------------------------- public entry points
@@ -117,7 +131,7 @@ fn targets(app: &App) -> Vec<NodeId> {
 }
 
 /// Values of `prop` at the playhead (clips included) for every node.
-fn shown(app: &App, sel: &[NodeId], prop: AnimProperty) -> Vec<AnimValue> {
+pub(crate) fn shown(app: &App, sel: &[NodeId], prop: AnimProperty) -> Vec<AnimValue> {
     let t = playhead(app);
     sel.iter().filter_map(|id| app.doc.get(*id)).filter_map(|n| motion::value_at(n, prop, t)).collect()
 }
@@ -138,7 +152,7 @@ fn common_comp(vals: &[AnimValue], idx: usize) -> Option<f32> {
 }
 
 /// Sets `prop` on every node: `f` maps the keyframed baseline at the playhead to the new value.
-fn edit_prop(app: &mut App, sel: &[NodeId], prop: AnimProperty, f: impl Fn(AnimValue) -> AnimValue) {
+pub(crate) fn edit_prop(app: &mut App, sel: &[NodeId], prop: AnimProperty, f: impl Fn(AnimValue) -> AnimValue) {
     let t = playhead(app);
     let cmds: Vec<_> = sel
         .iter()
@@ -158,11 +172,25 @@ fn set_comp(app: &mut App, sel: &[NodeId], prop: AnimProperty, idx: usize, v: f3
         AnimProperty::Width | AnimProperty::Height => v.max(1.0),
         _ => v,
     };
+    let locked = prop == AnimProperty::Scale && app.motion_ins.scale_locked();
     edit_prop(app, sel, prop, |cur| match cur {
+        AnimValue::Vec2(c) if locked => AnimValue::Vec2(proportional(c, idx, v)),
         AnimValue::Vec2(c) => AnimValue::Vec2(if idx == 0 { DVec2::new(v, c.y) } else { DVec2::new(c.x, v) }),
         AnimValue::Scalar(_) => AnimValue::Scalar(v),
         other => other,
     });
+}
+
+/// The scale `cur` after setting component `idx` to `v` with the proportional lock on: the other
+/// axis keeps its ratio to the edited one (both become `v` when the edited axis was 0).
+pub fn proportional(cur: DVec2, idx: usize, v: f32) -> DVec2 {
+    let (edited, other) = if idx == 0 { (cur.x, cur.y) } else { (cur.y, cur.x) };
+    let o = if edited.abs() < 1e-6 { v } else { other * v / edited };
+    if idx == 0 {
+        DVec2::new(v, o)
+    } else {
+        DVec2::new(o, v)
+    }
 }
 
 /// Whether every selected node has a keyframe of `prop` at the playhead (and at least one does).
@@ -251,7 +279,7 @@ fn num_cell(app: &mut App, ui: &mut Ui, sel: &[NodeId], prop: AnimProperty, idx:
     }
 }
 
-fn diamond_for(app: &mut App, ui: &mut Ui, sel: &[NodeId], prop: AnimProperty, rect: Rect) {
+pub(crate) fn diamond_for(app: &mut App, ui: &mut Ui, sel: &[NodeId], prop: AnimProperty, rect: Rect) {
     let on = keyed_at_playhead(app, sel, prop);
     let enabled = can_animate(app, sel, prop);
     if key_button(ui, rect, prop, on, enabled, prop.name()) {
@@ -345,6 +373,15 @@ fn sections(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[NodeId], region:
     // ---- Transform
     section_sep(ui, pane, false);
     title(ui, pane, "Transform", None, false);
+    {
+        // the crosshair of the header shows / hides the transform gizmo on the canvas
+        let r = pane.rect(theme::SECTION_TRAILING_X, -theme::SECTION_TITLE_HEIGHT + 8.0, theme::PANEL_ACTION_BUTTON, theme::PANEL_ACTION_BUTTON);
+        widgets::record(ui, "mo-gizmo", r);
+        let on = !app.motion_ins.gizmo_hidden;
+        if widgets::icon_button(ui, r, "mo-gizmo", Icon::Crosshair, on, if on { "Hide transform gizmo" } else { "Show transform gizmo" }).clicked() {
+            app.motion_ins.gizmo_hidden = on;
+        }
+    }
     sublabel(ui, pane, "Position");
     let (x_r, y_r, d_r) = (pane.rect(17.0, 0.0, 68.0, 24.0), pane.rect(89.0, 0.0, 68.0, 24.0), pane.rect(161.0, 0.0, 24.0, 24.0));
     num_cell(app, ui, sel, AnimProperty::Position, 0, x_r, "mo-x", Prefix::Text("X"));
@@ -356,6 +393,15 @@ fn sections(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[NodeId], region:
     num_cell(app, ui, sel, AnimProperty::Scale, 0, x_r, "mo-sx", Prefix::Icon(Icon::PaddingH));
     num_cell(app, ui, sel, AnimProperty::Scale, 1, y_r, "mo-sy", Prefix::Icon(Icon::PaddingV));
     diamond_for(app, ui, sel, AnimProperty::Scale, d_r);
+    {
+        let r = pane.rect(theme::SECTION_TRAILING_X, 0.0, theme::PANEL_ACTION_BUTTON, theme::PANEL_ACTION_BUTTON);
+        widgets::record(ui, "mo-scale-lock", r);
+        let on = app.motion_ins.scale_locked();
+        let (icon, tip) = if on { (Icon::Link, "Unlock proportions") } else { (Icon::Unlink, "Lock proportions") };
+        if widgets::icon_button(ui, r, "mo-scale-lock", icon, on, tip).clicked() {
+            app.motion_ins.scale_unlocked = on;
+        }
+    }
     row_end(pane);
     sublabel(ui, pane, "Rotation");
     let (r_r, d_r) = (pane.rect(17.0, 0.0, 60.0, 24.0), pane.rect(79.0, 0.0, 24.0, 24.0));
@@ -400,12 +446,8 @@ fn sections(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[NodeId], region:
             let paint = desigma_doc::Paint::solid(Color::from_hex(&format!("{:06X}", theme::DEFAULT_SHAPE_FILL)).unwrap_or(Color::WHITE));
             app.edit_nodes(sel, |n| n.fills.push(paint.clone()));
         }
-        let single_solid = n0.fills.len() == 1 && matches!(n0.fills[0].kind, desigma_doc::PaintKind::Solid(_));
-        if single_solid {
-            fill_row(app, ui, pane, sel, &n0);
-        } else {
-            properties::paint_rows(app, ui, pane, sel, &n0.fills, false);
-        }
+        // every row is the shared paint row; the first solid one carries the colour diamond
+        properties::paint_rows(app, ui, pane, sel, &n0.fills, false);
         if !n0.fills.is_empty() {
             pane.y += 8.0;
         }
@@ -427,79 +469,6 @@ fn sublabel_row(ui: &Ui, pane: &mut Pane, labels: &[(f32, &str)]) {
         ui.painter().text(Pos2::new(r.left(), r.center().y), Align2::LEFT_CENTER, text, theme::font_small_medium(), theme::TEXT_SECONDARY);
     }
     pane.y += theme::SUBLABEL_HEIGHT + 4.0;
-}
-
-fn to_c32(c: Color) -> Color32 {
-    properties::to_c32(c, 1.0)
-}
-
-/// The fill row of a node with exactly one solid fill: swatch, hex (the animatable colour),
-/// opacity, keyframe diamond, eye and minus.
-fn fill_row(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[NodeId], n0: &desigma_doc::Node) {
-    let prop = AnimProperty::FillColor;
-    let paint = &n0.fills[0];
-    let shown_color = shown(app, sel, prop).first().and_then(|v| v.color()).unwrap_or(match paint.kind {
-        desigma_doc::PaintKind::Solid(c) => c,
-        _ => Color::WHITE,
-    });
-    let g = pane.rect(theme::SWATCH_ROW_X, 0.0, 134.0, theme::FIELD_HEIGHT);
-    let sw = Rect::from_min_size(Pos2::new(g.left() + 4.0, g.center().y - theme::SWATCH_SIZE / 2.0), Vec2::splat(theme::SWATCH_SIZE));
-    let hex_r = Rect::from_min_max(Pos2::new(g.left() + theme::FIELD_PREFIX_X + theme::FIELD_PREFIX_ICON, g.top()), Pos2::new(g.left() + 72.0, g.bottom()));
-    let op_r = Rect::from_min_max(Pos2::new(g.left() + 73.0, g.top()), Pos2::new(g.right() - 16.0, g.bottom()));
-    widgets::record(ui, "mo-fill-swatch", sw);
-    widgets::record(ui, "mo-fill-hex", hex_r);
-    let hex_id = ui.id().with(("txt", "mo-fill-hex"));
-    let op_id = ui.id().with(("num", "mo-fill-op"));
-    let focused = ui.memory(|m| m.has_focus(hex_id) || m.has_focus(op_id));
-    {
-        let pt = ui.painter();
-        pt.rect_filled(g, theme::cr(theme::RADIUS_MEDIUM), theme::BG_SECONDARY);
-        if focused {
-            pt.rect_stroke(g, theme::cr(theme::RADIUS_MEDIUM), Stroke::new(1.0, theme::BORDER_SELECTED), StrokeKind::Inside);
-        } else if ui.rect_contains_pointer(g) {
-            pt.rect_stroke(g, theme::cr(theme::RADIUS_MEDIUM), Stroke::new(1.0, theme::BORDER), StrokeKind::Inside);
-        }
-        widgets::vline(pt, g.left() + 72.0, g.top(), g.bottom(), theme::BG);
-    }
-    let swr = ui.interact(sw.expand(2.0), ui.id().with("mo-fill-sw"), Sense::click());
-    widgets::swatch(ui.painter(), sw, to_c32(shown_color));
-    if swr.clicked() && n0.motion.track(prop).is_none() {
-        properties::open_picker(app, properties::PickTarget::Fill(0), to_c32(shown_color), sw, sel.to_vec());
-    }
-    let font = theme::font_body();
-    if let Some(s) = field::edit_text(ui, hex_r, hex_id, &shown_color.to_hex(), font.clone(), theme::TEXT, 0.0) {
-        if let Some(c) = Color::from_hex(&s) {
-            edit_prop(app, sel, prop, |cur| AnimValue::Color(Color { a: cur.color().map_or(1.0, |o| o.a), ..c }));
-        }
-    }
-    let pct = fmt_num((paint.opacity * 100.0).round());
-    if let Some(s) = field::edit_text(ui, op_r, op_id, &pct, font.clone(), theme::TEXT, 8.0) {
-        if let Some(v) = field::parse_number(&s) {
-            let o = (v / 100.0).clamp(0.0, 1.0);
-            app.edit_nodes(sel, |n| {
-                if let Some(p) = n.fills.get_mut(0) {
-                    p.opacity = o;
-                }
-            });
-        }
-    }
-    let pct_x = g.right() - 8.0 - widgets::text_width(ui.painter(), "%", &font);
-    widgets::text_on_baseline(ui.painter(), pct_x, widgets::centered_baseline(g, &font), "%", font, theme::TEXT_SECONDARY);
-    let d_r = pane.rect(theme::SWATCH_ROW_X + 138.0, 0.0, 24.0, 24.0);
-    diamond_for(app, ui, sel, prop, d_r);
-    let eye_r = pane.rect(theme::RIGHT_NAME_ACTION_X[1] - 1.0 + 4.0, 0.0, theme::PANEL_ACTION_BUTTON, theme::PANEL_ACTION_BUTTON);
-    let minus_r = pane.rect(theme::SECTION_TRAILING_X, 0.0, theme::PANEL_ACTION_BUTTON, theme::PANEL_ACTION_BUTTON);
-    if widgets::icon_button(ui, eye_r, "mo-fill-eye", if paint.visible { Icon::Eye } else { Icon::EyeOff }, false, "").clicked() {
-        app.edit_nodes(sel, |n| {
-            if let Some(p) = n.fills.get_mut(0) {
-                p.visible = !p.visible;
-            }
-        });
-    }
-    if widgets::icon_button(ui, minus_r, "mo-fill-minus", Icon::Minus, false, "").clicked() {
-        app.edit_nodes(sel, |n| n.fills.clear());
-    }
-    pane.y += theme::FIELD_HEIGHT + 8.0;
 }
 
 // ---------------------------------------------------------------- Animations section

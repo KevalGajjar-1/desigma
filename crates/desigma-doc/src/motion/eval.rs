@@ -25,7 +25,7 @@
 
 use super::clip::ClipKind;
 use super::value::{AnimProperty, AnimValue};
-use crate::{Affine, Color, Document, Node, NodeId, PaintKind, Vec2};
+use crate::{Affine, Color, Document, Effect, Node, NodeId, PaintKind, Vec2};
 
 /// Animated property values of one node at one time. A field is `Some` only when the node has a
 /// keyframe track or a visible clip for it.
@@ -42,6 +42,13 @@ pub struct EvaluatedNode {
     pub fill_color: Option<Color>,
     pub stroke_color: Option<Color>,
     pub stroke_weight: Option<f32>,
+    /// Offset (x), offset (y), blur and colour of the first drop shadow.
+    pub shadow_x: Option<f32>,
+    pub shadow_y: Option<f32>,
+    pub shadow_blur: Option<f32>,
+    pub shadow_color: Option<Color>,
+    /// Radius of the first layer blur.
+    pub blur_radius: Option<f32>,
 }
 
 impl EvaluatedNode {
@@ -62,6 +69,11 @@ impl EvaluatedNode {
             AnimProperty::FillColor => AnimValue::Color(self.fill_color?),
             AnimProperty::StrokeColor => AnimValue::Color(self.stroke_color?),
             AnimProperty::StrokeWeight => AnimValue::Scalar(self.stroke_weight?),
+            AnimProperty::ShadowX => AnimValue::Scalar(self.shadow_x?),
+            AnimProperty::ShadowY => AnimValue::Scalar(self.shadow_y?),
+            AnimProperty::ShadowBlur => AnimValue::Scalar(self.shadow_blur?),
+            AnimProperty::ShadowColor => AnimValue::Color(self.shadow_color?),
+            AnimProperty::BlurRadius => AnimValue::Scalar(self.blur_radius?),
         })
     }
 
@@ -78,6 +90,11 @@ impl EvaluatedNode {
             (AnimProperty::FillColor, AnimValue::Color(v)) => self.fill_color = Some(v),
             (AnimProperty::StrokeColor, AnimValue::Color(v)) => self.stroke_color = Some(v),
             (AnimProperty::StrokeWeight, AnimValue::Scalar(v)) => self.stroke_weight = Some(v),
+            (AnimProperty::ShadowX, AnimValue::Scalar(v)) => self.shadow_x = Some(v),
+            (AnimProperty::ShadowY, AnimValue::Scalar(v)) => self.shadow_y = Some(v),
+            (AnimProperty::ShadowBlur, AnimValue::Scalar(v)) => self.shadow_blur = Some(v),
+            (AnimProperty::ShadowColor, AnimValue::Color(v)) => self.shadow_color = Some(v),
+            (AnimProperty::BlurRadius, AnimValue::Scalar(v)) => self.blur_radius = Some(v),
             _ => {}
         }
     }
@@ -106,6 +123,27 @@ impl EvaluatedNode {
         if let Some(w) = self.stroke_weight.filter(|w| w.is_finite()) {
             out.stroke.weight = w.max(0.0);
         }
+        if let Some(i) = first_drop_shadow(&base.effects) {
+            if let Some(Effect::DropShadow { color, offset, radius, .. }) = out.effects.get_mut(i) {
+                if let Some(v) = self.shadow_x.filter(|v| v.is_finite()) {
+                    offset.x = v;
+                }
+                if let Some(v) = self.shadow_y.filter(|v| v.is_finite()) {
+                    offset.y = v;
+                }
+                if let Some(v) = self.shadow_blur.filter(|v| v.is_finite()) {
+                    *radius = v.max(0.0);
+                }
+                if let Some(c) = self.shadow_color {
+                    *color = c;
+                }
+            }
+        }
+        if let (Some(r), Some(i)) = (self.blur_radius.filter(|r| r.is_finite()), first_layer_blur(&base.effects)) {
+            if let Some(Effect::LayerBlur { radius, .. }) = out.effects.get_mut(i) {
+                *radius = r.max(0.0);
+            }
+        }
         let transform_touched = self.position.is_some() || self.scale.is_some() || self.rotation.is_some() || self.width.is_some() || self.height.is_some();
         if !transform_touched {
             return;
@@ -128,6 +166,16 @@ impl EvaluatedNode {
 
 fn first_solid(paints: &[crate::Paint]) -> Option<usize> {
     paints.iter().position(|p| matches!(p.kind, PaintKind::Solid(_)))
+}
+
+/// Index of the first drop shadow, the one the shadow properties animate.
+pub fn first_drop_shadow(effects: &[Effect]) -> Option<usize> {
+    effects.iter().position(|e| matches!(e, Effect::DropShadow { .. }))
+}
+
+/// Index of the first layer blur, the one [`AnimProperty::BlurRadius`] animates.
+pub fn first_layer_blur(effects: &[Effect]) -> Option<usize> {
+    effects.iter().position(|e| matches!(e, Effect::LayerBlur { .. }))
 }
 
 /// The node's static layout position: the translation that, with no rotation or scale about the
@@ -163,6 +211,19 @@ pub fn base_value(node: &Node, property: AnimProperty) -> Option<AnimValue> {
             _ => return None,
         },
         AnimProperty::StrokeWeight => AnimValue::Scalar(node.stroke.weight),
+        AnimProperty::ShadowX | AnimProperty::ShadowY | AnimProperty::ShadowBlur | AnimProperty::ShadowColor => {
+            let Effect::DropShadow { color, offset, radius, .. } = node.effects.get(first_drop_shadow(&node.effects)?)? else { return None };
+            match property {
+                AnimProperty::ShadowX => AnimValue::Scalar(offset.x),
+                AnimProperty::ShadowY => AnimValue::Scalar(offset.y),
+                AnimProperty::ShadowBlur => AnimValue::Scalar(*radius),
+                _ => AnimValue::Color(*color),
+            }
+        }
+        AnimProperty::BlurRadius => {
+            let Effect::LayerBlur { radius, .. } = node.effects.get(first_layer_blur(&node.effects)?)? else { return None };
+            AnimValue::Scalar(*radius)
+        }
     })
 }
 
@@ -178,7 +239,7 @@ pub fn evaluate_node(node: &Node, t_ms: f32) -> EvaluatedNode {
         return ev;
     }
     let t = if t_ms.is_finite() { t_ms.max(0.0) } else { 0.0 };
-    for tr in &m.tracks {
+    for tr in m.tracks.iter().filter(|tr| tr.visible) {
         if let Some(v) = tr.value_at(t) {
             ev.set(tr.property, v);
         }

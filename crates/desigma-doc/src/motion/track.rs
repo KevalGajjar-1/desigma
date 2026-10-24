@@ -25,11 +25,23 @@ pub struct Keyframe {
 pub struct Track {
     pub property: AnimProperty,
     pub keys: Vec<Keyframe>,
+    /// The eye of the timeline's property row ("Toggle animation visibility"): a hidden track
+    /// keeps its keyframes but is ignored by evaluation, playback and export.
+    #[serde(default = "default_true", skip_serializing_if = "is_true")]
+    pub visible: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn is_true(v: &bool) -> bool {
+    *v
 }
 
 impl Track {
     pub fn new(property: AnimProperty) -> Self {
-        Self { property, keys: Vec::new() }
+        Self { property, keys: Vec::new(), visible: true }
     }
 
     /// Sorts keys by time, dropping all but the last of keys sharing a time, and drops keys whose
@@ -181,7 +193,10 @@ impl NodeMotion {
         let mut merged: Vec<Track> = Vec::new();
         for t in self.tracks.drain(..) {
             match merged.iter_mut().find(|m| m.property == t.property) {
-                Some(m) => m.keys.extend(t.keys),
+                Some(m) => {
+                    m.keys.extend(t.keys);
+                    m.visible &= t.visible;
+                }
                 None => merged.push(t),
             }
         }
@@ -246,7 +261,7 @@ impl NodeMotion {
     /// The first track-less hint for UI: does this node animate `property` at all, via a keyframe
     /// track or a visible clip that touches it?
     pub fn animates(&self, property: AnimProperty) -> bool {
-        self.track(property).is_some() || self.clips.iter().any(|c| c.visible && c.kind.properties().contains(&property))
+        self.track(property).is_some_and(|t| t.visible) || self.clips.iter().any(|c| c.visible && c.kind.properties().contains(&property))
     }
 
     /// Whether any clip repeats forever (the node animates until the timeline end).
@@ -362,9 +377,10 @@ mod tests {
                 Keyframe { time_ms: 700, value: AnimValue::Vec2(crate::Vec2::ZERO), easing: Ease::Linear },
                 Keyframe { time_ms: 800, value: s(f32::NAN), easing: Ease::Linear },
             ],
+            visible: true,
         });
         m.tracks.push(Track::new(AnimProperty::Width));
-        m.tracks.push(Track { property: AnimProperty::Opacity, keys: vec![Keyframe { time_ms: 900, value: s(0.1), easing: Ease::Linear }] });
+        m.tracks.push(Track { property: AnimProperty::Opacity, keys: vec![Keyframe { time_ms: 900, value: s(0.1), easing: Ease::Linear }], visible: true });
         m.normalize();
         assert_eq!(m.tracks.len(), 1);
         let times: Vec<u32> = m.tracks[0].keys.iter().map(|k| k.time_ms).collect();

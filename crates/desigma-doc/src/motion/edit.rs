@@ -148,6 +148,42 @@ pub fn remove_track(doc: &Document, node: NodeId, property: AnimProperty) -> Res
     })
 }
 
+/// Shows or hides a track (the eye of its timeline row). A hidden track keeps its keyframes but
+/// is ignored when evaluating.
+pub fn set_track_visible(doc: &Document, node: NodeId, property: AnimProperty, visible: bool) -> Result<Command, DocError> {
+    single(doc, node, |m| match m.track_mut(property) {
+        Some(t) if t.visible != visible => {
+            t.visible = visible;
+            true
+        }
+        _ => false,
+    })
+}
+
+/// Moves everything a layer animates (all keyframes of every track and all clips) by `delta_ms`
+/// as one undo step: dragging the layer's summary bar. The delta is limited so nothing goes
+/// below 0.
+pub fn shift_node_motion(doc: &Document, node: NodeId, delta_ms: i64) -> Result<Command, DocError> {
+    let m = &doc.get(node).ok_or(DocError::NotFound(node))?.motion;
+    let earliest = m.tracks.iter().filter_map(|t| t.start_ms()).chain(m.clips.iter().map(|c| c.delay_ms)).min().ok_or_else(|| nothing("nothing animated"))?;
+    let delta = delta_ms.max(-(earliest as i64));
+    single(doc, node, |m| {
+        if delta == 0 {
+            return false;
+        }
+        let mv = |t: u32| (t as i64 + delta).clamp(0, u32::MAX as i64) as u32;
+        for t in &mut m.tracks {
+            for k in &mut t.keys {
+                k.time_ms = mv(k.time_ms);
+            }
+        }
+        for c in &mut m.clips {
+            c.delay_ms = mv(c.delay_ms);
+        }
+        true
+    })
+}
+
 /// Rebuilds the selected keyframes at new times given by `map`; unselected keyframes at a target
 /// time are replaced. Returns the command and the moved keyframes' new refs.
 fn retime(doc: &Document, keys: &[KeyRef], map: impl Fn(u32) -> u32) -> Result<(Command, Vec<KeyRef>), DocError> {
@@ -640,5 +676,109 @@ mod tests {
         h.exec(&mut d, Command::Remove { id: a }).unwrap();
         h.undo(&mut d).unwrap();
         assert_eq!(d.get(a).unwrap().motion.tracks.len(), 2);
+    }
+
+    #[test]
+    fn hiding_a_track_is_one_undo_step_and_survives_serde() {
+        let (mut d, _, a, _) = setup();
+        let mut h = History::default();
+        for (t, v) in [(0, 0.0), (1000, 1.0)] {
+            let c = add_keyframe(&d, a, AnimProperty::Opacity, t, Some(s(v)), None).unwrap();
+            h.exec(&mut d, c).unwrap();
+        }
+        assert!(d.get(a).unwrap().motion.track(AnimProperty::Opacity).unwrap().visible);
+        let c = set_track_visible(&d, a, AnimProperty::Opacity, false).unwrap();
+        let (_, after) = roundtrip(&d, c.clone());
+        let n = after.get(a).unwrap();
+        assert!(!n.motion.track(AnimProperty::Opacity).unwrap().visible);
+        assert_eq!(n.motion.track(AnimProperty::Opacity).unwrap().keys.len(), 2, "keys are kept");
+        assert!(crate::motion::evaluate_node(n, 500.0).opacity.is_none(), "hidden tracks are not evaluated");
+        assert!(!n.motion.animates(AnimProperty::Opacity));
+        let back = Document::from_json(&after.to_json().unwrap()).unwrap();
+        assert!(!back.get(a).unwrap().motion.track(AnimProperty::Opacity).unwrap().visible);
+        // visible tracks serialize without the flag
+        assert!(
+            !d.to_json().unwrap().contains("visible\":true,\"keys")
+                && !d.get(a).map(|n| serde_json::to_string(&n.motion).unwrap()).unwrap().contains("visible")
+        );
+        assert!(set_track_visible(&d, a, AnimProperty::Opacity, true).is_err(), "no-op is an error");
+        assert!(set_track_visible(&d, a, AnimProperty::Width, false).is_err());
+    }
+
+    #[test]
+    fn shifting_a_layer_moves_keys_and_clips_together() {
+        let (mut d, _, a, _) = setup();
+        let mut h = History::default();
+        let c = add_keyframe(&d, a, AnimProperty::Opacity, 100, Some(s(0.0)), None).unwrap();
+        h.exec(&mut d, c).unwrap();
+        let c = add_keyframe(&d, a, AnimProperty::Opacity, 600, Some(s(1.0)), None).unwrap();
+        h.exec(&mut d, c).unwrap();
+        let c = add_keyframe(&d, a, AnimProperty::Rotation, 300, Some(s(0.0)), None).unwrap();
+        h.exec(&mut d, c).unwrap();
+        let (c, _) = add_clip(&d, a, Clip::new(ClipKind::Position, ClipMode::In).delay(250)).unwrap();
+        h.exec(&mut d, c).unwrap();
+        let before = d.get(a).unwrap().motion.span_ms(2000).unwrap();
+        let cmd = shift_node_motion(&d, a, 400).unwrap();
+        let (_, after) = roundtrip(&d, cmd);
+        let m = &after.get(a).unwrap().motion;
+        assert_eq!(times(&after, a, AnimProperty::Opacity), vec![500, 1000]);
+        assert_eq!(times(&after, a, AnimProperty::Rotation), vec![700]);
+        assert_eq!(m.clips[0].delay_ms, 650);
+        let span = m.span_ms(2000).unwrap();
+        assert_eq!(span.0, before.0 + 400);
+        // limited so nothing goes below 0
+        let (_, after) = roundtrip(&d, shift_node_motion(&d, a, -5000).unwrap());
+        assert_eq!(times(&after, a, AnimProperty::Opacity), vec![0, 500]);
+        assert_eq!(after.get(a).unwrap().motion.clips[0].delay_ms, 150);
+        assert!(shift_node_motion(&d, NodeId(9999), 5).is_err());
+        let (d2, _, _, b) = setup();
+        assert!(shift_node_motion(&d2, b, 5).is_err(), "nothing animated");
+    }
+
+    #[test]
+    fn effect_properties_animate_the_first_shadow_and_blur() {
+        use crate::{Color, Effect};
+        let (mut d, _, a, b) = setup();
+        let mut n = d.get(a).unwrap().clone();
+        n.effects = vec![
+            Effect::LayerBlur { radius: 2.0, visible: true },
+            Effect::DropShadow { color: Color::rgba(0, 0, 0, 64), offset: Vec2::new(0.0, 4.0), radius: 4.0, spread: 1.0, visible: true, show_behind: false },
+            Effect::DropShadow { color: Color::BLACK, offset: Vec2::new(9.0, 9.0), radius: 9.0, spread: 0.0, visible: true, show_behind: false },
+        ];
+        *d.get_mut(a).unwrap() = n;
+        assert_eq!(base_value(d.get(a).unwrap(), AnimProperty::ShadowX), Some(s(0.0)));
+        assert_eq!(base_value(d.get(a).unwrap(), AnimProperty::ShadowY), Some(s(4.0)));
+        assert_eq!(base_value(d.get(a).unwrap(), AnimProperty::ShadowBlur), Some(s(4.0)));
+        assert_eq!(base_value(d.get(a).unwrap(), AnimProperty::BlurRadius), Some(s(2.0)));
+        assert!(base_value(d.get(b).unwrap(), AnimProperty::ShadowX).is_none(), "no shadow, nothing to animate");
+        assert!(base_value(d.get(b).unwrap(), AnimProperty::BlurRadius).is_none());
+        let mut h = History::default();
+        for (p, t, v) in [
+            (AnimProperty::ShadowX, 0, s(0.0)),
+            (AnimProperty::ShadowX, 1000, s(20.0)),
+            (AnimProperty::ShadowBlur, 0, s(0.0)),
+            (AnimProperty::ShadowBlur, 1000, s(30.0)),
+            (AnimProperty::ShadowColor, 0, AnimValue::Color(Color::rgb(255, 0, 0))),
+            (AnimProperty::ShadowColor, 1000, AnimValue::Color(Color::rgb(0, 0, 255))),
+            (AnimProperty::BlurRadius, 0, s(0.0)),
+            (AnimProperty::BlurRadius, 1000, s(10.0)),
+        ] {
+            let c = add_keyframe(&d, a, p, t, Some(v), None).unwrap();
+            h.exec(&mut d, c).unwrap();
+        }
+        let ev = crate::motion::evaluate(&d, d.page_of(a).unwrap(), 500.0);
+        let fx = &ev.get(a).unwrap().effects;
+        let Effect::DropShadow { offset, radius, color, spread, .. } = &fx[1] else { panic!() };
+        assert_eq!((offset.x, offset.y, *radius, *spread), (10.0, 4.0, 15.0, 1.0));
+        assert!((color.r - 0.5).abs() < 0.02 && (color.b - 0.5).abs() < 0.02);
+        let Effect::DropShadow { offset, radius, .. } = &fx[2] else { panic!() };
+        assert_eq!((offset.x, *radius), (9.0, 9.0), "only the first shadow animates");
+        let Effect::LayerBlur { radius, .. } = &fx[0] else { panic!() };
+        assert_eq!(*radius, 5.0);
+        // editing without a track writes the static effect
+        let c = auto_key(&d, b, AnimProperty::ShadowX, s(3.0), 0.0);
+        assert!(c.is_err(), "node b has no shadow");
+        let back = Document::from_json(&d.to_json().unwrap()).unwrap();
+        assert_eq!(back.get(a).unwrap().motion, d.get(a).unwrap().motion);
     }
 }

@@ -247,6 +247,13 @@ impl App {
         self.canvas.dirty = true;
     }
 
+    /// The document as drawn: in Motion mode the page evaluated at the playhead (animated
+    /// positions, sizes and rotations), else the stored document. Selection boxes, handles and the
+    /// motion gizmo are placed with it so they sit on what is on screen.
+    pub fn shown_doc(&self) -> &desigma_doc::Document {
+        self.canvas.motion.document(self.motion.enabled, &self.doc)
+    }
+
     pub fn is_selected(&self, id: NodeId) -> bool {
         self.selection.contains(&id)
     }
