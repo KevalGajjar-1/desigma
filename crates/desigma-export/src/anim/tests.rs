@@ -233,7 +233,15 @@ fn gif_transparent_background_and_gradient_palette() {
     }];
     d.get_mut(sq).unwrap().motion.tracks.retain(|t| t.property == AnimProperty::Position);
     // two full-width gradient bars add enough distinct colours to need a trained palette
-    for (i, (a, b)) in [(Color::rgb(0, 255, 0), Color::rgb(255, 255, 0)), (Color::rgb(255, 0, 255), Color::rgb(0, 255, 255)), (Color::rgb(0, 0, 0), Color::rgb(200, 100, 50)), (Color::rgb(90, 10, 200), Color::rgb(10, 200, 90))].into_iter().enumerate() {
+    for (i, (a, b)) in [
+        (Color::rgb(0, 255, 0), Color::rgb(255, 255, 0)),
+        (Color::rgb(255, 0, 255), Color::rgb(0, 255, 255)),
+        (Color::rgb(0, 0, 0), Color::rgb(200, 100, 50)),
+        (Color::rgb(90, 10, 200), Color::rgb(10, 200, 90)),
+    ]
+    .into_iter()
+    .enumerate()
+    {
         let id = d.alloc_id();
         let mut bar = Node::rectangle(id, Rect::new(0.0, i as f32 * 15.0, 100.0, 10.0));
         bar.fills = vec![Paint {

@@ -201,7 +201,11 @@ pub fn call<H: Host>(host: &mut H, name: &str, args: Value) -> Result<Value, Str
                 None => *host.doc().pages.first().ok_or("the document has no pages")?,
             };
             let cur = host.doc().timeline(page);
-            let want = TimelineSettings { duration_ms: a.duration_ms.unwrap_or(cur.duration_ms), fps: a.fps.unwrap_or(cur.fps), looping: a.looping.unwrap_or(cur.looping) };
+            let want = TimelineSettings {
+                duration_ms: a.duration_ms.unwrap_or(cur.duration_ms),
+                fps: a.fps.unwrap_or(cur.fps),
+                looping: a.looping.unwrap_or(cur.looping),
+            };
             if want.duration_ms == 0 || want.duration_ms > TimelineSettings::MAX_DURATION_MS {
                 return Err(format!("duration_ms must be 1..{}", TimelineSettings::MAX_DURATION_MS));
             }

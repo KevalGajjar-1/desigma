@@ -367,7 +367,13 @@ fn anim_block(app: &mut App, ui: &mut Ui, x0: f32, top: f32, node: NodeId) -> f3
         ui.painter().rect_filled(btn, theme::cr(theme::RADIUS_MEDIUM), theme::BG_SECONDARY);
         let fill = Rect::from_min_size(btn.min, Vec2::new(btn.width() * p, btn.height()));
         ui.painter().rect_filled(fill, theme::cr(theme::RADIUS_MEDIUM), theme::BG_TERTIARY);
-        ui.painter().text(Pos2::new(btn.left() + 12.0, btn.center().y), Align2::LEFT_CENTER, format!("Exporting {}%", (p * 100.0).round() as u32), theme::font_body(), theme::TEXT);
+        ui.painter().text(
+            Pos2::new(btn.left() + 12.0, btn.center().y),
+            Align2::LEFT_CENTER,
+            format!("Exporting {}%", (p * 100.0).round() as u32),
+            theme::font_body(),
+            theme::TEXT,
+        );
         let cancel = Rect::from_center_size(Pos2::new(btn.right() - 14.0, btn.center().y), Vec2::splat(theme::PANEL_ACTION_BUTTON));
         if widgets::icon_button(ui, cancel, "anim-export-cancel", Icon::Close, false, "Cancel export").clicked() {
             app.canvas.motion.export.cancel();

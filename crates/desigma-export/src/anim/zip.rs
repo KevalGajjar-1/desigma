@@ -98,7 +98,13 @@ pub fn write_png_zip<W: Write>(anim: &mut Animation, fps: u32, base: &str, mut w
 }
 
 /// Writes the frames as numbered PNG files into `dir` (created if missing). Returns their paths.
-pub fn write_png_dir(anim: &mut Animation, fps: u32, base: &str, dir: &Path, mut progress: Option<ProgressFn<'_>>) -> Result<Vec<std::path::PathBuf>, AnimError> {
+pub fn write_png_dir(
+    anim: &mut Animation,
+    fps: u32,
+    base: &str,
+    dir: &Path,
+    mut progress: Option<ProgressFn<'_>>,
+) -> Result<Vec<std::path::PathBuf>, AnimError> {
     std::fs::create_dir_all(dir)?;
     let times = anim.frame_times(fps);
     let total = times.len();

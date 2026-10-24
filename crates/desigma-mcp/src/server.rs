@@ -222,8 +222,7 @@ impl Session {
                         | "desigma_add_keyframe"
                         | "desigma_apply_animation_preset"
                         | "desigma_set_timeline"
-                )
-                    && result.get("changed").and_then(Value::as_bool) != Some(false)
+                ) && result.get("changed").and_then(Value::as_bool) != Some(false)
                 {
                     self.dirty = true;
                 }

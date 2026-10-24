@@ -293,7 +293,9 @@ fn kotlin_easing(e: &Option<Ease>) -> String {
         None | Some(Ease::Linear) => String::new(),
         Some(Ease::Hold) => " using Easing { f -> if (f < 1f) 0f else 1f }".into(),
         Some(e) => match e.control_points() {
-            Some([a, b, c, d]) => format!(" using CubicBezierEasing({}, {}, {}, {})", kotlin_f(a.clamp(0.0, 1.0)), kotlin_f(b), kotlin_f(c.clamp(0.0, 1.0)), kotlin_f(d)),
+            Some([a, b, c, d]) => {
+                format!(" using CubicBezierEasing({}, {}, {}, {})", kotlin_f(a.clamp(0.0, 1.0)), kotlin_f(b), kotlin_f(c.clamp(0.0, 1.0)), kotlin_f(d))
+            }
             // no spring easing inside `keyframes`: an overshooting curve stands in
             None => " using CubicBezierEasing(0.34f, 1.56f, 0.64f, 1f) // spring".into(),
         },
@@ -414,7 +416,12 @@ mod tests {
         assert!(css.contains("0% { opacity: 0; }"), "the hold before the first key: {css}");
         assert!(css.contains("25% { opacity: 0; animation-timing-function: linear("), "{css}");
         assert!(css.contains("100% { background-color: #00F; }"), "{css}");
-        assert!(css.contains("animation: card-position 2000ms linear both infinite, card-opacity 2000ms linear both infinite, card-fill 2000ms linear both infinite;"), "{css}");
+        assert!(
+            css.contains(
+                "animation: card-position 2000ms linear both infinite, card-opacity 2000ms linear both infinite, card-fill 2000ms linear both infinite;"
+            ),
+            "{css}"
+        );
         assert!(css.contains(".card {"));
         // a timeline that does not loop plays once
         let (d, frame, _) = doc(false);

@@ -15,8 +15,8 @@
 use super::{flatten_rgb, report, AnimError, Animation, ProgressFn};
 use color_quant::NeuQuant;
 use gif::{DisposalMethod, Encoder, Frame, Repeat};
-use std::collections::HashSet;
 use std::borrow::Cow;
+use std::collections::HashSet;
 
 /// Highest frame rate of a GIF (2 centiseconds per frame).
 pub const GIF_MAX_FPS: u32 = 50;
@@ -280,7 +280,16 @@ pub fn encode_gif(anim: &mut Animation, o: &GifOptions, mut progress: Option<Pro
                 write_pending(&mut enc, p)?;
                 written += 1;
             }
-            pending = Some(Pending { left: 0, top: 0, width: w as u16, height: h as u16, data: idx, delay_cs: delay, transparent: true, dispose: DisposalMethod::Background });
+            pending = Some(Pending {
+                left: 0,
+                top: 0,
+                width: w as u16,
+                height: h as u16,
+                data: idx,
+                delay_cs: delay,
+                transparent: true,
+                dispose: DisposalMethod::Background,
+            });
         } else if let Some(pv) = &prev {
             let (mut x0, mut y0, mut x1, mut y1) = (wu, hu, 0usize, 0usize);
             for y in 0..hu {
@@ -312,10 +321,28 @@ pub fn encode_gif(anim: &mut Animation, o: &GifOptions, mut progress: Option<Pro
                         data.push(if idx[i] == pv[i] { TRANSPARENT } else { idx[i] });
                     }
                 }
-                pending = Some(Pending { left: x0 as u16, top: y0 as u16, width: fw as u16, height: fh as u16, data, delay_cs: delay, transparent: true, dispose: DisposalMethod::Keep });
+                pending = Some(Pending {
+                    left: x0 as u16,
+                    top: y0 as u16,
+                    width: fw as u16,
+                    height: fh as u16,
+                    data,
+                    delay_cs: delay,
+                    transparent: true,
+                    dispose: DisposalMethod::Keep,
+                });
             }
         } else {
-            pending = Some(Pending { left: 0, top: 0, width: w as u16, height: h as u16, data: idx, delay_cs: delay, transparent: false, dispose: DisposalMethod::Keep });
+            pending = Some(Pending {
+                left: 0,
+                top: 0,
+                width: w as u16,
+                height: h as u16,
+                data: idx,
+                delay_cs: delay,
+                transparent: false,
+                dispose: DisposalMethod::Keep,
+            });
         }
         prev = next_prev;
         report(&mut progress, i as u32 + 1, total)?;

@@ -49,10 +49,12 @@ impl Language {
         if motion.is_empty() {
             code
         } else {
-            format!("{code}
+            format!(
+                "{code}
 
 {comment}
-{motion}")
+{motion}"
+            )
         }
     }
 }

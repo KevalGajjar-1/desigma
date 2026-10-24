@@ -169,7 +169,13 @@ fn target(doc: &Document, name: Option<&str>) -> Result<NodeId, String> {
             let named = |top: bool| doc.nodes.values().find(|n| n.name == name && (!top || n.parent.is_some_and(|p| doc.pages.contains(&p)))).map(|n| n.id);
             named(true).or_else(|| named(false)).ok_or_else(|| format!("no layer named '{name}'"))
         }
-        None => doc.pages.iter().copied().find(|p| desigma_export::anim::has_motion(doc, *p)).or_else(|| doc.pages.first().copied()).ok_or_else(|| "the file has no pages".into()),
+        None => doc
+            .pages
+            .iter()
+            .copied()
+            .find(|p| desigma_export::anim::has_motion(doc, *p))
+            .or_else(|| doc.pages.first().copied())
+            .ok_or_else(|| "the file has no pages".into()),
     }
 }
 

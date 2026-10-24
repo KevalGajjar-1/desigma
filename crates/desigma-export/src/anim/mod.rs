@@ -288,7 +288,8 @@ pub fn export_animation(doc: &Document, node: NodeId, o: &AnimExport, name: &str
             encode_gif(&mut anim, &g, progress).map(|(b, _)| b)
         }
         AnimFormat::Webm => {
-            let w = WebmOptions { fps, quality: o.webm_quality, speed: o.webm_speed, background: o.background.unwrap_or([255, 255, 255]), ..Default::default() };
+            let w =
+                WebmOptions { fps, quality: o.webm_quality, speed: o.webm_speed, background: o.background.unwrap_or([255, 255, 255]), ..Default::default() };
             encode_webm(&mut anim, &w, progress)
         }
         AnimFormat::PngZip => {
