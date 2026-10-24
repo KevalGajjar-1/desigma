@@ -167,8 +167,10 @@ pub struct App {
     pub decks: crate::decks::DecksState,
     /// Update notifications (banner, dialog, background checks).
     pub updater: crate::updater::UpdaterState,
-    /// Motion (Beta) mode: playhead, playback and the keyframe / clip selection.
+    /// Motion (Beta) mode state shared by the inspector, timeline and playback.
     pub motion: crate::motion::MotionUi,
+    /// Motion inspector: easing editor, animation library and clip popovers.
+    pub motion_ins: crate::motion::inspector::InspectorState,
 }
 
 impl App {
@@ -219,6 +221,7 @@ impl App {
             decks: Default::default(),
             updater: Default::default(),
             motion: Default::default(),
+            motion_ins: Default::default(),
         }
     }
 

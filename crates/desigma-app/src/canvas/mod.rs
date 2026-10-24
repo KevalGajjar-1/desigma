@@ -249,6 +249,7 @@ pub fn show(app: &mut App, ui: &mut Ui, rect: ERect) {
     crate::comments::pins::process(app, rect, &resp);
     grids::paint(app, ui, rect);
     draw::overlays(app, ui, rect);
+    crate::motion::inspector::paint_overlay(app, ui, rect);
     vector::toolbar(app, ui, rect);
     rulers::overlay(app, ui, rect);
     proto::overlays(app, ui, rect);

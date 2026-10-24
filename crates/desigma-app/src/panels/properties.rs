@@ -62,25 +62,25 @@ pub struct PropsState {
     pub styles_menu: Option<bool>,
 }
 
-pub(super) struct Pane {
-    pub(super) x0: f32,
-    pub(super) oy: f32,
-    pub(super) y: f32,
+pub(crate) struct Pane {
+    pub(crate) x0: f32,
+    pub(crate) oy: f32,
+    pub(crate) y: f32,
 }
 
 impl Pane {
-    pub(super) fn rect(&self, x: f32, dy: f32, w: f32, h: f32) -> Rect {
+    pub(crate) fn rect(&self, x: f32, dy: f32, w: f32, h: f32) -> Rect {
         Rect::from_min_size(Pos2::new(self.x0 + x, self.oy + self.y + dy), Vec2::new(w, h))
     }
-    pub(super) fn col(&self, i: usize, dy: f32) -> Rect {
+    pub(crate) fn col(&self, i: usize, dy: f32) -> Rect {
         self.rect(theme::FIELD_COL_X[i], dy, theme::FIELD_WIDTH_HALF, theme::FIELD_HEIGHT)
     }
-    pub(super) fn full(&self, dy: f32) -> Rect {
+    pub(crate) fn full(&self, dy: f32) -> Rect {
         self.rect(theme::SECTION_CONTENT_X, dy, theme::SECTION_CONTENT_W, theme::FIELD_HEIGHT)
     }
 }
 
-pub(super) fn to_c32(c: Color, opacity: f32) -> Color32 {
+pub(crate) fn to_c32(c: Color, opacity: f32) -> Color32 {
     let f = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
     Color32::from_rgba_unmultiplied(f(c.r), f(c.g), f(c.b), f(c.a * opacity))
 }
@@ -91,7 +91,7 @@ fn from_c32(c: Color32) -> Color {
     Color::rgba(r, g, b, a)
 }
 
-pub(super) fn section_sep(ui: &Ui, pane: &mut Pane, first: bool) {
+pub(crate) fn section_sep(ui: &Ui, pane: &mut Pane, first: bool) {
     if !first {
         widgets::hline(ui.painter(), pane.x0, pane.x0 + theme::RIGHT_PANEL_WIDTH, pane.oy + pane.y, theme::BORDER);
         pane.y += 1.0;
@@ -99,7 +99,7 @@ pub(super) fn section_sep(ui: &Ui, pane: &mut Pane, first: bool) {
 }
 
 /// Section title row; returns true when its action button was clicked.
-pub(super) fn title(ui: &mut Ui, pane: &mut Pane, text: &str, action: Option<Icon>, dim: bool) -> bool {
+pub(crate) fn title(ui: &mut Ui, pane: &mut Pane, text: &str, action: Option<Icon>, dim: bool) -> bool {
     let row = pane.rect(0.0, 0.0, theme::RIGHT_PANEL_WIDTH - 1.0, theme::SECTION_TITLE_HEIGHT);
     ui.painter().text(
         Pos2::new(row.left() + theme::SECTION_CONTENT_X, row.center().y),
@@ -119,7 +119,7 @@ pub(super) fn title(ui: &mut Ui, pane: &mut Pane, text: &str, action: Option<Ico
 
 /// Fill / Stroke section header: title, the styles button (4 dots) and "+". Returns true when
 /// "+" was clicked.
-pub(super) fn paint_title(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[NodeId], text: &str, stroke: bool, dim: bool) -> bool {
+pub(crate) fn paint_title(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[NodeId], text: &str, stroke: bool, dim: bool) -> bool {
     title(ui, pane, text, None, dim);
     let y = -theme::SECTION_TITLE_HEIGHT + 8.0;
     let plus = pane.rect(theme::SECTION_TRAILING_X, y, theme::PANEL_ACTION_BUTTON, theme::PANEL_ACTION_BUTTON);
@@ -156,18 +156,18 @@ pub(super) fn paint_title(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[No
     clicked
 }
 
-pub(super) fn sublabel(ui: &Ui, pane: &mut Pane, text: &str) {
+pub(crate) fn sublabel(ui: &Ui, pane: &mut Pane, text: &str) {
     let r = pane.rect(theme::SECTION_CONTENT_X, 0.0, theme::SECTION_CONTENT_W, theme::SUBLABEL_HEIGHT);
     ui.painter().text(Pos2::new(r.left(), r.center().y), Align2::LEFT_CENTER, text, theme::font_small_medium(), theme::TEXT_SECONDARY);
     pane.y += theme::SUBLABEL_HEIGHT + 4.0;
 }
 
 /// Row advance after a 24px field row.
-pub(super) fn row_end(pane: &mut Pane) {
+pub(crate) fn row_end(pane: &mut Pane) {
     pane.y += theme::FIELD_HEIGHT + 4.0;
 }
 
-pub(super) fn segmented(ui: &mut Ui, pane: &Pane, x: f32, key: &str, items: &[Icon], selected: Option<usize>) -> Option<usize> {
+pub(crate) fn segmented(ui: &mut Ui, pane: &Pane, x: f32, key: &str, items: &[Icon], selected: Option<usize>) -> Option<usize> {
     let mut out = None;
     let n = items.len();
     for (i, icon) in items.iter().enumerate() {
@@ -200,7 +200,7 @@ pub(super) fn segmented(ui: &mut Ui, pane: &Pane, x: f32, key: &str, items: &[Ic
     out
 }
 
-pub(super) fn checkbox(ui: &mut Ui, pane: &mut Pane, key: &str, label: &str, value: bool) -> Option<bool> {
+pub(crate) fn checkbox(ui: &mut Ui, pane: &mut Pane, key: &str, label: &str, value: bool) -> Option<bool> {
     let r = pane.rect(theme::SECTION_CONTENT_X, 0.0, theme::SECTION_CONTENT_W, theme::FIELD_HEIGHT);
     let resp = ui.interact(r, ui.id().with(("chk", key)), Sense::click());
     let b = Rect::from_min_size(Pos2::new(r.left(), r.center().y - 7.0), Vec2::splat(14.0));
@@ -969,7 +969,7 @@ const PAINT_GROUP_W: f32 = 159.0;
 /// x of the divider between the hex and opacity cells, from the group's left edge.
 const PAINT_DIVIDER_X: f32 = 104.0;
 
-pub(super) fn paint_rows(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[NodeId], paints: &[Paint], stroke: bool) {
+pub(crate) fn paint_rows(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[NodeId], paints: &[Paint], stroke: bool) {
     let linked: Option<String> = sel
         .first()
         .and_then(|s| app.doc.get(*s))
@@ -1102,7 +1102,7 @@ fn swatch_sources(app: &App) -> Vec<(String, Vec<Color32>)> {
     out
 }
 
-pub(super) fn open_picker(app: &mut App, target: PickTarget, color: Color32, anchor: Rect, ids: Vec<NodeId>) {
+pub(crate) fn open_picker(app: &mut App, target: PickTarget, color: Color32, anchor: Rect, ids: Vec<NodeId>) {
     let paint = node_paint(app, target, &ids).unwrap_or_else(|| {
         let [r, g, b, a] = color.to_srgba_unmultiplied();
         Paint { opacity: a as f32 / 255.0, ..Paint::solid(Color::rgba(r, g, b, 255)) }
@@ -1210,7 +1210,7 @@ fn create_style(app: &mut App, pk: &mut Picker) {
     app.show_toast(format!("Created \"{key}\""), false);
 }
 
-pub(super) fn picker_popup(app: &mut App, ui: &mut Ui, region: Rect) {
+pub(crate) fn picker_popup(app: &mut App, ui: &mut Ui, region: Rect) {
     use widgets::picker;
     let Some(mut pk) = app.props.picker.take() else { return };
     let ctx = ui.ctx().clone();

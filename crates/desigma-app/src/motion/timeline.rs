@@ -651,8 +651,14 @@ fn text(p: &Painter, pos: Pos2, align: Align2, s: &str, col: Color32) {
 
 // ---- panel ------------------------------------------------------------------------------------
 
+/// Where the timeline panel was last drawn, so popovers elsewhere can treat clicks on it as inside.
+pub fn last_rect(ctx: &egui::Context) -> Option<Rect> {
+    ctx.data(|d| d.get_temp(egui::Id::new("motion-timeline-rect")))
+}
+
 pub fn show(app: &mut App, ui: &mut Ui, rect: Rect) {
     let ctx = ui.ctx().clone();
+    ctx.data_mut(|d| d.insert_temp(egui::Id::new("motion-timeline-rect"), rect));
     let mut st = load(&ctx);
     advance(app, &mut st, &ctx);
     sanitize(app);

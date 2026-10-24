@@ -149,7 +149,7 @@ fn header(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[NodeId], empty: bo
     }
 }
 
-pub(super) fn section(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[NodeId], effects: &[Effect]) {
+pub(crate) fn section(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[NodeId], effects: &[Effect]) {
     header(app, ui, pane, sel, effects.is_empty());
     let names: Vec<String> = KINDS.iter().map(|(n, _)| n.to_string()).collect();
     if !effects.is_empty() {
@@ -234,7 +234,7 @@ fn color_row(app: &mut App, ui: &mut Ui, r: Rect, key: (usize, u8), c: Color, ta
     out
 }
 
-pub(super) fn popover_ui(app: &mut App, ui: &mut Ui, region: Rect) {
+pub(crate) fn popover_ui(app: &mut App, ui: &mut Ui, region: Rect) {
     let Some(st) = app.props.pop.clone() else { return };
     let ctx = ui.ctx().clone();
     match st.kind {

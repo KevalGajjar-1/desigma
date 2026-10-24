@@ -93,8 +93,7 @@ pub fn show(app: &mut App, ui: &mut Ui, rect: Rect) {
     widgets::hline(&p, rect.left() + 1.0, right, content_top, theme::BORDER);
     let region = Rect::from_min_max(Pos2::new(rect.left() + 1.0, content_top + 1.0), rect.max);
     if app.motion.enabled {
-        // The Motion inspector (animations, keyframe toggles, easing) builds on the design inspector.
-        properties::show(app, ui, region);
+        crate::motion::inspector::show(app, ui, region);
     } else if active == RightTab::Prototype {
         super::prototype::show(app, ui, region);
     } else if app.ui.dev_mode {

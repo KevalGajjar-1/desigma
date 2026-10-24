@@ -138,6 +138,8 @@ pub enum Icon {
     Repeat,
     ChevronLeft,
     ChevronsDownUp,
+    MoveArrows,
+    Maximize,
 }
 
 impl Icon {
@@ -262,6 +264,8 @@ impl Icon {
         Icon::Repeat,
         Icon::ChevronLeft,
         Icon::ChevronsDownUp,
+        Icon::MoveArrows,
+        Icon::Maximize,
     ];
 
     /// Name of the vendored Lucide icon that stands in for this one (None for the logo).
@@ -385,6 +389,8 @@ impl Icon {
             Icon::Repeat => "repeat",
             Icon::ChevronLeft => "chevron-left",
             Icon::ChevronsDownUp => "chevrons-down-up",
+            Icon::MoveArrows => "move",
+            Icon::Maximize => "maximize-2",
         })
     }
 }
@@ -508,6 +514,9 @@ lucide!(
     "copy",
     "list-ordered",
     "rectangle-horizontal",
+    "chevron-left",
+    "move",
+    "maximize-2",
 );
 
 /// SVG source of the Lucide icon behind `icon`.
@@ -615,7 +624,7 @@ mod tests {
         for i in Icon::ALL {
             assert!(seen.insert(*i), "{i:?} listed twice");
         }
-        assert_eq!(seen.len(), 118);
+        assert_eq!(seen.len(), 120);
     }
 
     #[test]
