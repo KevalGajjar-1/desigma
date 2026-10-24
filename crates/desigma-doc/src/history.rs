@@ -68,6 +68,17 @@ pub enum Command {
     SetBoardSession {
         session: BoardSession,
     },
+    /// Replace one node's animation data (keyframe tracks and clips). All motion edits in
+    /// [`crate::motion::edit`] compile to this so undo is a snapshot swap.
+    SetNodeMotion {
+        node: NodeId,
+        motion: Box<NodeMotion>,
+    },
+    /// Replace the Motion timeline settings of a page.
+    SetTimeline {
+        page: NodeId,
+        settings: TimelineSettings,
+    },
     Batch(Vec<Command>),
 }
 
@@ -153,6 +164,20 @@ impl Command {
                 variables: std::mem::replace(&mut doc.variables, variables),
                 collections: std::mem::replace(&mut doc.variable_collections, collections),
             },
+            Command::SetNodeMotion { node, motion } => {
+                let n = doc.get_mut(node).ok_or(DocError::NotFound(node))?;
+                let mut motion = *motion;
+                motion.normalize();
+                Command::SetNodeMotion { node, motion: Box::new(std::mem::replace(&mut n.motion, motion)) }
+            }
+            Command::SetTimeline { page, settings } => {
+                if doc.get(page).is_none() {
+                    return Err(DocError::NotFound(page));
+                }
+                let settings = settings.sanitized();
+                let old = if settings.is_default() { doc.timelines.remove(&page) } else { doc.timelines.insert(page, settings) };
+                Command::SetTimeline { page, settings: old.unwrap_or_default() }
+            }
             Command::Batch(cmds) => {
                 let mut inv = Vec::with_capacity(cmds.len());
                 for c in cmds {
