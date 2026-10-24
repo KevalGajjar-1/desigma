@@ -69,6 +69,9 @@ pub struct Options {
     pub out: Option<PathBuf>,
     /// `--fps N` of `--export-animation` (default: the timeline's fps).
     pub fps: Option<u32>,
+    /// `--dither` of `--export-animation`: Floyd-Steinberg dithering for GIF output (less banding
+    /// on gradients, larger file).
+    pub dither: bool,
     pub help: bool,
     /// Print `desigma <version>` and exit.
     pub version: bool,
@@ -166,6 +169,7 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Options, String> 
                 let v = it.next().ok_or("--fps needs a number (1..120)")?;
                 o.fps = Some(v.trim().parse::<u32>().ok().filter(|f| (1..=120).contains(f)).ok_or_else(|| format!("invalid fps '{v}' (expected 1..120)"))?);
             }
+            "--dither" => o.dither = true,
             "--select" => o.select = Some(it.next().ok_or("--select needs a layer name")?),
             "--menu" => o.menu = Some(it.next().ok_or("--menu needs a name (main, main/File, shape, palette)")?),
             "--fixture" => o.fixture = Some(it.next().ok_or("--fixture needs a name (no-selection)")?),
@@ -238,8 +242,8 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Options, String> 
         if let Some(sc) = o.scale.filter(|s| *s < 1.0) {
             return Err(format!("invalid scale '{sc}' (expected 1..4, e.g. 2)"));
         }
-        if o.format.is_some() || o.out.is_some() || o.fps.is_some() {
-            return Err("--format, --out and --fps need --export-animation FILE".into());
+        if o.format.is_some() || o.out.is_some() || o.fps.is_some() || o.dither {
+            return Err("--format, --out, --fps and --dither need --export-animation FILE".into());
         }
     } else if o.out.is_none() {
         return Err("--export-animation needs --out PATH".into());
@@ -259,7 +263,7 @@ pub const USAGE: &str = "usage: desigma [FILE] [--screenshot OUT.png] [--size Wx
   --seed-library  write the showcase sample files (a project with three files) into DIR and exit
   --find     open the Find and replace panel searching for TEXT (--replace-with TEXT shows the replace row)
   --export-animation FILE  render FILE's Motion animation (first animated page, or the layer named by --select) and exit:
-               --out PATH [--format gif|webm|png] [--fps N] [--scale 0.1..4]; png writes a folder, or a .zip when PATH ends in .zip
+               --out PATH [--format gif|webm|png] [--fps N] [--scale 0.1..4] [--dither]; png writes a folder, or a .zip when PATH ends in .zip
   --version  print the version and exit";
 
 #[cfg(test)]
@@ -397,6 +401,8 @@ mod tests {
         let o = p(&["--export-animation", "a.desigma", "--format", "webm", "--out", "a.webm", "--fps", "30", "--scale", "0.5", "--select", "Hero"]).unwrap();
         assert_eq!(o.export_animation, Some("a.desigma".into()));
         assert_eq!((o.format.as_deref(), o.fps, o.scale), (Some("webm"), Some(30), Some(0.5)));
+        assert!(!o.dither && p(&["--export-animation", "a", "--out", "o.gif", "--dither"]).unwrap().dither);
+        assert!(p(&["--dither"]).is_err(), "--dither needs --export-animation");
         assert_eq!(o.out, Some("a.webm".into()));
         assert!(p(&["--export-animation", "a.desigma"]).is_err(), "--out is required");
         assert!(p(&["--export-animation", "a", "--out", "o", "--format", "mov"]).is_err());

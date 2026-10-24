@@ -86,7 +86,7 @@ fn main() {
         return;
     }
     if let Some(file) = &opts.export_animation {
-        match motion::playback::export::run_cli(file, opts.format.as_deref(), opts.out.as_deref(), opts.fps, opts.scale, opts.select.as_deref()) {
+        match motion::playback::export::run_cli(file, opts.format.as_deref(), opts.out.as_deref(), opts.fps, opts.scale, opts.select.as_deref(), opts.dither) {
             Ok(msg) => println!("desigma: {msg}"),
             Err(e) => {
                 eprintln!("desigma: {e}");

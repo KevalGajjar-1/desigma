@@ -217,7 +217,7 @@ What is in it:
 cargo run -p desigma-app -- --motion                         # the built-in animated onboarding, in Motion mode
 cargo run -p desigma-app -- --motion --screenshot docs/images/desigma-motion.png --scale 2
 cargo run -p desigma-app -- --motion --panel motion-easing --screenshot easing.png --scale 2
-cargo run -p desigma-app -- --export-animation onboarding.desigma --out onboarding.gif --scale 0.75
+cargo run -p desigma-app -- --export-animation onboarding.desigma --out onboarding.gif --scale 0.75 --fps 20          # add --dither to smooth gradients (bigger file)
 ```
 
 Motion follows the workflow of Figma's Motion (Beta) mode but is desigma's own implementation, and it is not affiliated with Figma, Inc. Animation data lives in `.desigma` files; Figma exports skip it.

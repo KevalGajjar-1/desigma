@@ -21,7 +21,12 @@ fn texture_ids(s: &Sim) -> std::collections::BTreeSet<egui::TextureId> {
 #[test]
 fn playing_advances_the_playhead_with_the_clock_and_stops_at_the_end() {
     let mut s = motion_sim();
-    let duration = s.app().doc.timeline(s.app().page).duration_ms;
+    let page = s.app().page;
+    let tl = desigma_doc::motion::TimelineSettings { looping: false, ..s.app().doc.timeline(page) };
+    if let Ok(cmd) = desigma_doc::motion::edit::set_timeline(&s.app().doc, page, tl) {
+        s.shell.app.hist.exec(&mut s.shell.app.doc, cmd).unwrap();
+    }
+    let duration = tl.duration_ms;
     s.shell.app.motion.playhead_ms = 0;
     s.shell.app.motion.playing = true;
     for _ in 0..10 {
@@ -45,8 +50,9 @@ fn looping_playback_wraps() {
     let mut s = motion_sim();
     let page = s.app().page;
     let tl = desigma_doc::motion::TimelineSettings { looping: true, ..s.app().doc.timeline(page) };
-    let cmd = desigma_doc::motion::edit::set_timeline(&s.app().doc, page, tl).unwrap();
-    s.shell.app.hist.exec(&mut s.shell.app.doc, cmd).unwrap();
+    if let Ok(cmd) = desigma_doc::motion::edit::set_timeline(&s.app().doc, page, tl) {
+        s.shell.app.hist.exec(&mut s.shell.app.doc, cmd).unwrap();
+    }
     s.shell.app.motion.playhead_ms = tl.duration_ms - 100;
     s.shell.app.motion.playing = true;
     for _ in 0..8 {

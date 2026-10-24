@@ -7,8 +7,10 @@
 //!   rows that glide in one after another.
 //!
 //! Each effect is either hand-placed keyframes with spring easing or one of the library's Enter
-//! and Cycle presets. Every cycle is timed to end exactly at the timeline's end (`delay + k *
-//! period == DURATION`), so the animation settles at rest and loops without a visible seam.
+//! and Cycle presets. Every cycle is timed to end exactly at [`REST`] (`delay + k * period ==
+//! REST`), so the scene settles at rest and holds. The last stretch of the timeline is an exit
+//! phase: everything eases out in a short stagger, back to the empty state the timeline starts
+//! from, so the first and last frames are identical and the animation loops without a seam.
 //!
 //! The prototype is wired with "Control animation" actions: each screen plays its timeline when
 //! it appears, the Replay pill restarts it, hovering the card pauses it, and the call-to-action
@@ -19,7 +21,9 @@ use super::*;
 use desigma_doc::motion::{find_preset, AnimProperty as P, AnimValue as V, Clip, ClipDirection, ClipKind, ClipMode, ClipRepeat, Ease, TimelineSettings};
 
 /// Timeline length of the Motion page in ms.
-pub const DURATION: u32 = 4000;
+pub const DURATION: u32 = 4800;
+/// When the scene is fully settled and the exit phase begins (ms).
+pub const REST: u32 = 4000;
 /// Frames per second of the page's timeline (and of the exported animation).
 pub const FPS: u32 = 30;
 
@@ -37,6 +41,8 @@ impl Motion {
 
 const W: f32 = 400.0;
 const H: f32 = 640.0;
+/// Rest position of the payment card on the first screen.
+const CARD_Y: f32 = 112.0;
 
 fn night() -> Paint {
     grad_v(&[(0.0, hex(0x262A66)), (0.55, hex(0x14163F)), (1.0, hex(0x0A0B22))])
@@ -83,21 +89,36 @@ fn clip(s: &mut S, id: NodeId, mut c: Clip) {
     n.motion.clips.push(c);
 }
 
-/// A back-and-forth offset: `half` ms out, `half` ms back, repeating until the timeline ends. The
-/// timing must satisfy `delay + 2 * k * half == DURATION` so it comes to rest with the timeline.
+/// Cycle count of a back-and-forth clip that comes back to rest exactly at [`REST`].
+fn cycles(delay: u32, half: u32) -> ClipRepeat {
+    assert_eq!((REST - delay) % (2 * half), 0, "cycles end at rest");
+    ClipRepeat::Times((REST - delay) / half)
+}
+
+/// An outbound clip of the exit phase: `ms` long from `at`, eased in-out.
+fn out(s: &mut S, id: NodeId, kind: ClipKind, dir: ClipDirection, amount: f32, at: u32, ms: u32) {
+    assert!(at >= REST && at + ms <= DURATION, "exits stay inside the exit phase");
+    clip(s, id, Clip::new(kind, ClipMode::Out).dir(dir).amount(amount).dur(ms).ease(Ease::EaseInOut).delay(at));
+}
+
+/// Fades a layer out and nudges it `dist` px towards `dir` (0 to only fade).
+fn exit(s: &mut S, id: NodeId, dir: ClipDirection, dist: f32, at: u32, ms: u32) {
+    out(s, id, ClipKind::Opacity, ClipDirection::Bottom, 0.0, at, ms);
+    if dist > 0.0 {
+        out(s, id, ClipKind::Position, dir, dist, at, ms);
+    }
+}
+
+/// A back-and-forth offset: `half` ms out, `half` ms back, until [`REST`].
 fn drift(s: &mut S, id: NodeId, dir: ClipDirection, dist: f32, delay: u32, half: u32) {
-    assert_eq!((DURATION - delay) % (2 * half), 0, "drift ends at rest");
-    clip(
-        s,
-        id,
-        Clip::new(ClipKind::Position, ClipMode::Out).dir(dir).amount(dist).dur(half).ease(Ease::EaseInOut).repeat(ClipRepeat::Infinite).yoyo().delay(delay),
-    );
+    let repeat = cycles(delay, half);
+    clip(s, id, Clip::new(ClipKind::Position, ClipMode::Out).dir(dir).amount(dist).dur(half).ease(Ease::EaseInOut).repeat(repeat).yoyo().delay(delay));
 }
 
 /// A back-and-forth scale (breathing).
 fn breathe(s: &mut S, id: NodeId, factor: f32, delay: u32, half: u32) {
-    assert_eq!((DURATION - delay) % (2 * half), 0, "breathing ends at rest");
-    clip(s, id, Clip::new(ClipKind::Scale, ClipMode::Out).amount(factor).dur(half).ease(Ease::EaseInOut).repeat(ClipRepeat::Infinite).yoyo().delay(delay));
+    let repeat = cycles(delay, half);
+    clip(s, id, Clip::new(ClipKind::Scale, ClipMode::Out).amount(factor).dur(half).ease(Ease::EaseInOut).repeat(repeat).yoyo().delay(delay));
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -136,7 +157,7 @@ fn centered_in(s: &mut S, id: NodeId, cx: f32, cy: f32) {
 
 fn payment_card(s: &mut S, parent: NodeId) -> NodeId {
     let card = s.frame(parent, "Card");
-    s.at(card, 50.0, 124.0);
+    s.at(card, 50.0, CARD_Y);
     s.size(card, 300.0, 188.0);
     s.fill_paint(card, grad_d(&[(0.0, indigo()), (1.0, violet())]));
     s.radius(card, 24.0);
@@ -248,34 +269,36 @@ fn onboarding(s: &mut S, page: NodeId) -> NodeId {
 
     // the payment card: springs up and tilts into place, then floats
     let card = payment_card(s, f);
-    key(s, card, P::Position, &[(300, v2(50.0, 300.0), Some(Ease::SpringBouncy)), (1250, v2(50.0, 124.0), None)]);
+    key(s, card, P::Position, &[(300, v2(50.0, 300.0), Some(Ease::SpringBouncy)), (1250, v2(50.0, CARD_Y), None)]);
     key(s, card, P::Rotation, &[(300, V::Scalar(-16.0), Some(Ease::SpringGentle)), (1250, V::Scalar(5.0), None)]);
     key(s, card, P::Opacity, &[(300, V::Scalar(0.0), Some(Ease::EaseOut)), (700, V::Scalar(1.0), None)]);
     drift(s, card, ClipDirection::Top, 12.0, 1200, 1400);
 
     // floating chips
-    let a = chip(s, f, "Chip income", "+$240.00", 236.0, 96.0, mint());
+    let a = chip(s, f, "Chip income", "+$240.00", 24.0, 50.0, mint());
     preset(s, a, "Drop", 1000);
     drift(s, a, ClipDirection::Top, 8.0, 1500, 1250);
-    let b = chip(s, f, "Chip saved", "Saved 12%", 22.0, 282.0, hex(0xF5B544));
+    let b = chip(s, f, "Chip saved", "Saved 12%", 24.0, 322.0, hex(0xF5B544));
     preset(s, b, "Glide", 1400);
     drift(s, b, ClipDirection::Bottom, 8.0, 1900, 1050);
 
     // copy
     let title = s.text(f, "Money, in motion.", "Text/Headline", WHITE);
-    s.at(title, 32.0, 366.0);
+    s.at(title, 32.0, 382.0);
     preset(s, title, "Rise", 1300);
     let sub = s.text_w(f, "Track spending, save automatically and watch every move happen in real time.", "Text/Body", white(0.66), 336.0);
-    s.at(sub, 32.0, 410.0);
+    s.at(sub, 32.0, 426.0);
     preset(s, sub, "Rise", 1500);
 
     // pagination: the active dot stretches with a spring
+    let mut dots = Vec::new();
     for (i, active) in [true, false, false].into_iter().enumerate() {
         let (w, c) = if active { (24.0, Color::WHITE) } else { (8.0, Color::WHITE.with_alpha(0.3)) };
         let dot = s.rect(f, &format!("Dot {}", i + 1), w, 8.0, Cl::C(c));
         s.radius(dot, 4.0);
         let x = 32.0 + if i == 0 { 0.0 } else { 24.0 + (i as f32 - 1.0) * 16.0 };
-        s.at(dot, x, 496.0);
+        s.at(dot, x, 502.0);
+        dots.push(dot);
         key(s, dot, P::Opacity, &[(1800 + 80 * i as u32, V::Scalar(0.0), Some(Ease::EaseOut)), (2000 + 80 * i as u32, V::Scalar(1.0), None)]);
         if active {
             key(s, dot, P::Width, &[(1900, V::Scalar(8.0), Some(Ease::SpringBouncy)), (2600, V::Scalar(24.0), None)]);
@@ -283,9 +306,26 @@ fn onboarding(s: &mut S, page: NodeId) -> NodeId {
     }
 
     // call to action
-    let c = cta(s, f, "Get started", 548.0);
+    let c = cta(s, f, "Get started", 556.0);
     preset(s, c, "Burst", 2100);
     breathe(s, c, 1.03, 2400, 800);
+
+    // exit phase: the scene eases out, top to bottom reversed, back to the empty start state
+    exit(s, c, ClipDirection::Bottom, 22.0, 4000, 450);
+    for (i, d) in dots.into_iter().enumerate() {
+        exit(s, d, ClipDirection::Bottom, 0.0, 4040, 400 + 40 * i as u32);
+    }
+    exit(s, sub, ClipDirection::Top, 14.0, 4060, 450);
+    exit(s, title, ClipDirection::Top, 14.0, 4120, 450);
+    exit(s, b, ClipDirection::Left, 24.0, 4120, 480);
+    exit(s, a, ClipDirection::Right, 24.0, 4180, 480);
+    exit(s, replay, ClipDirection::Bottom, 0.0, 4000, 350);
+    exit(s, card, ClipDirection::Bottom, 56.0, 4200, 520);
+    out(s, card, ClipKind::Scale, ClipDirection::Bottom, 0.94, 4200, 520);
+    exit(s, logo, ClipDirection::Top, 12.0, 4300, 450);
+    out(s, logo, ClipKind::Scale, ClipDirection::Bottom, 0.7, 4300, 450);
+    exit(s, ga, ClipDirection::Bottom, 0.0, 4200, 550);
+    exit(s, gb, ClipDirection::Bottom, 0.0, 4200, 550);
     f
 }
 
@@ -341,6 +381,7 @@ fn ready(s: &mut S, page: NodeId) -> NodeId {
     key(s, ga, P::Opacity, &[(0, V::Scalar(0.0), Some(Ease::EaseOut)), (900, V::Scalar(0.35), None)]);
     breathe(s, ga, 1.12, 0, 2000);
     let gb = glow(s, f, "Glow B", 140.0, 380.0, 300.0, violet(), 0.45);
+    key(s, gb, P::Opacity, &[(0, V::Scalar(0.0), Some(Ease::EaseOut)), (1100, V::Scalar(0.45), None)]);
     drift(s, gb, ClipDirection::Top, 30.0, 0, 2000);
 
     // rippling ring behind the badge
@@ -349,8 +390,10 @@ fn ready(s: &mut S, page: NodeId) -> NodeId {
     s.stroke(ring, Cl::C(mint()), 3.0);
     s.at(ring, 125.0, 84.0);
     key(s, ring, P::Opacity, &[(0, V::Scalar(0.0), Some(Ease::Hold)), (1200, V::Scalar(1.0), None)]);
-    clip(s, ring, Clip::new(ClipKind::Scale, ClipMode::Out).amount(1.55).dur(1400).ease(Ease::EaseOut).repeat(ClipRepeat::Infinite).delay(1200));
-    clip(s, ring, Clip::new(ClipKind::Opacity, ClipMode::Out).amount(0.0).dur(1400).ease(Ease::EaseOut).repeat(ClipRepeat::Infinite).delay(1200));
+    assert_eq!((REST - 1200) % 1400, 0, "ripples end at rest");
+    let ring_cycles = ClipRepeat::Times((REST - 1200) / 1400);
+    clip(s, ring, Clip::new(ClipKind::Scale, ClipMode::Out).amount(1.55).dur(1400).ease(Ease::EaseOut).repeat(ring_cycles).delay(1200));
+    clip(s, ring, Clip::new(ClipKind::Opacity, ClipMode::Out).amount(0.0).dur(1400).ease(Ease::EaseOut).repeat(ring_cycles).delay(1200));
 
     let b = badge(s, f);
     key(s, b, P::Scale, &[(200, sc(0.2), Some(Ease::SpringBouncy)), (1000, sc(1.0), None)]);
@@ -364,14 +407,29 @@ fn ready(s: &mut S, page: NodeId) -> NodeId {
     s.at(sub, 32.0, 306.0);
     preset(s, sub, "Rise", 1050);
 
+    let mut rows = Vec::new();
     for (i, (label, state)) in [("Round-ups", "On"), ("Weekly summary", "Mondays"), ("Spending limits", "Set")].into_iter().enumerate() {
         let r = row(s, f, label, state, 366.0 + i as f32 * 58.0);
         preset(s, r, "Glide", 1300 + 180 * i as u32);
+        rows.push(r);
     }
 
     let c = cta(s, f, "Start over", 560.0);
     preset(s, c, "Feather", 2100);
     breathe(s, c, 1.03, 2400, 800);
+
+    // exit phase, as on the first screen
+    exit(s, c, ClipDirection::Bottom, 22.0, 4000, 450);
+    for (i, r) in rows.into_iter().rev().enumerate() {
+        exit(s, r, ClipDirection::Left, 28.0, 4040 + 80 * i as u32, 420);
+    }
+    exit(s, sub, ClipDirection::Top, 14.0, 4120, 450);
+    exit(s, title, ClipDirection::Top, 14.0, 4160, 450);
+    exit(s, ring, ClipDirection::Bottom, 0.0, 4200, 300);
+    exit(s, b, ClipDirection::Top, 0.0, 4250, 450);
+    out(s, b, ClipKind::Scale, ClipDirection::Bottom, 0.6, 4250, 450);
+    exit(s, ga, ClipDirection::Bottom, 0.0, 4200, 550);
+    exit(s, gb, ClipDirection::Bottom, 0.0, 4200, 550);
     f
 }
 
@@ -390,7 +448,7 @@ fn animation(trigger: Trigger, dest: Option<NodeId>, op: AnimationOp) -> Reactio
 /// Builds the Motion page (the last page of the document) and wires its prototype.
 pub fn build(s: &mut S) -> Motion {
     let page = s.d.pages[s.d.pages.len() - 1];
-    s.d.timelines.insert(page, TimelineSettings { duration_ms: DURATION, fps: FPS, looping: false });
+    s.d.timelines.insert(page, TimelineSettings { duration_ms: DURATION, fps: FPS, looping: true });
     let o = onboarding(s, page);
     let r = ready(s, page);
 

@@ -179,9 +179,17 @@ fn target(doc: &Document, name: Option<&str>) -> Result<NodeId, String> {
     }
 }
 
-/// `desigma --export-animation FILE --format gif|webm|png --out PATH [--fps N] [--scale S] [--select NAME]`.
+/// `desigma --export-animation FILE --format gif|webm|png --out PATH [--fps N] [--scale S] [--dither] [--select NAME]`.
 /// `png` writes a `.zip` when `out` ends in `.zip`, else a folder of numbered PNGs.
-pub fn run_cli(file: &Path, format: Option<&str>, out: Option<&Path>, fps: Option<u32>, scale: Option<f32>, select: Option<&str>) -> Result<String, String> {
+pub fn run_cli(
+    file: &Path,
+    format: Option<&str>,
+    out: Option<&Path>,
+    fps: Option<u32>,
+    scale: Option<f32>,
+    select: Option<&str>,
+    dither: bool,
+) -> Result<String, String> {
     let doc = crate::io::load_path(file)?;
     let node = target(&doc, select)?;
     let out = out.ok_or("--export-animation needs --out PATH")?;
@@ -192,7 +200,7 @@ pub fn run_cli(file: &Path, format: Option<&str>, out: Option<&Path>, fps: Optio
     if !desigma_export::anim::has_motion(&doc, node) {
         return Err("nothing is animated on that page (add keyframes or an animation preset first)".into());
     }
-    let opts = AnimExport { format: fmt, fps: fps.unwrap_or(0), scale: scale.unwrap_or(1.0), ..Default::default() };
+    let opts = AnimExport { format: fmt, fps: fps.unwrap_or(0), scale: scale.unwrap_or(1.0), gif_dither: dither, ..Default::default() };
     let name = doc.get(node).map(|n| n.name.clone()).unwrap_or_default();
     let started = std::time::Instant::now();
     let mut last = 0u32;
@@ -252,7 +260,7 @@ mod tests {
         let src = tmp("hero.desigma");
         crate::io::save_path(&d, &src).unwrap();
         let out = tmp("hero.gif");
-        let msg = run_cli(&src, Some("gif"), Some(&out), Some(10), None, Some("Hero")).unwrap();
+        let msg = run_cli(&src, Some("gif"), Some(&out), Some(10), None, Some("Hero"), false).unwrap();
         assert!(msg.contains("hero.gif"), "{msg}");
         let bytes = std::fs::read(&out).unwrap();
         let mut dec = gif::DecodeOptions::new().read_info(std::io::Cursor::new(bytes)).unwrap();
@@ -270,14 +278,14 @@ mod tests {
         let src = tmp("p.desigma");
         crate::io::save_path(&d, &src).unwrap();
         let zip = tmp("frames.zip");
-        run_cli(&src, Some("png"), Some(&zip), Some(10), Some(2.0), None).unwrap();
+        run_cli(&src, Some("png"), Some(&zip), Some(10), Some(2.0), None, false).unwrap();
         assert_eq!(&std::fs::read(&zip).unwrap()[..2], b"PK");
         let dir = tmp("frames");
-        run_cli(&src, Some("png"), Some(&dir), Some(10), None, None).unwrap();
+        run_cli(&src, Some("png"), Some(&dir), Some(10), None, None, false).unwrap();
         assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 5);
-        assert!(run_cli(&src, Some("mov"), Some(&zip), None, None, None).unwrap_err().contains("unknown animation format"));
-        assert!(run_cli(&src, Some("gif"), Some(&zip), None, None, Some("Nope")).unwrap_err().contains("no layer named"));
-        assert!(run_cli(&src, Some("gif"), None, None, None, None).unwrap_err().contains("--out"));
+        assert!(run_cli(&src, Some("mov"), Some(&zip), None, None, None, false).unwrap_err().contains("unknown animation format"));
+        assert!(run_cli(&src, Some("gif"), Some(&zip), None, None, Some("Nope"), false).unwrap_err().contains("no layer named"));
+        assert!(run_cli(&src, Some("gif"), None, None, None, None, false).unwrap_err().contains("--out"));
         // a file without animation says so
         let mut plain = Document::new("plain");
         let pg = plain.add_page("P");
@@ -285,7 +293,7 @@ mod tests {
         plain.insert(pg, Node::rectangle(id, Rect::new(0.0, 0.0, 5.0, 5.0))).unwrap();
         let ps = tmp("plain.desigma");
         crate::io::save_path(&plain, &ps).unwrap();
-        assert!(run_cli(&ps, Some("gif"), Some(&tmp("x.gif")), None, None, None).unwrap_err().contains("nothing is animated"));
+        assert!(run_cli(&ps, Some("gif"), Some(&tmp("x.gif")), None, None, None, false).unwrap_err().contains("nothing is animated"));
     }
 
     #[test]

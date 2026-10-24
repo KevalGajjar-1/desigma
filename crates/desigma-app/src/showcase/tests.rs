@@ -179,11 +179,32 @@ fn motion_demo_evaluates_finite_values_and_rests_at_the_end() {
         }
     }
     // keyframes and Enter presets land where the layers are stored; cycles come back to rest
-    let end = evaluate(&d, page, tl.duration_ms as f32);
+    let settled = evaluate(&d, page, motion::REST as f32);
     for n in animated.iter().filter(|n| !["Ring", "Card"].contains(&n.name.as_str())) {
-        let e = end.get(n.id).unwrap();
+        let e = settled.get(n.id).unwrap();
         assert!((e.transform.tx - n.transform.tx).abs() < 0.6 && (e.transform.ty - n.transform.ty).abs() < 0.6, "{} rests at its stored place", n.name);
-        assert!((e.opacity - n.opacity).abs() < 0.01, "{} ends visible", n.name);
+        assert!((e.opacity - n.opacity).abs() < 0.01, "{} is visible before the exit", n.name);
+    }
+    // the exit phase empties the scene: the last frame matches the first, so the loop has no seam
+    let start = evaluate(&d, page, 0.0);
+    let end = evaluate(&d, page, tl.duration_ms as f32);
+    for n in animated.iter() {
+        let (s0, e0) = (start.get(n.id).unwrap(), end.get(n.id).unwrap());
+        assert!(s0.opacity < 0.01 && e0.opacity < 0.01, "{} is hidden at both ends of the loop ({} / {})", n.name, s0.opacity, e0.opacity);
+    }
+    // the floating chips keep clear of the logo at every moment of the hold
+    let at = |name: &str, t: f32| {
+        let id = d.nodes.values().find(|n| n.name == name).unwrap().id;
+        let e = evaluate(&d, page, t);
+        let n = e.get(id).unwrap();
+        let p = n.transform.apply(Vec2::new(0.0, 0.0));
+        (p.x, p.y, n.size.x, n.size.y)
+    };
+    for step in 0..=40 {
+        let t = 1500.0 + (motion::REST as f32 - 1500.0) * step as f32 / 40.0;
+        let (lx, _, _, _) = at("Logo", t);
+        let (cx, _, cw, _) = at("Chip income", t);
+        assert!(lx - (cx + cw) >= 16.0, "income chip is {}px left of the logo at {t}", lx - (cx + cw));
     }
     assert!(document().flows.iter().any(|f| f.name == "Onboarding motion"));
 }
