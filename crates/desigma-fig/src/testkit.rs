@@ -42,6 +42,10 @@ pub fn figma_like_schema() -> Schema {
             "INSTANCE",
             "SECTION",
             "STICKY",
+            "KEYFRAME",
+            "KEYFRAME_TRACK",
+            "CODE_COMPONENT",
+            "ANIMATION_PRESET_INSTANCE",
         ],
     );
     enum_def(&mut b, "PaintType", &["SOLID", "GRADIENT_LINEAR", "GRADIENT_RADIAL", "GRADIENT_ANGULAR", "GRADIENT_DIAMOND", "IMAGE"]);
@@ -214,6 +218,171 @@ pub fn figma_like_schema() -> Schema {
     let t = def(&b, "TextLine");
     b.field(td, "lines", t, true, 4);
 
+    // ---- Figma Motion (names and field layout follow the real schema; see FIELDS.md)
+    enum_def(
+        &mut b,
+        "EasingType",
+        &[
+            "IN_CUBIC",
+            "OUT_CUBIC",
+            "INOUT_CUBIC",
+            "LINEAR",
+            "IN_BACK_CUBIC",
+            "OUT_BACK_CUBIC",
+            "INOUT_BACK_CUBIC",
+            "CUSTOM_CUBIC",
+            "SPRING",
+            "GENTLE_SPRING",
+            "CUSTOM_SPRING",
+            "SPRING_PRESET_ONE",
+            "SPRING_PRESET_TWO",
+            "SPRING_PRESET_THREE",
+            "HOLD",
+            "EASE_IN",
+        ],
+    );
+    enum_def(&mut b, "KeyframeOperation", &["SET", "SCALE", "OFFSET"]);
+    enum_def(&mut b, "KeyframeValueType", &["FLOAT", "INVALID", "COLOR", "TEXT_DATA", "VECTOR"]);
+    enum_def(
+        &mut b,
+        "VariableDataType",
+        &["BOOLEAN", "FLOAT", "STRING", "ALIAS", "COLOR", "EXPRESSION", "TEXT_DATA", "KEYFRAME_TRACK_PARAMETER_DATA", "EASING", "TIMING", "VECTOR"],
+    );
+    enum_def(
+        &mut b,
+        "VariableResolvedDataType",
+        &["BOOLEAN", "FLOAT", "STRING", "COLOR", "TEXT_DATA", "KEYFRAME_TRACK_PARAMETER_DATA", "EASING", "TIMING", "VECTOR"],
+    );
+    enum_def(&mut b, "ExpressionFunction", &["ADDITION", "KEYFRAME"]);
+    enum_def(&mut b, "KeyframeTrackParameterType", &["INVALID", "MANUAL", "ANIMATION_PRESET"]);
+    enum_def(
+        &mut b,
+        "VariableField",
+        &[
+            "MISSING",
+            "OPACITY",
+            "MOTION_TRANSLATION_X",
+            "MOTION_TRANSLATION_Y",
+            "MOTION_ROTATION",
+            "MOTION_SCALE_X",
+            "MOTION_SCALE_Y",
+            "MOTION_SHEAR",
+            "MOTION_TRANSLATION_XY",
+        ],
+    );
+    enum_def(&mut b, "PlaybackStyle", &["ONCE", "LOOP", "BOOMERANG"]);
+    enum_def(&mut b, "CodeObjectType", &["NONE", "ANIMATION_PRESET"]);
+    let bh = b.define("BezierHandles", DefKind::Message);
+    for (i, n) in ["p1x", "p1y", "p2x", "p2y"].iter().enumerate() {
+        b.field(bh, n, nat(Float), false, i as u32 + 1);
+    }
+    let sp = b.define("SpringParams", DefKind::Message);
+    for (i, n) in ["stiffness", "damping", "mass"].iter().enumerate() {
+        b.field(sp, n, nat(Float), false, i as u32 + 1);
+    }
+    let tea = b.define("TransitionEasingAnyValue", DefKind::Message);
+    let (spt, bht) = (def(&b, "SpringParams"), def(&b, "BezierHandles"));
+    b.field(tea, "springEasing", spt, false, 1);
+    b.field(tea, "bezierEasing", bht, false, 2);
+    let ed = b.define("EasingData", DefKind::Message);
+    let (et, teat) = (def(&b, "EasingType"), def(&b, "TransitionEasingAnyValue"));
+    b.field(ed, "easingType", et, false, 1);
+    b.field(ed, "easingValue", teat, false, 2);
+    let kav = b.define("KeyframeAnyValue", DefKind::Message);
+    let vt = def(&b, "Vector");
+    b.field(kav, "floatValue", nat(Float), false, 1);
+    b.field(kav, "vectorValue", vt, false, 4);
+    let kvd = b.define("KeyframeValueData", DefKind::Message);
+    let (kavt, kvt) = (def(&b, "KeyframeAnyValue"), def(&b, "KeyframeValueType"));
+    b.field(kvd, "value", kavt, false, 1);
+    b.field(kvd, "valueType", kvt, false, 2);
+    let ar = b.define("AssetRef", DefKind::Message);
+    b.field(ar, "key", nat(String), false, 1);
+    b.field(ar, "version", nat(String), false, 2);
+    let ktid = b.define("KeyframeTrackId", DefKind::Message);
+    let (gt, art) = (def(&b, "GUID"), def(&b, "AssetRef"));
+    b.field(ktid, "guid", gt, false, 1);
+    b.field(ktid, "assetRef", art, false, 2);
+    let apid = b.define("AnimationPresetId", DefKind::Message);
+    b.field(apid, "guid", gt, false, 1);
+    b.field(apid, "assetRef", art, false, 2);
+    let mkp = b.define("ManualKeyframeTrackParameter", DefKind::Message);
+    let ktidt = def(&b, "KeyframeTrackId");
+    b.field(mkp, "keyframeTrackId", ktidt, false, 1);
+    let apkp = b.define("AnimationPresetKeyframeTrackParameter", DefKind::Message);
+    let apidt = def(&b, "AnimationPresetId");
+    b.field(apkp, "animationPresetId", apidt, false, 1);
+    b.field(apkp, "keyframeTrackId", ktidt, false, 2);
+    let ktap = b.define("KeyframeTrackAnyParameter", DefKind::Message);
+    let (mkpt, apkpt) = (def(&b, "ManualKeyframeTrackParameter"), def(&b, "AnimationPresetKeyframeTrackParameter"));
+    b.field(ktap, "manual", mkpt, false, 1);
+    b.field(ktap, "animationPreset", apkpt, false, 2);
+    let ktp = b.define("KeyframeTrackParameter", DefKind::Message);
+    let (ktapt, ktpt) = (def(&b, "KeyframeTrackAnyParameter"), def(&b, "KeyframeTrackParameterType"));
+    b.field(ktp, "value", ktapt, false, 1);
+    b.field(ktp, "type", ktpt, false, 2);
+    let ktpv = b.define("KeyframeTrackParameterValue", DefKind::Message);
+    let ktpt2 = def(&b, "KeyframeTrackParameter");
+    b.field(ktpv, "parameters", ktpt2, true, 1);
+    // VariableData and Expression refer to each other.
+    let vd = b.define("VariableData", DefKind::Message);
+    let expr = b.define("Expression", DefKind::Message);
+    let vany = b.define("VariableAnyValue", DefKind::Message);
+    let (ef, vdt_, vrt) = (def(&b, "ExpressionFunction"), def(&b, "VariableDataType"), def(&b, "VariableResolvedDataType"));
+    b.field(expr, "expressionFunction", ef, false, 1);
+    b.field(expr, "expressionArguments", FieldType::Def(vd), true, 2);
+    let (tdt, ktpvt, edt) = (def(&b, "TextData"), def(&b, "KeyframeTrackParameterValue"), def(&b, "EasingData"));
+    b.field(vany, "floatValue", nat(Float), false, 3);
+    b.field(vany, "textDataValue", tdt, false, 10);
+    b.field(vany, "expressionValue", FieldType::Def(expr), false, 6);
+    b.field(vany, "keyframeTrackParameterValue", ktpvt, false, 20);
+    b.field(vany, "easingValue", edt, false, 21);
+    b.field(vany, "vectorValue", vt, false, 22);
+    b.field(vd, "value", FieldType::Def(vany), false, 1);
+    b.field(vd, "dataType", vdt_, false, 2);
+    b.field(vd, "resolvedDataType", vrt, false, 3);
+    let vdme = b.define("VariableDataMapEntry", DefKind::Message);
+    let (vdt2, vft) = (def(&b, "VariableData"), def(&b, "VariableField"));
+    b.field(vdme, "variableData", vdt2, false, 2);
+    b.field(vdme, "variableField", vft, false, 3);
+    let vdm = b.define("VariableDataMap", DefKind::Message);
+    let vdmet = def(&b, "VariableDataMapEntry");
+    b.field(vdm, "entries", vdmet, true, 1);
+    let apd = b.define("AnimationPresetData", DefKind::Message);
+    b.field(apd, "animationPresetId", apidt, false, 1);
+    b.field(apd, "sortPosition", nat(String), false, 3);
+    let aps = b.define("AnimationPresets", DefKind::Message);
+    let apdt = def(&b, "AnimationPresetData");
+    b.field(aps, "presets", apdt, true, 1);
+    let cpv = b.define("ComponentPropValue", DefKind::Message);
+    b.field(cpv, "textValue", tdt, false, 2);
+    b.field(cpv, "floatValue", nat(Float), false, 4);
+    b.field(cpv, "easingData", edt, false, 5);
+    let cpa = b.define("ComponentPropAssignment", DefKind::Message);
+    let cpvt = def(&b, "ComponentPropValue");
+    b.field(cpa, "defID", gt, false, 1);
+    b.field(cpa, "value", cpvt, false, 2);
+    b.field(cpa, "varValue", vdt2, false, 3);
+    let cpd = b.define("ComponentPropDef", DefKind::Message);
+    b.field(cpd, "id", gt, false, 1);
+    b.field(cpd, "name", nat(String), false, 2);
+    let fr = b.define("FrameRate", DefKind::Message);
+    b.field(fr, "numerator", nat(Uint), false, 1);
+    b.field(fr, "denominator", nat(Uint), false, 2);
+    let td = b.define("TimelineData", DefKind::Message);
+    let (psd, frt) = (def(&b, "PlaybackStyle"), def(&b, "FrameRate"));
+    b.field(td, "durationUs", nat(Uint64), false, 1);
+    b.field(td, "defaultTimeline", nat(Bool), false, 2);
+    b.field(td, "playbackStyle", psd, false, 4);
+    b.field(td, "keyframeSnappingFps", frt, false, 6);
+    let tde = b.define("TimelineDefinitionsMapEntry", DefKind::Message);
+    let tdt3 = def(&b, "TimelineData");
+    b.field(tde, "id", gt, false, 1);
+    b.field(tde, "data", tdt3, false, 2);
+    let tdm = b.define("TimelineDefinitionsMap", DefKind::Message);
+    let tdet = def(&b, "TimelineDefinitionsMapEntry");
+    b.field(tdm, "entries", tdet, true, 1);
+
     let nc = b.define("NodeChange", DefKind::Message);
     let mut id = 0;
     let mut f = |b: &mut SchemaBuilder, name: &str, ty: FieldType, arr: bool| {
@@ -325,6 +494,35 @@ pub fn figma_like_schema() -> Schema {
     // Overrides are NodeChange-shaped messages.
     b.field(sd, "symbolOverrides", FieldType::Def(nc), true, 2);
     f(&mut b, "derivedSymbolData", FieldType::Def(nc), true);
+    // Figma Motion node fields.
+    let (aps_t, vdm_t, apid_t, cpa_t, cpd_t) = (
+        def(&b, "AnimationPresets"),
+        def(&b, "VariableDataMap"),
+        def(&b, "AnimationPresetId"),
+        def(&b, "ComponentPropAssignment"),
+        def(&b, "ComponentPropDef"),
+    );
+    let (ed_t, kvd_t, bh_t, ko_t, cot, tdm_t) = (
+        def(&b, "EasingData"),
+        def(&b, "KeyframeValueData"),
+        def(&b, "BezierHandles"),
+        def(&b, "KeyframeOperation"),
+        def(&b, "CodeObjectType"),
+        def(&b, "TimelineDefinitionsMap"),
+    );
+    f(&mut b, "animationPresets", aps_t, false);
+    f(&mut b, "parameterConsumptionMap", vdm_t, false);
+    f(&mut b, "backingCodeComponentId", apid_t, false);
+    f(&mut b, "componentPropAssignments", cpa_t, true);
+    f(&mut b, "componentPropDefs", cpd_t, true);
+    f(&mut b, "easingData", ed_t, false);
+    f(&mut b, "keyframeValue", kvd_t, false);
+    f(&mut b, "motionPathBezierHandles", bh_t, false);
+    f(&mut b, "keyframeOperation", ko_t, false);
+    f(&mut b, "codeObjectType", cot, false);
+    f(&mut b, "timelinePosition", nat(Int64), false);
+    f(&mut b, "timelineOffset", nat(Int64), false);
+    f(&mut b, "timelineDefinitions", tdm_t, false);
 
     let blob = b.define("Blob", DefKind::Message);
     b.field(blob, "bytes", nat(Byte), true, 1);
@@ -897,5 +1095,229 @@ pub fn nested_swap_fig(how: Compression) -> Vec<u8> {
     let schema = figma_like_schema();
     let root = schema.find("Message").unwrap();
     let body = schema.encode_message(root, &nested_swap_message()).unwrap();
+    container::write_container(&schema.encode(), &body, how, 101)
+}
+
+// ---- Figma Motion fixture (see `tests/motion_import.rs`); all values are made up.
+
+fn bezier(a: f32, b: f32, c: f32, d: f32) -> V {
+    msg(vec![
+        ("easingType", en("CUSTOM_CUBIC")),
+        ("easingValue", msg(vec![("bezierEasing", msg(vec![("p1x", fl(a)), ("p1y", fl(b)), ("p2x", fl(c)), ("p2y", fl(d))]))])),
+    ])
+}
+
+fn spring(stiffness: f32, damping: f32, mass: f32) -> V {
+    msg(vec![
+        ("easingType", en("CUSTOM_SPRING")),
+        ("easingValue", msg(vec![("springEasing", msg(vec![("stiffness", fl(stiffness)), ("damping", fl(damping)), ("mass", fl(mass))]))])),
+    ])
+}
+
+fn kf_value(x: f32, y: Option<f32>) -> V {
+    match y {
+        None => msg(vec![("value", msg(vec![("floatValue", fl(x))])), ("valueType", en("FLOAT"))]),
+        Some(y) => msg(vec![("value", msg(vec![("vectorValue", vec2(x, y))])), ("valueType", en("VECTOR"))]),
+    }
+}
+
+fn track(id: u32, parent: (u32, u32), op: Option<&str>) -> V {
+    let extra = op.map(|o| vec![("keyframeOperation", en(o))]).unwrap_or_default();
+    node((1, id), parent, "!", "KEYFRAME_TRACK", "Keyframe Track", extra)
+}
+
+fn keyframe(id: u32, track: u32, at_us: Option<i64>, value: V, easing: V) -> V {
+    let mut extra = vec![("keyframeValue", value), ("easingData", easing)];
+    if let Some(t) = at_us {
+        extra.push(("timelinePosition", V::Int64(t)));
+    }
+    node((1, id), (1, track), "!", "KEYFRAME", "Keyframe", extra)
+}
+
+fn track_param(preset: Option<u32>, track: u32) -> V {
+    let tid = msg(vec![("guid", guid(1, track))]);
+    match preset {
+        None => msg(vec![("type", en("MANUAL")), ("value", msg(vec![("manual", msg(vec![("keyframeTrackId", tid)]))]))]),
+        Some(p) => msg(vec![
+            ("type", en("ANIMATION_PRESET")),
+            ("value", msg(vec![("animationPreset", msg(vec![("animationPresetId", msg(vec![("guid", guid(1, p))])), ("keyframeTrackId", tid)]))])),
+        ]),
+    }
+}
+
+fn keyframe_field(field: &str, base: f32, params: Vec<V>) -> V {
+    let base_vd = msg(vec![("dataType", en("FLOAT")), ("resolvedDataType", en("FLOAT")), ("value", msg(vec![("floatValue", fl(base))]))]);
+    let tracks_vd = msg(vec![
+        ("dataType", en("KEYFRAME_TRACK_PARAMETER_DATA")),
+        ("resolvedDataType", en("KEYFRAME_TRACK_PARAMETER_DATA")),
+        ("value", msg(vec![("keyframeTrackParameterValue", msg(vec![("parameters", V::Array(params))]))])),
+    ]);
+    let expr = msg(vec![("expressionFunction", en("KEYFRAME")), ("expressionArguments", V::Array(vec![base_vd, tracks_vd]))]);
+    msg(vec![
+        ("variableField", en(field)),
+        ("variableData", msg(vec![("dataType", en("EXPRESSION")), ("resolvedDataType", en("FLOAT")), ("value", msg(vec![("expressionValue", expr)]))])),
+    ])
+}
+
+fn text_prop(def: u32, s: &str) -> V {
+    msg(vec![("defID", guid(22, def)), ("value", msg(vec![("textValue", msg(vec![("characters", V::String(s.into()))]))]))])
+}
+
+fn float_prop(def: u32, x: f32) -> V {
+    msg(vec![("defID", guid(22, def)), ("value", msg(vec![("floatValue", fl(x))]))])
+}
+
+/// A rectangle with Figma Motion data (the structure of a real Motion file, with made-up values):
+///
+/// * Position keys at 0 / 800 ms (`MOTION_TRANSLATION_XY`, offsets (0,0) -> (50,10), spring on the
+///   second key), Rotation (`MOTION_ROTATION`, 0 -> -pi/3 rad), Opacity (percent 100 -> 50) and an
+///   unsupported `MOTION_SHEAR` track.
+/// * Two animation presets: a "slide out to the left" Position clip with full parameters and an
+///   Opacity clip without a code component (inferred from its tracks).
+/// * The page's timeline: 3 s, 30 fps, looping.
+///
+/// The rectangle sits at (30, 40), 100 x 60.
+pub fn motion_message() -> V {
+    let doc = node((0, 0), (0, 0), "!", "DOCUMENT", "Document", vec![]);
+    let timeline = msg(vec![(
+        "entries",
+        V::Array(vec![msg(vec![
+            ("id", guid(0, 9)),
+            (
+                "data",
+                msg(vec![
+                    ("durationUs", V::Uint64(3_000_000)),
+                    ("defaultTimeline", V::Bool(true)),
+                    ("playbackStyle", en("LOOP")),
+                    ("keyframeSnappingFps", msg(vec![("numerator", V::Uint(30)), ("denominator", V::Uint(1))])),
+                ]),
+            ),
+        ])]),
+    )]);
+    let page = node((0, 1), (0, 0), "a", "CANVAS", "Motion", vec![("backgroundColor", color(1.0, 1.0, 1.0, 1.0)), ("timelineDefinitions", timeline)]);
+    let internal = node((0, 2), (0, 0), "b", "CANVAS", "Internal Only Canvas", vec![("internalOnly", V::Bool(true))]);
+    let preset_ref = |l: u32, pos: &str| msg(vec![("animationPresetId", msg(vec![("guid", guid(1, l))])), ("sortPosition", V::String(pos.into()))]);
+    let rect = node(
+        (1, 2),
+        (0, 1),
+        "a",
+        "ROUNDED_RECTANGLE",
+        "Box",
+        vec![
+            ("size", vec2(100.0, 60.0)),
+            ("transform", matrix(30.0, 40.0)),
+            ("animationPresets", msg(vec![("presets", V::Array(vec![preset_ref(17, "!"), preset_ref(18, "\"")]))])),
+            (
+                "parameterConsumptionMap",
+                msg(vec![(
+                    "entries",
+                    V::Array(vec![
+                        keyframe_field("OPACITY", 100.0, vec![track_param(None, 8), track_param(Some(18), 31)]),
+                        keyframe_field("MOTION_TRANSLATION_X", 0.0, vec![track_param(Some(17), 21)]),
+                        keyframe_field("MOTION_ROTATION", 0.0, vec![track_param(None, 6)]),
+                        keyframe_field("MOTION_SHEAR", 0.0, vec![track_param(None, 40)]),
+                        keyframe_field("MOTION_TRANSLATION_XY", 0.0, vec![track_param(None, 3)]),
+                    ]),
+                )]),
+            ),
+        ],
+    );
+    let pos_def = |id: u32, name: &str| msg(vec![("id", guid(22, id)), ("name", V::String(name.into()))]);
+    let code = node(
+        (1, 16),
+        (0, 2),
+        "c",
+        "CODE_COMPONENT",
+        "motion.preset_name.position",
+        vec![
+            ("key", V::String("test-position-preset".into())),
+            ("codeObjectType", en("ANIMATION_PRESET")),
+            (
+                "componentPropDefs",
+                V::Array(vec![
+                    pos_def(0, "type"),
+                    pos_def(1, "direction"),
+                    pos_def(2, "distance"),
+                    pos_def(8, "delay"),
+                    pos_def(9, "duration"),
+                    pos_def(10, "easing"),
+                ]),
+            ),
+        ],
+    );
+    let slide = node(
+        (1, 17),
+        (0, 2),
+        "d",
+        "ANIMATION_PRESET_INSTANCE",
+        "motion.preset_name.position",
+        vec![
+            (
+                "backingCodeComponentId",
+                msg(vec![("assetRef", msg(vec![("key", V::String("test-position-preset".into())), ("version", V::String("1:0".into()))]))]),
+            ),
+            ("timelineOffset", V::Int64(500_000)),
+            (
+                "componentPropAssignments",
+                V::Array(vec![
+                    text_prop(0, "slide_out"),
+                    text_prop(1, "left"),
+                    float_prop(2, 40.0),
+                    float_prop(8, 0.5),
+                    float_prop(9, 0.25),
+                    msg(vec![("defID", guid(22, 10)), ("value", msg(vec![("easingData", bezier(0.2, 0.0, 0.4, 1.0))]))]),
+                ]),
+            ),
+        ],
+    );
+    let fade = node(
+        (1, 18),
+        (0, 2),
+        "e",
+        "ANIMATION_PRESET_INSTANCE",
+        "motion.preset_name.opacity",
+        vec![
+            ("timelineOffset", V::Int64(600_000)),
+            ("backingCodeComponentId", msg(vec![("assetRef", msg(vec![("key", V::String("unknown-preset".into()))]))])),
+        ],
+    );
+    let ease_io = || bezier(0.25, 0.1, 0.25, 1.0);
+    let nodes = vec![
+        doc,
+        page,
+        internal,
+        rect,
+        code,
+        slide,
+        fade,
+        // Manual tracks, parented to the internal canvas like in real files.
+        track(3, (0, 2), None),
+        keyframe(4, 3, None, kf_value(0.0, Some(0.0)), ease_io()),
+        keyframe(5, 3, Some(800_000), kf_value(50.0, Some(10.0)), spring(100.0, 10.0, 1.0)),
+        track(6, (0, 2), None),
+        keyframe(7, 6, None, kf_value(0.0, None), ease_io()),
+        keyframe(9, 6, Some(800_000), kf_value(-std::f32::consts::FRAC_PI_3, None), ease_io()),
+        track(8, (0, 2), None),
+        keyframe(10, 8, None, kf_value(100.0, None), ease_io()),
+        keyframe(11, 8, Some(800_000), kf_value(50.0, None), ease_io()),
+        track(40, (0, 2), None),
+        keyframe(41, 40, None, kf_value(0.0, None), ease_io()),
+        keyframe(42, 40, Some(400_000), kf_value(0.2, None), ease_io()),
+        // Preset tracks, parented to their preset instance.
+        track(21, (1, 17), Some("OFFSET")),
+        keyframe(22, 21, None, kf_value(0.0, None), bezier(0.2, 0.0, 0.4, 1.0)),
+        keyframe(23, 21, Some(250_000), kf_value(-40.0, None), bezier(0.2, 0.0, 0.4, 1.0)),
+        track(31, (1, 18), Some("SCALE")),
+        keyframe(32, 31, None, kf_value(0.0, None), msg(vec![("easingType", en("LINEAR"))])),
+        keyframe(33, 31, Some(100_000), kf_value(1.0, None), msg(vec![("easingType", en("LINEAR"))])),
+    ];
+    msg(vec![("nodeChanges", V::Array(nodes)), ("blobs", V::Array(vec![]))])
+}
+
+/// `.fig` bytes for [`motion_message`].
+pub fn motion_fig(how: Compression) -> Vec<u8> {
+    let schema = figma_like_schema();
+    let root = schema.find("Message").unwrap();
+    let body = schema.encode_message(root, &motion_message()).unwrap();
     container::write_container(&schema.encode(), &body, how, 101)
 }

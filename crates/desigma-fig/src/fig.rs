@@ -59,7 +59,7 @@ struct Entry {
     json: Value,
 }
 
-fn guid_str(g: &Value) -> Option<String> {
+pub(crate) fn guid_str(g: &Value) -> Option<String> {
     Some(format!("{}:{}", g.get("sessionID")?.as_u64()?, g.get("localID")?.as_u64()?))
 }
 
@@ -87,6 +87,8 @@ struct Lk<'a> {
     /// Property definition id (including the `parentPropDefId` aliases that
     /// variants carry) -> (`Name#s:l`, REST type).
     prop_defs: HashMap<String, (String, &'static str)>,
+    /// Node id -> Figma Motion data (`motion.rs`).
+    motion: HashMap<String, Value>,
 }
 
 impl<'a> Lk<'a> {
@@ -99,6 +101,7 @@ impl<'a> Lk<'a> {
             style_nodes: HashMap::new(),
             style_by_id: HashMap::new(),
             prop_defs: HashMap::new(),
+            motion: crate::motion::extract(&entries.iter().map(|e| &e.json).collect::<Vec<_>>()),
         };
         let mut aliases: Vec<(String, String)> = Vec::new();
         for e in entries {
@@ -368,6 +371,8 @@ fn convert_node(nc: &Value, id: &str, lk: &Lk) -> Option<Map<String, Value>> {
     let ty = match fstr(nc, "type")? {
         // Variables are mapped separately (`variables::from_fig_entries`); they are not canvas content.
         "DOCUMENT" | "NONE" | "VARIABLE" | "VARIABLE_SET" | "VARIABLE_OVERRIDE" => return None,
+        // Tracks, keyframes and animation presets are folded into the animated nodes (`motion.rs`).
+        _ if crate::motion::is_motion_node(nc) => return None,
         "SYMBOL" => "COMPONENT",
         "ROUNDED_RECTANGLE" => "RECTANGLE",
         "FRAME" if nc.get("isStateGroup").and_then(Value::as_bool) == Some(true) => "COMPONENT_SET",
@@ -392,6 +397,9 @@ fn convert_node(nc: &Value, id: &str, lk: &Lk) -> Option<Map<String, Value>> {
     if let Some(t) = nc.get("transform") {
         m.insert("relativeTransform".into(), matrix_json(t));
     }
+    if let Some(mo) = lk.motion.get(id) {
+        m.insert("motion".into(), mo.clone());
+    }
     if let Some(e) = convert_export_settings(nc) {
         m.insert("exportSettings".into(), e);
     }
@@ -399,6 +407,9 @@ fn convert_node(nc: &Value, id: &str, lk: &Lk) -> Option<Map<String, Value>> {
         m.insert("guides".into(), g);
     }
     if ty == "CANVAS" {
+        if let Some(t) = crate::motion::page_timeline(nc) {
+            m.insert("motionTimeline".into(), t);
+        }
         copy(&mut m, nc, "backgroundColor", "backgroundColor");
         return Some(m);
     }
