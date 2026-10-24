@@ -29,6 +29,16 @@ pub enum AnimProperty {
     /// Colour of the first solid stroke paint.
     StrokeColor,
     StrokeWeight,
+    /// Horizontal offset of the first drop shadow (a node without one cannot animate this).
+    ShadowX,
+    /// Vertical offset of the first drop shadow.
+    ShadowY,
+    /// Blur radius of the first drop shadow.
+    ShadowBlur,
+    /// Colour (with alpha) of the first drop shadow.
+    ShadowColor,
+    /// Radius of the first layer blur.
+    BlurRadius,
 }
 
 /// The shape of an [`AnimValue`] a property takes.
@@ -40,8 +50,8 @@ pub enum ValueKind {
 }
 
 impl AnimProperty {
-    /// Every property in inspector order (Transform, Layout, Appearance, Fill, Stroke).
-    pub const ALL: [AnimProperty; 10] = [
+    /// Every property in inspector order (Transform, Layout, Appearance, Fill, Stroke, Effects).
+    pub const ALL: [AnimProperty; 15] = [
         AnimProperty::Position,
         AnimProperty::Scale,
         AnimProperty::Rotation,
@@ -52,6 +62,11 @@ impl AnimProperty {
         AnimProperty::FillColor,
         AnimProperty::StrokeColor,
         AnimProperty::StrokeWeight,
+        AnimProperty::ShadowX,
+        AnimProperty::ShadowY,
+        AnimProperty::ShadowBlur,
+        AnimProperty::ShadowColor,
+        AnimProperty::BlurRadius,
     ];
 
     /// Label of the timeline's property row.
@@ -67,13 +82,18 @@ impl AnimProperty {
             AnimProperty::FillColor => "Fill",
             AnimProperty::StrokeColor => "Stroke",
             AnimProperty::StrokeWeight => "Stroke weight",
+            AnimProperty::ShadowX => "Shadow X",
+            AnimProperty::ShadowY => "Shadow Y",
+            AnimProperty::ShadowBlur => "Shadow blur",
+            AnimProperty::ShadowColor => "Shadow color",
+            AnimProperty::BlurRadius => "Layer blur",
         }
     }
 
     pub fn kind(&self) -> ValueKind {
         match self {
             AnimProperty::Position | AnimProperty::Scale => ValueKind::Vec2,
-            AnimProperty::FillColor | AnimProperty::StrokeColor => ValueKind::Color,
+            AnimProperty::FillColor | AnimProperty::StrokeColor | AnimProperty::ShadowColor => ValueKind::Color,
             _ => ValueKind::Scalar,
         }
     }
@@ -92,7 +112,7 @@ impl AnimProperty {
         match self {
             AnimProperty::Opacity | AnimProperty::Scale => "%",
             AnimProperty::Rotation => "°",
-            AnimProperty::FillColor | AnimProperty::StrokeColor => "",
+            AnimProperty::FillColor | AnimProperty::StrokeColor | AnimProperty::ShadowColor => "",
             _ => "px",
         }
     }

@@ -89,6 +89,9 @@ enum Drag {
     Stretch { origin: Pos2, pivot: u32, edge: u32, factor: f32, active: bool, base: Vec<KeyRef> },
     /// Moving or trimming a clip bar.
     Clip { node: NodeId, edge: ClipEdge, origin: Pos2, orig: Clip, cur: Clip, active: bool },
+    /// Dragging the blue summary bar of a layer: everything it animates moves by `delta` ms. `lo`
+    /// is the start of the bar when the drag began.
+    Summary { node: NodeId, origin: Pos2, lo: u32, active: bool, delta: i64 },
     /// Rubber-band selection in the track area.
     Marquee { origin: Pos2, cur: Pos2, base: Vec<KeyRef> },
     /// Resizing the panel by its top edge.
@@ -278,7 +281,7 @@ fn geometry(st: &TimelineUi, rect: Rect, doc: &Document, page: NodeId) -> Geo {
     let body_top = rect.top() + HEADER_H + 1.0;
     let left = Rect::from_min_max(Pos2::new(rect.left(), body_top), Pos2::new(rect.left() + LEFT_W, rect.bottom()));
     let tracks = Rect::from_min_max(Pos2::new(rect.left() + LEFT_W, body_top), rect.max);
-    let fit = ((ruler.width() - TIME_PAD - 50.0).max(40.0)) / tl.duration_ms.max(1) as f32;
+    let fit = ((ruler.width() - TIME_PAD - 84.0).max(40.0)) / tl.duration_ms.max(1) as f32;
     Geo { tl: rect, ruler, left, tracks, pxms: fit * st.zoom, scroll_x: st.scroll_x, scroll_y: st.scroll_y, duration: tl.duration_ms, fps: tl.fps }
 }
 
@@ -835,6 +838,11 @@ fn header(app: &mut App, ui: &mut Ui, st: &mut TimelineUi, g: &Geo, rows: &[Row]
             st.folded.clear();
         }
     }
+    // export the animation of the selected frame (or the page)
+    let eb = Rect::from_center_size(Pos2::new(g.tl.right() - 46.0, cy), Vec2::new(24.0, 24.0));
+    if hbtn(ui, eb, "export", Icon::Export, app.canvas.motion.export.running(), "Export animation") {
+        export_from_timeline(app);
+    }
     // collapse the whole panel
     let cb = Rect::from_center_size(Pos2::new(g.tl.right() - 18.0, cy), Vec2::new(24.0, 24.0));
     if hbtn(
@@ -850,6 +858,35 @@ fn header(app: &mut App, ui: &mut Ui, st: &mut TimelineUi, g: &Geo, rows: &[Row]
     // separator under the header
     widgets::hline(&p, g.tl.left(), g.tl.right(), top + HEADER_H, theme::BORDER);
     widgets::vline(&p, g.tl.left() + LEFT_W, top + 1.0, g.tl.bottom(), theme::BORDER);
+}
+
+/// The layer the timeline's export button animates: the top-level frame holding the selection,
+/// else the page.
+pub fn export_target(app: &App) -> NodeId {
+    let page = app.page;
+    for id in &app.selection {
+        let mut cur = *id;
+        while let Some(parent) = app.doc.get(cur).and_then(|n| n.parent) {
+            if parent == page {
+                return cur;
+            }
+            cur = parent;
+        }
+    }
+    page
+}
+
+/// The export button of the timeline header: opens the animation export (file dialog, format,
+/// fps and scale as remembered by the inspector's Animation block) for [`export_target`]. Says so
+/// when nothing is animated. Returns whether an export was offered.
+pub fn export_from_timeline(app: &mut App) -> bool {
+    let node = export_target(app);
+    if !app.has_motion_export(node) {
+        app.show_toast("Nothing to export yet: add keyframes or an animation first", false);
+        return false;
+    }
+    app.export_animation_dialog(node);
+    true
 }
 
 fn time_field(ui: &mut Ui, rect: Rect, key: &str, shown: &str) -> Option<String> {
@@ -964,6 +1001,7 @@ enum Act {
     Visible(NodeId),
     Seek(u32),
     ToggleKey(NodeId, AnimProperty),
+    TrackVisible(NodeId, AnimProperty),
     SelectClip(NodeId, u32),
     ClipVisible(NodeId, u32),
 }
@@ -1013,7 +1051,7 @@ fn left_column(app: &mut App, ui: &mut Ui, st: &mut TimelineUi, g: &Geo, rows: &
                     let name = widgets::elide(&p, &n.name, &theme::font_body(), LEFT_W - 39.0 - 28.0);
                     text(&p, Pos2::new(rr.left() + 39.0, cy), Align2::LEFT_CENTER, &name, if n.visible { theme::TEXT } else { theme::TEXT_TERTIARY });
                     let eye = Rect::from_center_size(Pos2::new(rr.right() - 15.0, cy), Vec2::splat(16.0));
-                    if resp.hovered() || !n.visible {
+                    if ui.rect_contains_pointer(rr) || !n.visible {
                         let er = ui.interact(eye, ui.id().with(("motion-eye", id.0)), Sense::click());
                         icons::paint(
                             &p,
@@ -1045,7 +1083,7 @@ fn left_column(app: &mut App, ui: &mut Ui, st: &mut TimelineUi, g: &Geo, rows: &
                         if c.visible { theme::TEXT_SECONDARY } else { theme::TEXT_TERTIARY },
                     );
                     let eye = Rect::from_center_size(Pos2::new(rr.right() - 15.0, cy), Vec2::splat(16.0));
-                    if resp.hovered() || !c.visible {
+                    if ui.rect_contains_pointer(rr) || !c.visible {
                         let er = ui.interact(eye, ui.id().with(("motion-clip-eye", id.0, cid)), Sense::click());
                         icons::paint(
                             &p,
@@ -1066,7 +1104,14 @@ fn left_column(app: &mut App, ui: &mut Ui, st: &mut TimelineUi, g: &Geo, rows: &
                     if resp.clicked() && !app.is_selected(id) {
                         acts.push(Act::Select(id));
                     }
-                    text(&p, Pos2::new(rr.left() + 39.0, cy), Align2::LEFT_CENTER, prop.name(), theme::TEXT_SECONDARY);
+                    let live = track.visible;
+                    text(
+                        &p,
+                        Pos2::new(rr.left() + 39.0, cy),
+                        Align2::LEFT_CENTER,
+                        prop.name(),
+                        if live { theme::TEXT_SECONDARY } else { theme::TEXT_TERTIARY },
+                    );
                     let prev = track.prev_key_time(t);
                     let next = track.next_key_time(t);
                     let on_key = track.key_at(t).is_some();
@@ -1112,7 +1157,25 @@ fn left_column(app: &mut App, ui: &mut Ui, st: &mut TimelineUi, g: &Geo, rows: &
                         acts.push(Act::Seek(next.unwrap_or(t)));
                     }
                     if let Some(v) = motion::value_at(n, prop, t as f32) {
-                        text(&p, Pos2::new(rr.left() + 137.0, cy), Align2::LEFT_CENTER, &value_text(prop, v), theme::TEXT_SECONDARY);
+                        let s = widgets::elide(&p, &value_text(prop, v), &theme::font_body(), LEFT_W - 137.0 - 4.0);
+                        text(&p, Pos2::new(rr.left() + 137.0, cy), Align2::LEFT_CENTER, &s, if live { theme::TEXT_SECONDARY } else { theme::TEXT_TERTIARY });
+                    }
+                    // "Toggle animation visibility": shown on hover (over the value) or when off
+                    let eye = Rect::from_center_size(Pos2::new(rr.right() - 15.0, cy), Vec2::splat(16.0));
+                    if ui.rect_contains_pointer(rr) || !live {
+                        let er = ui.interact(eye, ui.id().with(("motion-prop-eye", id.0, prop as u8)), Sense::click());
+                        rec(ui, || format!("motion-eye-{}-{}", id.0, prop.name()), eye);
+                        p.rect_filled(eye.expand(2.0), 0.0, if app.is_selected(id) { ROW_SELECTED } else { theme::BG });
+                        icons::paint(
+                            &p,
+                            if live { Icon::Eye } else { Icon::EyeOff },
+                            eye.center(),
+                            12.0,
+                            if er.hovered() { theme::ICON } else { theme::ICON_SECONDARY },
+                        );
+                        if er.on_hover_text("Toggle animation visibility").clicked() {
+                            acts.push(Act::TrackVisible(id, prop));
+                        }
                     }
                 }
             }
@@ -1133,6 +1196,12 @@ fn left_column(app: &mut App, ui: &mut Ui, st: &mut TimelineUi, g: &Geo, rows: &
             Act::Seek(ms) => seek(app, ms),
             Act::ToggleKey(id, prop) => {
                 if let Ok(cmd) = edit::toggle_keyframe(&app.doc, id, prop, t) {
+                    exec(app, cmd);
+                }
+            }
+            Act::TrackVisible(id, prop) => {
+                let visible = app.doc.get(id).and_then(|n| n.motion.track(prop)).is_none_or(|t| t.visible);
+                if let Ok(cmd) = edit::set_track_visible(&app.doc, id, prop, !visible) {
                     exec(app, cmd);
                 }
             }
@@ -1159,6 +1228,7 @@ fn left_column(app: &mut App, ui: &mut Ui, st: &mut TimelineUi, g: &Geo, rows: &
 /// Where the key at `k` is drawn while a drag is in progress.
 fn shown_time(drag: &Option<Drag>, k: &KeyRef) -> u32 {
     match drag {
+        Some(Drag::Summary { active: true, node, delta, .. }) if *node == k.node => (k.time_ms as i64 + delta).max(0) as u32,
         Some(Drag::Keys { active: true, dup: false, delta, base, .. }) if base.contains(k) => (k.time_ms as i64 + delta).max(0) as u32,
         Some(Drag::Stretch { active: true, pivot, factor, base, .. }) if base.contains(k) => {
             edit::to_ms(*pivot as f32 + (k.time_ms as f32 - *pivot as f32) * factor)
@@ -1192,6 +1262,16 @@ fn paint_tracks(app: &App, ui: &Ui, st: &TimelineUi, g: &Geo, rows: &[Row]) {
                     p.rect_filled(rr, 0.0, ROW_SELECTED);
                 }
                 if let Some((lo, hi)) = n.motion.span_ms(g.duration) {
+                    let shift = match &st.drag {
+                        Some(Drag::Summary { active: true, node, delta, .. }) if *node == id => *delta,
+                        _ => 0,
+                    };
+                    let (lo, hi) = ((lo as i64 + shift).max(0) as u32, (hi as i64 + shift).max(0) as u32);
+                    rec(
+                        ui,
+                        || format!("motion-summary-{}", id.0),
+                        Rect::from_min_max(Pos2::new(g.x(lo as f32), cy - 6.0), Pos2::new(g.x(hi as f32), cy + 6.0)),
+                    );
                     let bar = Rect::from_min_max(Pos2::new(g.x(lo as f32), cy - 6.0), Pos2::new(g.x(hi as f32).max(g.x(lo as f32) + 3.0), cy + 6.0));
                     p.rect_filled(bar, theme::cr(2), SUMMARY);
                     for x in [bar.left() + 3.0, bar.right() - 3.0] {
@@ -1201,8 +1281,13 @@ fn paint_tracks(app: &App, ui: &Ui, st: &TimelineUi, g: &Geo, rows: &[Row]) {
             }
             Row::Clip(id, cid) => {
                 let Some(c0) = app.doc.get(id).and_then(|n| n.motion.clip(cid)) else { continue };
+                let moved;
                 let c = match &st.drag {
                     Some(Drag::Clip { node, cur, .. }) if *node == id && cur.id == cid => cur,
+                    Some(Drag::Summary { active: true, node, delta, .. }) if *node == id => {
+                        moved = Clip { delay_ms: (c0.delay_ms as i64 + delta).max(0) as u32, ..c0.clone() };
+                        &moved
+                    }
                     _ => c0,
                 };
                 let x0 = g.x(c.delay_ms as f32);
@@ -1226,6 +1311,8 @@ fn paint_tracks(app: &App, ui: &Ui, st: &TimelineUi, g: &Geo, rows: &[Row]) {
             }
             Row::Prop(id, prop) => {
                 let Some(track) = app.doc.get(id).and_then(|n| n.motion.track(prop)) else { continue };
+                // a hidden track is drawn dimmed
+                let dim = if track.visible { 1.0 } else { 0.35 };
                 let mut keys: Vec<(KeyRef, u32)> = track.keys.iter().map(|k| (KeyRef::new(id, prop, k.time_ms), 0)).collect();
                 for k in &mut keys {
                     k.1 = shown_time(&st.drag, &k.0);
@@ -1236,7 +1323,7 @@ fn paint_tracks(app: &App, ui: &Ui, st: &TimelineUi, g: &Geo, rows: &[Row]) {
                 for w in ordered.windows(2) {
                     let (xa, xb) = (g.x(w[0].1 as f32), g.x(w[1].1 as f32));
                     let seg_sel = app.motion.easing_target && app.motion.selected_keys.contains(&w[0].0);
-                    p.line_segment([Pos2::new(xa, cy), Pos2::new(xb, cy)], Stroke::new(if seg_sel { 2.0 } else { 1.0 }, PLAYHEAD));
+                    p.line_segment([Pos2::new(xa, cy), Pos2::new(xb, cy)], Stroke::new(if seg_sel { 2.0 } else { 1.0 }, PLAYHEAD.gamma_multiply(dim)));
                     rec(
                         ui,
                         || format!("motion-seg-{}-{}-{}", id.0, prop.name(), w[0].0.time_ms),
@@ -1257,7 +1344,13 @@ fn paint_tracks(app: &App, ui: &Ui, st: &TimelineUi, g: &Geo, rows: &[Row]) {
                     let c = Pos2::new(g.x(*shown as f32), cy);
                     let sel = app.motion.selected_keys.contains(k);
                     let hot = *shown == t;
-                    diamond(&p, c, DIAMOND_R, if sel || hot { PLAYHEAD } else { theme::BG }, if sel || hot { PLAYHEAD } else { theme::TEXT_SECONDARY });
+                    diamond(
+                        &p,
+                        c,
+                        DIAMOND_R,
+                        if sel || hot { PLAYHEAD } else { theme::BG }.gamma_multiply(dim),
+                        if sel || hot { PLAYHEAD } else { theme::TEXT_SECONDARY }.gamma_multiply(dim),
+                    );
                     rec(
                         ui,
                         || format!("motion-key-{}-{}-{}", id.0, prop.name(), k.time_ms),
@@ -1431,7 +1524,12 @@ fn input(app: &mut App, ui: &mut Ui, st: &mut TimelineUi, g: &Geo, rows: &[Row])
     }
 
     // keep dragging near the edges: auto-scroll
-    if down && matches!(st.drag, Some(Drag::Keys { .. }) | Some(Drag::Marquee { .. }) | Some(Drag::Clip { .. }) | Some(Drag::Stretch { .. })) {
+    if down
+        && matches!(
+            st.drag,
+            Some(Drag::Keys { .. }) | Some(Drag::Marquee { .. }) | Some(Drag::Clip { .. }) | Some(Drag::Stretch { .. }) | Some(Drag::Summary { .. })
+        )
+    {
         if pos.x > g.tracks.right() - 12.0 {
             st.scroll_x += 6.0;
         } else if pos.x < g.tracks.left() + 12.0 {
@@ -1502,6 +1600,9 @@ fn press(app: &mut App, st: &mut TimelineUi, g: &Geo, rows: &[Row], pos: Pos2, m
             app.motion.selected_clip = None;
             app.motion.selected_keys.clear();
             app.motion.easing_target = false;
+            if let Some((lo, _)) = app.doc.get(n).and_then(|nd| nd.motion.span_ms(g.duration)) {
+                st.drag = Some(Drag::Summary { node: n, origin: pos, lo, active: false, delta: 0 });
+            }
         }
         _ => {
             if near_end(g, pos.x) {
@@ -1534,6 +1635,11 @@ fn update_drag(app: &mut App, st: &mut TimelineUi, g: &Geo, rows: &[Row], pos: P
             let denom = edge as f32 - pivot as f32;
             let factor = if denom.abs() < 1.0 { 1.0 } else { ((new_edge - pivot as f32) / denom).max(0.02) };
             st.drag = Some(Drag::Stretch { origin, pivot, edge, factor, active, base });
+        }
+        Drag::Summary { node, origin, lo, active, .. } => {
+            let active = active || (pos - origin).length() > DRAG_SLOP;
+            let delta = (g.snap(lo as f32 + (pos.x - origin.x) / g.pxms) as i64 - lo as i64).max(-(lo as i64));
+            st.drag = Some(Drag::Summary { node, origin, lo, active, delta });
         }
         Drag::Clip { node, edge, origin, orig, active, .. } => {
             let active = active || (pos - origin).length() > DRAG_SLOP;
@@ -1635,6 +1741,13 @@ fn finish_drag(app: &mut App, st: &mut TimelineUi, _g: &Geo, _pos: Pos2, mods: e
                     if exec(app, cmd) {
                         app.motion.selected_keys = refs;
                     }
+                }
+            }
+        }
+        Drag::Summary { node, active, delta, .. } => {
+            if active && delta != 0 {
+                if let Ok(cmd) = edit::shift_node_motion(&app.doc, node, delta) {
+                    exec(app, cmd);
                 }
             }
         }

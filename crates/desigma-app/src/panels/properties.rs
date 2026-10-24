@@ -975,22 +975,38 @@ pub(crate) fn paint_rows(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[Nod
         .and_then(|s| app.doc.get(*s))
         .and_then(|n| n.style_refs.get(if stroke { "stroke" } else { "fill" }))
         .map(|k| app.doc.style_name(k).to_string());
+    // Motion mode: the first solid paint carries the colour keyframe diamond (the animated paint
+    // of FillColor / StrokeColor), so the rows are narrower to make room for it.
+    let anim_prop = if stroke { desigma_doc::motion::AnimProperty::StrokeColor } else { desigma_doc::motion::AnimProperty::FillColor };
+    let motion = app.motion.enabled && linked.is_none();
+    let anim_row = if motion { paints.iter().position(|p| matches!(p.kind, PaintKind::Solid(_))) } else { None };
+    let (group_w, divider_x) = if motion { (134.0, 72.0) } else { (PAINT_GROUP_W, PAINT_DIVIDER_X) };
     if !paints.is_empty() {
         // Figma sits the first row 4px under the title row.
         pane.y += 4.0;
     }
     for (i, p) in paints.iter().enumerate() {
         let key = (stroke, i);
-        let g = pane.rect(theme::SWATCH_ROW_X, 0.0, PAINT_GROUP_W, theme::FIELD_HEIGHT);
+        let animated = anim_row == Some(i);
+        let tracked = animated && sel.iter().any(|id| app.doc.get(*id).is_some_and(|n| n.motion.track(anim_prop).is_some()));
+        // the animated paint shows its colour at the playhead
+        let shown_paint;
+        let p = match crate::motion::inspector::shown(app, sel, anim_prop).first().and_then(|v| v.color()).filter(|_| animated) {
+            Some(c) => {
+                shown_paint = Paint { kind: PaintKind::Solid(c), ..p.clone() };
+                &shown_paint
+            }
+            None => p,
+        };
+        let g = pane.rect(theme::SWATCH_ROW_X, 0.0, group_w, theme::FIELD_HEIGHT);
         let sw = Rect::from_min_size(Pos2::new(g.left() + 4.0, g.center().y - theme::SWATCH_SIZE / 2.0), Vec2::splat(theme::SWATCH_SIZE));
-        let hex_r = Rect::from_min_max(
-            Pos2::new(g.left() + theme::FIELD_PREFIX_X + theme::FIELD_PREFIX_ICON, g.top()),
-            Pos2::new(g.left() + PAINT_DIVIDER_X, g.bottom()),
-        );
-        let op_r = Rect::from_min_max(Pos2::new(g.left() + PAINT_DIVIDER_X + 1.0, g.top()), Pos2::new(g.right() - 16.0, g.bottom()));
+        let hex_r =
+            Rect::from_min_max(Pos2::new(g.left() + theme::FIELD_PREFIX_X + theme::FIELD_PREFIX_ICON, g.top()), Pos2::new(g.left() + divider_x, g.bottom()));
+        let op_r = Rect::from_min_max(Pos2::new(g.left() + divider_x + 1.0, g.top()), Pos2::new(g.right() - 16.0, g.bottom()));
         let eye_r = pane.rect(theme::RIGHT_NAME_ACTION_X[1] - 1.0 + 4.0, 0.0, theme::PANEL_ACTION_BUTTON, theme::PANEL_ACTION_BUTTON);
         let minus_r = pane.rect(theme::SECTION_TRAILING_X, 0.0, theme::PANEL_ACTION_BUTTON, theme::PANEL_ACTION_BUTTON);
         widgets::record(ui, &format!("sw:{stroke}:{i}"), sw);
+        widgets::record(ui, &format!("hex:{stroke}:{i}"), hex_r);
         // Group chrome: one rounded field with a hairline between hex and opacity.
         let hex_id = ui.id().with(("txt", ("hex", key)));
         let op_id = ui.id().with(("num", ("op", key)));
@@ -1009,9 +1025,9 @@ pub(crate) fn paint_rows(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[Nod
         let var_key = format!("{}/{i}", if stroke { "strokes" } else { "fills" });
         let bound = var_bind::pill_field(app, ui, Rect::from_min_max(hex_r.min, Pos2::new(g.right(), hex_r.bottom())), sel, &[var_key.as_str()]);
         if !bound {
-            widgets::vline(ui.painter(), g.left() + PAINT_DIVIDER_X, g.top(), g.bottom(), theme::BG);
+            widgets::vline(ui.painter(), g.left() + divider_x, g.top(), g.bottom(), theme::BG);
         }
-        if swr.clicked() && !bound {
+        if swr.clicked() && !bound && !tracked {
             let target = if stroke { PickTarget::Stroke(i) } else { PickTarget::Fill(i) };
             open_picker(app, target, paint_preview(p), sw, sel.to_vec());
         }
@@ -1024,11 +1040,17 @@ pub(crate) fn paint_rows(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[Nod
             PaintKind::Solid(c) => {
                 if let Some(s) = field::edit_text(ui, hex_r, hex_id, &c.to_hex(), font.clone(), theme::TEXT, 0.0) {
                     if let Some(nc) = Color::from_hex(&s) {
-                        edit_paint_list(app, sel, stroke, |ps| {
-                            if let Some(p) = ps.get_mut(i) {
-                                p.kind = PaintKind::Solid(Color { a: c.a, ..nc });
-                            }
-                        });
+                        if animated {
+                            crate::motion::inspector::edit_prop(app, sel, anim_prop, |cur| {
+                                desigma_doc::motion::AnimValue::Color(Color { a: cur.color().map_or(c.a, |o| o.a), ..nc })
+                            });
+                        } else {
+                            edit_paint_list(app, sel, stroke, |ps| {
+                                if let Some(p) = ps.get_mut(i) {
+                                    p.kind = PaintKind::Solid(Color { a: c.a, ..nc });
+                                }
+                            });
+                        }
                     }
                 }
             }
@@ -1036,7 +1058,7 @@ pub(crate) fn paint_rows(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[Nod
                 widgets::field_text(ui.painter(), hex_r, 0.0, 4.0, &paint_label(p), font.clone(), theme::TEXT);
             }
         }
-        if !bound && matches!(p.kind, PaintKind::Solid(_)) {
+        if !bound && !motion && matches!(p.kind, PaintKind::Solid(_)) {
             var_bind::hover_button(app, ui, hex_r, sel, &[var_key.as_str()], VariableKind::Color);
         }
         if !bound {
@@ -1068,6 +1090,10 @@ pub(crate) fn paint_rows(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[Nod
                     ps.remove(i);
                 }
             });
+        }
+        if animated {
+            let d_r = pane.rect(theme::SWATCH_ROW_X + 138.0, 0.0, 24.0, 24.0);
+            crate::motion::inspector::diamond_for(app, ui, sel, anim_prop, d_r);
         }
         pane.y += theme::FIELD_HEIGHT + 8.0;
     }

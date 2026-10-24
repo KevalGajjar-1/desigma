@@ -222,6 +222,10 @@ impl History {
         self.undo.push(c.apply(doc)?);
         Ok(true)
     }
+    /// Number of undo steps available.
+    pub fn undo_len(&self) -> usize {
+        self.undo.len()
+    }
     pub fn can_undo(&self) -> bool {
         !self.undo.is_empty()
     }

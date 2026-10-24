@@ -54,10 +54,10 @@ pub fn selection_box(app: &App) -> Option<([DV; 4], bool)> {
         [] => None,
         [one] => {
             let n = app.doc.get(*one)?;
-            Some((world_corners(&app.doc, *one), matches!(n.kind, NodeKind::Line)))
+            Some((world_corners(app.shown_doc(), *one), matches!(n.kind, NodeKind::Line)))
         }
         many => {
-            let bb = union_all(many.iter().map(|i| world_aabb(&app.doc, *i)))?;
+            let bb = union_all(many.iter().map(|i| world_aabb(app.shown_doc(), *i)))?;
             Some((rect_corners(&bb), false))
         }
     }

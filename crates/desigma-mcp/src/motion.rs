@@ -20,7 +20,7 @@ pub const MAX_EXPORT_PIXELS: u64 = 1_500_000_000;
 /// Most frames one export may have.
 pub const MAX_EXPORT_FRAMES: usize = 1800;
 
-const PROPERTIES: [(&str, AnimProperty); 10] = [
+const PROPERTIES: [(&str, AnimProperty); 15] = [
     ("position", AnimProperty::Position),
     ("scale", AnimProperty::Scale),
     ("rotation", AnimProperty::Rotation),
@@ -31,6 +31,11 @@ const PROPERTIES: [(&str, AnimProperty); 10] = [
     ("fill", AnimProperty::FillColor),
     ("stroke", AnimProperty::StrokeColor),
     ("stroke_weight", AnimProperty::StrokeWeight),
+    ("shadow_x", AnimProperty::ShadowX),
+    ("shadow_y", AnimProperty::ShadowY),
+    ("shadow_blur", AnimProperty::ShadowBlur),
+    ("shadow_color", AnimProperty::ShadowColor),
+    ("blur_radius", AnimProperty::BlurRadius),
 ];
 
 #[derive(Deserialize)]
