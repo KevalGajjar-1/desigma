@@ -67,10 +67,14 @@ impl Shell {
     pub fn build(ctx: &Context, opts: Options) -> Self {
         theme::install_fonts(ctx);
         theme::apply(ctx);
+        // `--motion` on the plain demo opens the animated onboarding instead
+        let motion_demo = opts.motion && opts.fixture.is_none() && opts.file.is_none() && opts.open_id.is_none() && !opts.home;
         let mut app = App::new(match opts.fixture.as_deref() {
             Some("no-selection") => demo::reference_document(),
             Some("variables") => demo::variables_document(),
             Some(crate::showcase::FIXTURE) => crate::showcase::document(),
+            Some(crate::showcase::MOTION_FIXTURE) => crate::showcase::motion_document(),
+            None if motion_demo => crate::showcase::motion_document(),
             Some(crate::protovars::FIXTURE) => crate::protovars::document(),
             Some("deck") => crate::decks::demo::document(),
             Some("board") => crate::board::demo::document(),
@@ -78,7 +82,7 @@ impl Shell {
             Some(f) if crate::vecfixture::FIXTURES.contains(&f) => crate::vecfixture::document(),
             _ => demo::demo_document(),
         });
-        if !matches!(opts.fixture.as_deref(), Some("variables" | "deck" | crate::showcase::FIXTURE)) {
+        if !matches!(opts.fixture.as_deref(), Some("variables" | "deck" | crate::showcase::FIXTURE | crate::showcase::MOTION_FIXTURE)) && !motion_demo {
             app.doc.name = "Untitled".into();
         }
         if opts.fixture.as_deref() == Some("deck") {

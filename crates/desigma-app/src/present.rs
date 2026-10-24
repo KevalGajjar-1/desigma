@@ -231,7 +231,12 @@ impl PresentState {
     fn layers(&mut self, ctx: &Context, doc: Option<&Document>, doc_id: u64, frame: NodeId, px_scale: f32) -> Option<Layers> {
         let rev = if doc_id == 0 { self.player.frame_rev(frame) } else { 0 };
         // An animated frame is a new picture at every timeline step.
-        let motion = if doc_id == 0 && doc.is_none() { self.motion.time_of(&self.player.doc, frame, self.player.now) } else { None };
+        let motion = if doc_id == 0 && doc.is_none() {
+            let (elapsed, playing) = self.player.motion_state(frame, self.player.now);
+            self.motion.time_of(&self.player.doc, frame, elapsed, playing)
+        } else {
+            None
+        };
         let key_rev = match motion {
             Some(m) => (rev << 24) | (m.step & 0xFF_FFFF),
             None => rev,

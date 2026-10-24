@@ -950,6 +950,7 @@ mod motion;
 mod motion_inspector;
 mod motion_timeline;
 mod proto;
+mod proto_motion;
 mod proto_vars;
 mod svg;
 mod typography;

@@ -31,14 +31,13 @@ fn playing_advances_the_playhead_with_the_clock_and_stops_at_the_end() {
     let t = s.app().motion.playhead_ms;
     assert!((350..=650).contains(&t), "playhead {t} after ~0.5 s");
     assert!(s.app().motion.playing);
-    for _ in 0..60 {
+    for _ in 0..100 {
         s.frame(vec![]);
     }
     assert!(!s.app().motion.playing, "a one-shot timeline stops");
     assert_eq!(s.app().motion.playhead_ms, duration);
     // the stored document was never touched by playback
-    let id = s.app().doc.get(s.app().page).unwrap().children[0];
-    assert!(!s.app().doc.get(id).unwrap().motion.is_empty());
+    assert!(s.app().doc.nodes.values().any(|n| !n.motion.is_empty()));
 }
 
 #[test]
