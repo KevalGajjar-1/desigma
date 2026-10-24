@@ -23,6 +23,10 @@ fn ids_of(doc: &Document, cmd: &Command, out: &mut Vec<NodeId>) {
             out.push(node.id);
             out.extend(doc.get(node.id).and_then(|n| n.parent));
         }
+        Command::SetNodeMotion { node, .. } => {
+            out.push(*node);
+            out.extend(doc.get(*node).and_then(|n| n.parent));
+        }
         Command::Batch(v) => v.iter().for_each(|c| ids_of(doc, c, out)),
         Command::InsertPage { .. }
         | Command::RemovePage { .. }
@@ -33,6 +37,7 @@ fn ids_of(doc: &Document, cmd: &Command, out: &mut Vec<NodeId>) {
         | Command::SetBoardSession { .. }
         | Command::SetComments { .. }
         | Command::SetLibraryState { .. }
+        | Command::SetTimeline { .. }
         | Command::SetStyles { .. } => {}
     }
 }

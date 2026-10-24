@@ -64,6 +64,9 @@ pub struct Node {
     /// everything else.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub brush: Option<Brush>,
+    /// Motion keyframe tracks and clips; empty for nodes that are not animated.
+    #[serde(default, skip_serializing_if = "NodeMotion::is_empty")]
+    pub motion: NodeMotion,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -179,6 +182,7 @@ impl Node {
             dev: DevInfo::default(),
             slide: None,
             brush: None,
+            motion: NodeMotion::default(),
         }
     }
 

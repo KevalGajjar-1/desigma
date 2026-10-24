@@ -16,6 +16,7 @@ mod geom;
 mod history;
 mod library;
 mod library_ops;
+pub mod motion;
 mod node;
 mod paint;
 mod prototype;
@@ -39,6 +40,7 @@ pub use geom::*;
 pub use history::*;
 pub use library::*;
 pub use library_ops::*;
+pub use motion::{NodeMotion, TimelineSettings};
 pub use node::*;
 pub use paint::*;
 pub use prototype::*;
@@ -67,6 +69,8 @@ pub enum DocError {
     Cycle(NodeId),
     #[error("node {0:?} cannot have children")]
     NotAContainer(NodeId),
+    #[error("invalid animation edit: {0}")]
+    InvalidMotion(&'static str),
 }
 
 /// A whole file: pages at the root, each page a tree of nodes.
@@ -95,6 +99,10 @@ pub struct Document {
     /// Ruler guides per page.
     #[serde(default)]
     pub guides: BTreeMap<NodeId, Vec<Guide>>,
+    /// Motion timeline settings per page; pages with default settings have no entry. Use
+    /// [`Document::timeline`] to read.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub timelines: BTreeMap<NodeId, TimelineSettings>,
     /// Device used when presenting the prototype.
     #[serde(default)]
     pub prototype_device: PrototypeDevice,
@@ -142,6 +150,11 @@ impl Document {
     /// Display name of a shared style: its metadata name, else the key.
     pub fn style_name<'a>(&'a self, key: &'a str) -> &'a str {
         self.style_meta.get(key).map(|m| m.name.as_str()).filter(|n| !n.is_empty()).unwrap_or(key)
+    }
+
+    /// Motion timeline settings of `page` (defaults when never changed).
+    pub fn timeline(&self, page: NodeId) -> TimelineSettings {
+        self.timelines.get(&page).copied().unwrap_or_default()
     }
 
     pub fn add_page(&mut self, name: impl Into<String>) -> NodeId {
@@ -267,7 +280,22 @@ impl Document {
     pub fn from_json(s: &str) -> serde_json::Result<Self> {
         let mut doc: Self = serde_json::from_str(s)?;
         doc.migrate_text();
+        doc.normalize_motion();
         Ok(doc)
+    }
+
+    /// Restores animation invariants (sorted unique keyframes, valid clips) of every node, e.g.
+    /// after loading a hand-edited file.
+    pub fn normalize_motion(&mut self) {
+        for node in self.nodes.values_mut() {
+            if !node.motion.is_empty() {
+                node.motion.normalize();
+            }
+        }
+        for t in self.timelines.values_mut() {
+            *t = t.sanitized();
+        }
+        self.timelines.retain(|_, t| !t.is_default());
     }
 
     /// Converts literal list prefixes of every text node to real lists (see [`migrate_literal_lists`]).

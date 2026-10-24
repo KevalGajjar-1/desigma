@@ -64,6 +64,7 @@ impl Ctx {
                 variables: Default::default(),
                 variable_collections: Default::default(),
                 guides: Default::default(),
+                timelines: Default::default(),
                 prototype_device: Default::default(),
                 board_session: Default::default(),
                 comments: Default::default(),
