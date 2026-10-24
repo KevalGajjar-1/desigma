@@ -133,6 +133,10 @@ pub enum Icon {
     StrokeSettings,
     StrokeSides,
     StrokeWeight,
+    // motion
+    ChevronLeft,
+    MoveArrows,
+    Maximize,
 }
 
 impl Icon {
@@ -253,6 +257,9 @@ impl Icon {
         Icon::StrokeSettings,
         Icon::StrokeSides,
         Icon::StrokeWeight,
+        Icon::ChevronLeft,
+        Icon::MoveArrows,
+        Icon::Maximize,
     ];
 
     /// Name of the vendored Lucide icon that stands in for this one (None for the logo).
@@ -372,6 +379,9 @@ impl Icon {
             Icon::StrokeSettings => "sliders-horizontal",
             Icon::StrokeSides => "square-dashed",
             Icon::StrokeWeight => "align-justify",
+            Icon::ChevronLeft => "chevron-left",
+            Icon::MoveArrows => "move",
+            Icon::Maximize => "maximize-2",
         })
     }
 }
@@ -491,6 +501,9 @@ lucide!(
     "copy",
     "list-ordered",
     "rectangle-horizontal",
+    "chevron-left",
+    "move",
+    "maximize-2",
 );
 
 /// SVG source of the Lucide icon behind `icon`.
@@ -598,7 +611,7 @@ mod tests {
         for i in Icon::ALL {
             assert!(seen.insert(*i), "{i:?} listed twice");
         }
-        assert_eq!(seen.len(), 114);
+        assert_eq!(seen.len(), 117);
     }
 
     #[test]

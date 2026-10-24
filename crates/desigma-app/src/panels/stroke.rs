@@ -36,7 +36,7 @@ fn sub_label(ui: &Ui, pane: &Pane, x: f32, text: &str) {
     widgets::text_on_baseline(ui.painter(), r.left(), widgets::centered_baseline(r, &font), text, font, theme::TEXT_SECONDARY);
 }
 
-pub(super) fn section(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[NodeId], n0: &Node) {
+pub(crate) fn section(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[NodeId], n0: &Node) {
     if paint_title(app, ui, pane, sel, "Stroke", true, n0.stroke.paints.is_empty()) {
         let paint = Paint::solid(Color::from_hex(&format!("{:06X}", theme::DEFAULT_STROKE)).unwrap_or(Color::BLACK));
         app.edit_nodes(sel, |n| n.stroke.paints.push(paint.clone()));
@@ -109,7 +109,7 @@ pub(super) fn section(app: &mut App, ui: &mut Ui, pane: &mut Pane, sel: &[NodeId
 const CAPS: [(&str, StrokeCap); 3] = [("None", StrokeCap::None), ("Round", StrokeCap::Round), ("Square", StrokeCap::Square)];
 const JOINS: [(&str, StrokeJoin); 3] = [("Miter", StrokeJoin::Miter), ("Bevel", StrokeJoin::Bevel), ("Round", StrokeJoin::Round)];
 
-pub(super) fn popover_ui(app: &mut App, ui: &mut Ui, region: Rect, st: &PopState) {
+pub(crate) fn popover_ui(app: &mut App, ui: &mut Ui, region: Rect, st: &PopState) {
     let ctx = ui.ctx().clone();
     let Some(first) = st.ids.first().and_then(|id| app.doc.get(*id)) else {
         app.props.pop = None;

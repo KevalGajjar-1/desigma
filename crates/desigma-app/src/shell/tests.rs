@@ -946,6 +946,7 @@ mod find;
 mod history;
 mod home;
 mod menus;
+mod motion_inspector;
 mod proto;
 mod proto_vars;
 mod svg;

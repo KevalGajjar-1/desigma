@@ -736,10 +736,17 @@ fn on_release(app: &mut App, rect: ERect, inp: &Inp) {
         Interaction::Connect(c) => crate::board::connect::release(app, c),
         Interaction::Table(d) => crate::board::table::release(app, d),
         Interaction::Move(mut m) => {
+            let parents: Vec<Option<NodeId>> = m.ids.iter().map(|i| app.doc.get(*i).and_then(|n| n.parent)).collect();
             if m.moved && !m.ids.is_empty() {
                 reparent_after_move(app, &mut m, cur);
             }
-            app.run_tx(m.tx);
+            let same_parents = m.ids.iter().zip(&parents).all(|(i, p)| app.doc.get(*i).map(|n| n.parent) == Some(*p));
+            if app.motion.enabled && m.moved && same_parents {
+                // Motion mode: the drag keys Position at the playhead.
+                crate::motion::inspector::commit_move(app, m);
+            } else {
+                app.run_tx(m.tx);
+            }
         }
         Interaction::Resize(r) => {
             app.run_tx(r.tx);

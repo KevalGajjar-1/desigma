@@ -209,6 +209,7 @@ impl Shell {
                 app.plugins.fresh = app.plugins.install_form;
             }
             Some("version-history") => crate::history::preset::apply(&mut app, opts.library.clone()),
+            Some(p @ ("motion-inspector" | "motion-easing" | "motion-library" | "motion-clip")) => crate::motion::inspector::preset(&mut app, p),
             Some(p @ ("dev-annotate" | "dev-compare")) => crate::dev::preset::panel(&mut app, p),
             Some(p @ ("updater" | "updater-banner")) => crate::updater::preset(&mut app, p),
             Some(panel @ ("variables" | "variables-floating")) => {
