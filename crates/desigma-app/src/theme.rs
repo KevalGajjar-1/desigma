@@ -307,7 +307,7 @@ pub const TOOL_CHEVRON_CENTER_DX: f32 = 11.0;
 pub const TOOL_GROUP_GAP: f32 = 8.0;
 pub const TOOL_ICON_SIZE: f32 = 20.0;
 /// Mode switcher: 4 segments (draw, design, prototype, dev) in a padded rounded group.
-pub const MODE_SEGMENTS: usize = 4;
+pub const MODE_SEGMENTS: usize = 5;
 pub const MODE_SWITCH_PAD: f32 = 2.0;
 pub const MODE_SWITCH_W: f32 = 29.5;
 pub const MODE_TILE_RADIUS: u8 = 3;

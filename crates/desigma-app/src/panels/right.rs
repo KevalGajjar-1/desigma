@@ -48,7 +48,18 @@ pub fn show(app: &mut App, ui: &mut Ui, rect: Rect) {
     let mut x = left + theme::RIGHT_TABS_X;
     let ty = rect.top() + theme::RIGHT_TABS_Y;
     let active = app.ui.right_tab.unwrap_or(RightTab::Design);
-    for (tab, label) in [(RightTab::Design, "Design"), (RightTab::Prototype, "Prototype")] {
+    let tabs: &[(RightTab, &str)] = if app.motion.enabled { &[] } else { &[(RightTab::Design, "Design"), (RightTab::Prototype, "Prototype")] };
+    if app.motion.enabled {
+        // Motion mode: a "Motion  Beta" title replaces the Design / Prototype tabs.
+        let font = theme::font_body_strong();
+        let tw = widgets::text_width(&p, "Motion", &font);
+        p.text(Pos2::new(x + theme::RIGHT_TAB_PAD_X, ty + theme::RIGHT_TABS_H / 2.0), Align2::LEFT_CENTER, "Motion", font, theme::TEXT);
+        let pill = Rect::from_min_size(Pos2::new(x + theme::RIGHT_TAB_PAD_X + tw + 6.0, ty + 5.0), Vec2::new(30.0, 14.0));
+        p.rect_filled(pill, theme::cr(7), theme::BG_SECONDARY);
+        p.text(pill.center(), Align2::CENTER_CENTER, "Beta", theme::font_small_medium(), theme::TEXT_SECONDARY);
+        crate::widgets::record(ui, "motion-beta-pill", pill);
+    }
+    for &(tab, label) in tabs {
         let sel = tab == active;
         let font = if sel { theme::font_body_strong() } else { theme::font_body() };
         let w = widgets::text_width(&p, label, &font) + theme::RIGHT_TAB_PAD_X * 2.0;
@@ -81,7 +92,10 @@ pub fn show(app: &mut App, ui: &mut Ui, rect: Rect) {
     let content_top = rect.top() + theme::RIGHT_CONTENT_TOP - 1.0;
     widgets::hline(&p, rect.left() + 1.0, right, content_top, theme::BORDER);
     let region = Rect::from_min_max(Pos2::new(rect.left() + 1.0, content_top + 1.0), rect.max);
-    if active == RightTab::Prototype {
+    if app.motion.enabled {
+        // The Motion inspector (animations, keyframe toggles, easing) builds on the design inspector.
+        properties::show(app, ui, region);
+    } else if active == RightTab::Prototype {
         super::prototype::show(app, ui, region);
     } else if app.ui.dev_mode {
         super::inspect::show(app, ui, region);
