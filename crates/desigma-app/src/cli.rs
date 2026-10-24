@@ -58,6 +58,15 @@ pub struct Options {
     pub dev_demo: bool,
     /// Write the showcase sample files into this library directory and exit (screenshot aid).
     pub seed_library: Option<PathBuf>,
+    /// `--export-animation FILE`: render the animation of the file's first animated page (or the
+    /// layer named by `--select`) to `--out` and exit, without opening a window.
+    pub export_animation: Option<PathBuf>,
+    /// `--format gif|webm|png` for `--export-animation` (default: from the `--out` extension).
+    pub format: Option<String>,
+    /// `--out PATH` of `--export-animation`.
+    pub out: Option<PathBuf>,
+    /// `--fps N` of `--export-animation` (default: the timeline's fps).
+    pub fps: Option<u32>,
     pub help: bool,
     /// Print `desigma <version>` and exit.
     pub version: bool,
@@ -105,10 +114,11 @@ pub fn parse_size(s: &str) -> Option<(u32, u32)> {
     (w >= 200 && h >= 200 && w <= 8192 && h <= 8192).then_some((w, h))
 }
 
-/// Parses a screenshot scale like `2` or `1.5` (device pixel ratio, 1..=4).
+/// Parses a scale like `2` or `1.5` (device pixel ratio of a screenshot, pixel scale of an
+/// animation export). 0.1..=4; screenshots need 1..=4, which `parse` checks.
 pub fn parse_scale(s: &str) -> Option<f32> {
     let v: f32 = s.trim().trim_end_matches(['x', 'X']).trim().parse().ok()?;
-    (v.is_finite() && (1.0..=4.0).contains(&v)).then_some(v)
+    (v.is_finite() && (0.1..=4.0).contains(&v)).then_some(v)
 }
 
 /// Parses a zoom like `800`, `800%` or `12.5%` (percent, 1..=25600).
@@ -134,7 +144,21 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Options, String> 
             }
             "--scale" => {
                 let v = it.next().ok_or("--scale needs a factor (e.g. 2)")?;
+                // validated below: --export-animation also accepts 0.1..1
                 o.scale = Some(parse_scale(&v).ok_or_else(|| format!("invalid scale '{v}' (expected 1..4, e.g. 2)"))?);
+            }
+            "--export-animation" => o.export_animation = Some(it.next().ok_or("--export-animation needs a .desigma file")?.into()),
+            "--format" => {
+                let f = it.next().ok_or("--format needs gif, webm or png")?;
+                if desigma_export::anim::AnimFormat::parse(&f).is_none() {
+                    return Err(format!("unknown animation format '{f}' (expected gif, webm or png)"));
+                }
+                o.format = Some(f);
+            }
+            "--out" => o.out = Some(it.next().ok_or("--out needs an output path")?.into()),
+            "--fps" => {
+                let v = it.next().ok_or("--fps needs a number (1..120)")?;
+                o.fps = Some(v.trim().parse::<u32>().ok().filter(|f| (1..=120).contains(f)).ok_or_else(|| format!("invalid fps '{v}' (expected 1..120)"))?);
             }
             "--select" => o.select = Some(it.next().ok_or("--select needs a layer name")?),
             "--menu" => o.menu = Some(it.next().ok_or("--menu needs a name (main, main/File, shape, palette)")?),
@@ -203,6 +227,16 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Options, String> 
             }
         }
     }
+    if o.export_animation.is_none() {
+        if let Some(sc) = o.scale.filter(|s| *s < 1.0) {
+            return Err(format!("invalid scale '{sc}' (expected 1..4, e.g. 2)"));
+        }
+        if o.format.is_some() || o.out.is_some() || o.fps.is_some() {
+            return Err("--format, --out and --fps need --export-animation FILE".into());
+        }
+    } else if o.out.is_none() {
+        return Err("--export-animation needs --out PATH".into());
+    }
     Ok(o)
 }
 
@@ -216,6 +250,8 @@ pub const USAGE: &str = "usage: desigma [FILE] [--screenshot OUT.png] [--size Wx
   --dev      open Dev mode with a code language (css|tailwind|swiftui|compose|react); --dev-demo marks the selection Ready for dev with an annotation
   --seed-library  write the showcase sample files (a project with three files) into DIR and exit
   --find     open the Find and replace panel searching for TEXT (--replace-with TEXT shows the replace row)
+  --export-animation FILE  render FILE's Motion animation (first animated page, or the layer named by --select) and exit:
+               --out PATH [--format gif|webm|png] [--fps N] [--scale 0.1..4]; png writes a folder, or a .zip when PATH ends in .zip
   --version  print the version and exit";
 
 #[cfg(test)]
@@ -346,6 +382,21 @@ mod tests {
         assert!(p(&["--version"]).unwrap().version && p(&["-V"]).unwrap().version);
         assert!(!p(&[]).unwrap().version);
         assert!(p(&["--panel", "updater"]).is_ok() && p(&["--panel", "updater-banner"]).is_ok());
+    }
+
+    #[test]
+    fn parses_export_animation() {
+        let o = p(&["--export-animation", "a.desigma", "--format", "webm", "--out", "a.webm", "--fps", "30", "--scale", "0.5", "--select", "Hero"]).unwrap();
+        assert_eq!(o.export_animation, Some("a.desigma".into()));
+        assert_eq!((o.format.as_deref(), o.fps, o.scale), (Some("webm"), Some(30), Some(0.5)));
+        assert_eq!(o.out, Some("a.webm".into()));
+        assert!(p(&["--export-animation", "a.desigma"]).is_err(), "--out is required");
+        assert!(p(&["--export-animation", "a", "--out", "o", "--format", "mov"]).is_err());
+        assert!(p(&["--export-animation", "a", "--out", "o", "--fps", "0"]).is_err());
+        assert!(p(&["--export-animation", "a", "--out", "o", "--fps", "500"]).is_err());
+        assert!(p(&["--format", "gif"]).is_err(), "--format alone means nothing");
+        assert!(p(&["--scale", "0.5"]).is_err(), "sub-1x scales are only for animation export");
+        assert_eq!(p(&["--scale", "2"]).unwrap().scale, Some(2.0));
     }
 
     #[test]

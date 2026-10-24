@@ -9,6 +9,7 @@
 //! [`export_pdf`] exports ordered slide frames as losslessly compressed raster PDF pages.
 //! PDF pages preserve slide dimensions and artwork; text is not selectable.
 
+pub mod anim;
 mod bounds;
 mod codegen;
 mod compose;

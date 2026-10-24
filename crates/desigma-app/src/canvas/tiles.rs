@@ -89,7 +89,9 @@ fn upload(ctx: &Context, tv: &mut TileView, tile: &Tile, linear: bool) -> egui::
     id
 }
 
-/// Document revision for this frame: bumped once when the document changed.
+/// Revision for the render caches this frame. It changes when the document did, and in Motion
+/// mode also when the playhead moved (the page is then drawn evaluated at the playhead: see
+/// [`crate::motion::playback`]), so the caches re-diff the page and re-render only what moved.
 pub fn take_rev(app: &mut App) -> u64 {
     let c = &mut app.canvas;
     if c.dirty {
@@ -98,8 +100,9 @@ pub fn take_rev(app: &mut App) -> u64 {
     }
     if std::mem::take(&mut c.tiles.gpu_reset) {
         c.gpu.reset();
+        c.motion.reset();
     }
-    c.tiles.rev
+    c.motion.prepare(&app.motion, &app.doc, app.page, c.tiles.rev)
 }
 
 /// Renders (as far as the budget allows) and paints the page into `rect`.
@@ -119,8 +122,9 @@ pub fn paint(app: &mut App, ui: &Ui, rect: ERect) {
 
     let (page, offset, zoom) = (app.page, app.view.offset, app.view.zoom);
     let now = ctx.input(|i| i.time);
-    take_rev(app);
+    let rev = take_rev(app);
     let c = &mut app.canvas;
+    let shown = c.motion.document(app.motion.enabled, &app.doc);
     let tv = &mut c.tiles;
     tv.frame_no += 1;
 
@@ -146,7 +150,7 @@ pub fn paint(app: &mut App, ui: &Ui, rect: ERect) {
     let ratio = rz / zoom;
     let vp = Viewport { offset, zoom: rz, dpr: ppp };
     let size = ((w * ratio).ceil().max(1.0) as u32, (h * ratio).ceil().max(1.0) as u32);
-    let frame = tv.cache.render_tiles(&app.doc, page, &vp, size, tv.rev, TileBudget::time(RENDER_BUDGET));
+    let frame = tv.cache.render_tiles(shown, page, &vp, size, rev, TileBudget::time(RENDER_BUDGET));
     let pending = frame.pending() > 0 || frame.prefetch_pending > 0;
 
     // Tiles are laid out in device pixels of the actual zoom, snapped so
