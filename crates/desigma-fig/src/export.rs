@@ -563,6 +563,7 @@ fn export_node(doc: &Document, id: NodeId, parent_abs: Option<&Affine>, depth: u
         _ => {}
     }
 
+    crate::motion::export_into(doc, node, &mut m);
     if node.kind.is_container() {
         let mut kids = Vec::new();
         for c in &node.children {

@@ -513,6 +513,12 @@ impl Ctx {
         if !guides.is_empty() {
             self.doc.guides.entry(pid).or_default().extend(guides);
         }
+        if let Some(t) = v.get("motionTimeline").and_then(|t| serde_json::from_value::<TimelineSettings>(t.clone()).ok()) {
+            let t = t.sanitized();
+            if !t.is_default() {
+                self.doc.timelines.insert(pid, t);
+            }
+        }
         let info = ParentInfo { origin: Vec2::ZERO, layout: None };
         for c in farr(v, "children") {
             self.import_node(c, pid, info, 0);
@@ -682,6 +688,9 @@ impl Ctx {
             },
         };
         n.size = v.get("size").and_then(vec2).or_else(|| bbox.and_then(|b| Some(Vec2::new(fnum(b, "width")?, fnum(b, "height")?)))).unwrap_or(Vec2::ZERO);
+        if let Some(m) = v.get("motion") {
+            n.motion = crate::motion::parse_node_motion(m, &n);
+        }
 
         // Paint & stroke.
         let fills = parse_paints(v.get("fills"));
