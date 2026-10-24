@@ -4,13 +4,13 @@
 
 <p align="center">
   <b>Interface design; an independent, local-first, open-source design tool built in Rust.</b><br>
-  Frames, auto layout, components and variants, prototyping, vector editing and real Figma file import,<br>
-  in a native desktop app written entirely in Rust. Free, offline, and yours to change.
+  Frames, auto layout, components and variants, prototyping, <b>keyframe motion</b>, whiteboards, decks, vector editing<br>
+  and real Figma file import, in a native desktop app written entirely in Rust. Free, offline, and yours to change.
 </p>
 
 <p align="center">
   <img alt="100% Rust" src="https://img.shields.io/badge/100%25-Rust-b7410e?style=flat-square&logo=rust">
-  <img alt="Windows · Linux" src="https://img.shields.io/badge/Windows%20%C2%B7%20Linux-native-2f7bf5?style=flat-square">
+  <img alt="macOS · Windows · Linux" src="https://img.shields.io/badge/macOS%20%C2%B7%20Windows%20%C2%B7%20Linux-native-2f7bf5?style=flat-square">
   <img alt="License: MIT OR Apache-2.0" src="https://img.shields.io/badge/license-MIT%20%2F%20Apache--2.0-3a3a3a?style=flat-square">
   <img alt="Status: early alpha" src="https://img.shields.io/badge/status-early%20alpha-d69e2e?style=flat-square">
   <a href="https://github.com/deepfounder-ai/desigma/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/deepfounder-ai/desigma/ci.yml?branch=main&style=flat-square&label=CI"></a>
@@ -46,6 +46,11 @@
     </td>
   </tr>
 </table>
+
+<p align="center">
+  <a href="#motion-beta"><b>🎬 New: Motion</b></a> keyframes, springs, 41 presets and GIF/WebM export &nbsp;·&nbsp;
+  <a href="#download">Download</a> &nbsp;·&nbsp; <a href="#build-from-source">Build from source</a>
+</p>
 
 <br>
 
@@ -137,7 +142,7 @@ Every screenshot here is the real app on its built-in showcase file, captured of
       <br>
       <sub>A board: stickies, connectors, shapes with text, stamps and a section.</sub>
       <h3>Boards for thinking out loud</h3>
-      New board in the File menu or on the home screen opens a whiteboard with its own toolbar: stickies whose text shrinks to fit, shapes with text, markers, stamps, coloured sections (<kbd>Shift</kbd>+<kbd>S</kbd>) that carry the notes inside them, and tables (<kbd>Shift</kbd>+<kbd>T</kbd>) with + handles and <kbd>Tab</kbd> between cells. <kbd>Tab</kbd> starts the next sticky, <kbd>Alt</kbd>-drag duplicates.
+      New board in the File menu or on the home screen opens a whiteboard with its own toolbar: stickies whose text shrinks to fit (wide stickies and author labels too), shapes with text, a drawing tray with marker (<kbd>M</kbd>), highlighter, washi tape and eraser, code blocks with syntax highlighting, stamps, coloured sections (<kbd>Shift</kbd>+<kbd>S</kbd>) that carry the notes inside them, and tables (<kbd>Shift</kbd>+<kbd>T</kbd>) with + handles and <kbd>Tab</kbd> between cells. <kbd>Tab</kbd> starts the next sticky, <kbd>Alt</kbd>-drag duplicates. A timer and voting sessions run from the top bar.
       <br><br>
       <b>Connectors</b> come out of the magnet dots on any shape, route around the boxes they join and follow them when they move. FigJam files open as boards.
     </td>
@@ -204,12 +209,13 @@ Motion mode (the waveform button in the toolbar) turns a page into a timeline. I
 What is in it:
 
 - **Timeline** per page: duration, fps and loop, a playhead you scrub, layer rows with property tracks, keyframe diamonds you drag, stretch and copy, auto-key, and snapping to frames and keys.
-- **Keyframes** on position, scale, rotation, width, height, opacity, corner radius, fill and stroke colour and stroke weight.
+- **Keyframes** on position, scale, rotation, width, height, opacity, corner radius, fill and stroke colour, stroke weight, drop shadow (offset, blur, colour) and layer blur, with a ◇ next to every field in the Motion inspector, a motion path and gizmo on the canvas, per-track visibility and a draggable summary bar per layer.
 - **Easing**: hold, linear, ease in/out, back curves, custom cubic-bezier, and duration-based springs (Gentle, Quick, Bouncy, Slow or your own bounce). Each segment has its own.
 - **41 presets** (Basic, Enter, Cycle, Exit) that become **clips** you can retime and tweak; cycles repeat or yoyo until the timeline ends.
 - **Present playback**: frames play their timeline on arrival while the prototype keeps working. Smart Animate between frames still works and the destination plays when it lands.
 - **Prototype actions**: *Control animation* (Play, Play from start, Pause, Restart, Toggle) with any trigger: On click, While hovering (revert on leave), While pressing, After delay, keys. A frame that has such an action waits to be played; other animated frames autoplay. The target is a frame or any layer in it (it resolves to the frame).
-- **Export** the page as an animated **GIF**, **WebM** or a **PNG** sequence (folder or zip), at any fps and scale, from the Animation section of the inspector or from the command line.
+- **Export** the page or a frame as an animated **GIF**, **WebM** (AV1, encoded in pure Rust) or a **PNG** sequence (folder or zip), at any fps and scale, from the timeline, the Animation section of the inspector or the command line.
+- **Figma Motion import**: keyframe tracks, curve and spring easing and preset clips from `.fig` files made in Figma's Motion mode come in as editable desigma motion. Curved motion paths and colour/effect tracks are not imported yet.
 - **Code**: Dev mode turns the selected layer's animation into CSS keyframes, SwiftUI or Jetpack Compose.
 - **MCP tools** (`desigma_add_keyframe`, `desigma_apply_animation_preset`, `desigma_set_timeline`, `desigma_export_animation`) so an agent can animate and render.
 
@@ -220,7 +226,7 @@ cargo run -p desigma-app -- --motion --panel motion-easing --screenshot easing.p
 cargo run -p desigma-app -- --export-animation onboarding.desigma --out onboarding.gif --scale 0.75 --fps 20          # add --dither to smooth gradients (bigger file)
 ```
 
-Motion follows the workflow of Figma's Motion (Beta) mode but is desigma's own implementation, and it is not affiliated with Figma, Inc. Animation data lives in `.desigma` files; Figma exports skip it.
+Motion follows the workflow of Figma's Motion (Beta) mode but is desigma's own implementation, and it is not affiliated with Figma, Inc. Animation data lives in `.desigma` files and in desigma's REST JSON export; it cannot be written back into `.fig` files.
 
 ## Everything in the box
 
@@ -242,7 +248,7 @@ Motion follows the workflow of Figma's Motion (Beta) mode but is desigma's own i
   <tr>
     <td width="33%" valign="top">
       <h4>🗂️ Formats</h4>
-      In: <code>.fig</code>, Figma REST JSON and native <code>.desigma</code>. Out: <code>.desigma</code>, Figma REST JSON, PNG, JPG and SVG. Images in PNG, JPEG and WebP.
+      In: <code>.fig</code> (including FigJam boards and Motion data), Figma REST JSON, SVG and native <code>.desigma</code>. Out: <code>.desigma</code>, Figma REST JSON, PNG, JPG, SVG, PDF, and animated GIF, WebM and PNG sequences. Images in PNG, JPEG and WebP.
     </td>
     <td width="33%" valign="top">
       <h4>🔤 Type</h4>
@@ -272,15 +278,19 @@ The `.fig` format is undocumented. Our decoder follows community reverse enginee
 - **Deterministic rendering:** `desigma-render` draws on the CPU with tiny-skia, so output is reproducible byte for byte. Tiles stitched together match a whole-page render.
 - **Visual regression tooling:** `desigma-diff` compares screenshots with anti-aliasing detection and SSIM, and writes an HTML report. The development target is faithful document rendering and an independently designed editor, with its own approved UI baselines.
 - **Independent product direction:** file compatibility and familiar workflows guide development; reproducing Figma's editor appearance is not a goal. Third-party code, fonts and assets retain their own licenses and attribution requirements.
-- **Tested:** more than 500 tests across the workspace, from undo and import round trips to UI tests that drive the editor with synthetic input.
+- **Tested:** more than 1,600 tests across the workspace, from undo and import round trips to UI tests that drive the editor with synthetic input.
 
 | Crate | What it does |
 |---|---|
-| `desigma-doc` | Scene graph, paints, text, auto layout, components, prototype model, undo/redo |
+| `desigma-doc` | Scene graph, paints, text, auto layout, components, prototype and motion model (keyframes, easing, springs, presets), undo/redo |
+| `desigma-engine` | Editing logic shared by the app and the MCP server: transactions, auto layout, text measuring, component sync |
 | `desigma-render` | tiny-skia renderer, spatial index, parallel tile cache |
+| `desigma-gpu` | wgpu renderer with a CPU fallback |
+| `desigma-svg` | SVG import |
+| `desigma-library` | Projects, team libraries, publishing and version history |
 | `desigma-fig` | Figma REST JSON and `.fig` import, REST JSON export |
 | `desigma-fonts` | Bundled Inter, Fontsource fetch and cache, font substitution |
-| `desigma-export` | PNG, JPG and SVG export, Dev mode CSS |
+| `desigma-export` | PNG, JPG, SVG and PDF export, animated GIF / WebM / PNG sequences, Dev mode CSS, SwiftUI and Compose code |
 | `desigma-app` | The egui desktop editor |
 | `desigma-diff` | Pixel-diff library and CLI |
 | `desigma-mcp` | Local MCP server for design-file inspection, editing, and code generation |
