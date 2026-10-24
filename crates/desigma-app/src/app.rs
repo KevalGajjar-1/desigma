@@ -167,7 +167,7 @@ pub struct App {
     pub decks: crate::decks::DecksState,
     /// Update notifications (banner, dialog, background checks).
     pub updater: crate::updater::UpdaterState,
-    /// Motion (Beta) mode: playhead, playback and timeline selection.
+    /// Motion (Beta) mode: playhead, playback and the keyframe / clip selection.
     pub motion: crate::motion::MotionUi,
 }
 

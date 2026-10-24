@@ -56,6 +56,8 @@ pub struct Options {
     pub dev: Option<String>,
     /// With `--dev`: mark the selected layer Ready for dev and give it a demo annotation and link.
     pub dev_demo: bool,
+    /// Open Motion mode with a demo animation on the selected layer (screenshot aid).
+    pub motion: bool,
     /// Write the showcase sample files into this library directory and exit (screenshot aid).
     pub seed_library: Option<PathBuf>,
     /// `--export-animation FILE`: render the animation of the file's first animated page (or the
@@ -215,6 +217,7 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Options, String> 
                 o.dev = Some(l);
             }
             "--dev-demo" => o.dev_demo = true,
+            "--motion" => o.motion = true,
             "--seed-library" => o.seed_library = Some(it.next().ok_or("--seed-library needs a directory")?.into()),
             "-h" | "--help" => o.help = true,
             "-V" | "--version" => o.version = true,
@@ -248,6 +251,7 @@ pub const USAGE: &str = "usage: desigma [FILE] [--screenshot OUT.png] [--size Wx
   --bridge   let desigma-mcp control this editor (Preferences → Allow MCP agents… makes it permanent)
   --library  use DIR as the projects library instead of the default location
   --dev      open Dev mode with a code language (css|tailwind|swiftui|compose|react); --dev-demo marks the selection Ready for dev with an annotation
+  --motion   open Motion mode with a demo animation on the selected layer
   --seed-library  write the showcase sample files (a project with three files) into DIR and exit
   --find     open the Find and replace panel searching for TEXT (--replace-with TEXT shows the replace row)
   --export-animation FILE  render FILE's Motion animation (first animated page, or the layer named by --select) and exit:

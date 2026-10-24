@@ -135,6 +135,9 @@ impl Shell {
                 crate::dev::preset::apply(&mut app);
             }
         }
+        if opts.motion {
+            crate::motion::timeline::open_demo(&mut app);
+        }
         app.ui.rulers = opts.rulers;
         if opts.grid {
             app.ui.pixel_grid = true;
@@ -300,6 +303,8 @@ impl Shell {
         let events = ctx.input(|i| i.events.clone());
         for ev in events {
             match ev {
+                Event::Copy if !editing_text && crate::motion::timeline::copy_keys(&mut self.app, ctx) => {}
+                Event::Paste(_) if !editing_text && crate::motion::timeline::paste_keys(&mut self.app, ctx) => {}
                 Event::Copy if !editing_text => {
                     if let Some(s) = self.app.copy_selection() {
                         ctx.copy_text(s);
@@ -325,6 +330,9 @@ impl Shell {
     fn key(&mut self, ctx: &Context, key: Key, m: egui::Modifiers) {
         let app = &mut self.app;
         let cmd = m.command;
+        if app.motion.enabled && crate::motion::timeline::key(app, key, m) {
+            return;
+        }
         if cmd {
             let act = match (key, m.shift, m.alt) {
                 (Key::E, false, _) => Some(Action::Flatten),
@@ -670,6 +678,14 @@ impl Shell {
         let notes_h = if deck { 132.0_f32.min(full.height() * 0.28) } else { 0.0 };
         let canvas_rect = Rect::from_min_max(Pos2::new(canvas_left, full.top()), Pos2::new(right_rect.left(), full.bottom() - notes_h));
         let notes_rect = Rect::from_min_max(Pos2::new(canvas_left, canvas_rect.bottom()), Pos2::new(right_rect.left(), full.bottom()));
+        // Motion mode: the timeline docks under the canvas and the toolbar floats above it.
+        let motion_on = self.app.motion.enabled && !board && !deck;
+        let (canvas_rect, timeline_rect) = if motion_on {
+            let (c, t) = crate::motion::timeline::split(&ctx, canvas_rect);
+            (c, Some(t))
+        } else {
+            (canvas_rect, None)
+        };
 
         let full_vars = self.app.vars.open && self.app.vars.full;
         if full_vars {
@@ -679,6 +695,9 @@ impl Shell {
             crate::variables::view::show(&mut self.app, ui, content);
         } else {
             canvas::show(&mut self.app, ui, canvas_rect);
+            if let Some(tr) = timeline_rect {
+                crate::motion::timeline::show(&mut self.app, ui, tr);
+            }
             if deck {
                 crate::decks::ui::notes(&mut self.app, ui, notes_rect);
             }
@@ -709,7 +728,14 @@ impl Shell {
                 crate::board::session::show(&mut self.app, ui, canvas_rect);
             } else {
                 right::show(&mut self.app, ui, right_rect);
-                toolbar::show(&mut self.app, ui, if deck { canvas_rect } else { canvas_rect_for_toolbar(full) });
+                let tb = if deck {
+                    canvas_rect
+                } else if timeline_rect.is_some() {
+                    Rect::from_min_max(full.min, Pos2::new(full.right(), canvas_rect.bottom()))
+                } else {
+                    canvas_rect_for_toolbar(full)
+                };
+                toolbar::show(&mut self.app, ui, tb);
             }
             crate::history::banner::show(&mut self.app, ui, canvas_rect);
             self.context_menu(ui, canvas_rect);
