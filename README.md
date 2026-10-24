@@ -166,6 +166,62 @@ Every screenshot here is the real app on its built-in showcase file, captured of
 
 <br>
 
+## Motion (beta)
+
+Motion mode (the waveform button in the toolbar) turns a page into a timeline. It is free like the rest of the app and works offline.
+
+<p align="center">
+  <img src="docs/images/desigma-motion.gif" alt="An animated onboarding card made in desigma: a logo tile springs in, a payment card rises and tilts, two chips drop and glide in, the title and copy rise, and the call to action bursts in" width="320">
+</p>
+
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="docs/images/desigma-motion.png" alt="Motion mode: the Marlow onboarding flow on the canvas with the timeline below showing keyframe diamonds and preset bars, and the Animations section of the inspector" width="440">
+      <br>
+      <sub>The timeline under the canvas, the Motion inspector on the right. This file is built in: <code>cargo run -p desigma-app -- --motion</code>.</sub>
+    </td>
+    <td width="50%" valign="top">
+      <img src="docs/images/desigma-motion-easing.png" alt="The easing editor with a spring curve, bounce slider and a preview" width="440">
+      <br>
+      <sub>Easing editor: curves, holds and springs for every segment.</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="docs/images/desigma-motion-library.png" alt="The animation library popover listing Basic, Enter, Cycle and Exit presets" width="440">
+      <br>
+      <sub>The library: 41 presets in Basic, Enter, Cycle and Exit.</sub>
+    </td>
+    <td width="50%" valign="top">
+      <img src="docs/images/desigma-motion-clip.png" alt="The clip popover with direction, amount, delay, duration, easing and repeat controls" width="440">
+      <br>
+      <sub>Every preset is editable clips: direction, amount, delay, duration, easing, repeat and yoyo.</sub>
+    </td>
+  </tr>
+</table>
+
+What is in it:
+
+- **Timeline** per page: duration, fps and loop, a playhead you scrub, layer rows with property tracks, keyframe diamonds you drag, stretch and copy, auto-key, and snapping to frames and keys.
+- **Keyframes** on position, scale, rotation, width, height, opacity, corner radius, fill and stroke colour and stroke weight.
+- **Easing**: hold, linear, ease in/out, back curves, custom cubic-bezier, and duration-based springs (Gentle, Quick, Bouncy, Slow or your own bounce). Each segment has its own.
+- **41 presets** (Basic, Enter, Cycle, Exit) that become **clips** you can retime and tweak; cycles repeat or yoyo until the timeline ends.
+- **Present playback**: frames play their timeline on arrival while the prototype keeps working. Smart Animate between frames still works and the destination plays when it lands.
+- **Prototype actions**: *Control animation* (Play, Play from start, Pause, Restart, Toggle) with any trigger: On click, While hovering (revert on leave), While pressing, After delay, keys. A frame that has such an action waits to be played; other animated frames autoplay. The target is a frame or any layer in it (it resolves to the frame).
+- **Export** the page as an animated **GIF**, **WebM** or a **PNG** sequence (folder or zip), at any fps and scale, from the Animation section of the inspector or from the command line.
+- **Code**: Dev mode turns the selected layer's animation into CSS keyframes, SwiftUI or Jetpack Compose.
+- **MCP tools** (`desigma_add_keyframe`, `desigma_apply_animation_preset`, `desigma_set_timeline`, `desigma_export_animation`) so an agent can animate and render.
+
+```sh
+cargo run -p desigma-app -- --motion                         # the built-in animated onboarding, in Motion mode
+cargo run -p desigma-app -- --motion --screenshot docs/images/desigma-motion.png --scale 2
+cargo run -p desigma-app -- --motion --panel motion-easing --screenshot easing.png --scale 2
+cargo run -p desigma-app -- --export-animation onboarding.desigma --out onboarding.gif --scale 0.75
+```
+
+Motion follows the workflow of Figma's Motion (Beta) mode but is desigma's own implementation, and it is not affiliated with Figma, Inc. Animation data lives in `.desigma` files; Figma exports skip it.
+
 ## Everything in the box
 
 <table>

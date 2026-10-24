@@ -493,6 +493,10 @@ pub fn paste_keys(app: &mut App, ctx: &Context) -> bool {
 pub fn open_demo(app: &mut App) {
     app.motion.enabled = true;
     app.ui.right_tab = Some(crate::app::RightTab::Design);
+    // a document that is already animated (the built-in onboarding demo) is shown as it is
+    if open_animated(app) {
+        return;
+    }
     let Some(id) = app.selection.first().copied().or_else(|| app.doc.get(app.page).and_then(|p| p.children.first().copied())) else { return };
     app.select_only(id);
     let Some(n) = app.doc.get(id) else { return };
@@ -516,6 +520,29 @@ pub fn open_demo(app: &mut App) {
         }
     }
     app.motion.playhead_ms = 997;
+}
+
+/// Motion mode on a document that already has animation: its first animated page, the first
+/// animated top-level frame selected, the playhead where most of the animation is on screen.
+fn open_animated(app: &mut App) -> bool {
+    let animated = |app: &App, root: NodeId| {
+        let mut any = false;
+        app.doc.walk(root, |n, _| any |= !n.motion.is_empty());
+        any
+    };
+    let selected = app.selection.first().copied().and_then(|id| app.doc.page_of(id)).filter(|p| animated(app, *p));
+    let Some(page) = selected.or_else(|| app.doc.pages.iter().copied().find(|p| animated(app, *p))) else { return false };
+    app.page = page;
+    if app.selection.is_empty() || app.doc.page_of(app.selection[0]) != Some(page) {
+        let frame = app.doc.get(page).map(|p| p.children.clone()).unwrap_or_default().into_iter().find(|f| animated(app, *f));
+        if let Some(f) = frame {
+            app.select_only(f);
+        }
+    }
+    let tl = app.doc.timeline(page);
+    // late enough that every entrance has landed and the floating cycles are moving
+    app.motion.playhead_ms = (tl.duration_ms as f32 * 0.7) as u32;
+    true
 }
 
 // ---- keyboard ---------------------------------------------------------------------------------

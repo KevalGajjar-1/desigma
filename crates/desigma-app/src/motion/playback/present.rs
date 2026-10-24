@@ -4,7 +4,8 @@
 //!
 //! Each animated frame gets its own [`MotionPlayer`] over the prototype player's scratch
 //! document (rebuilt when that frame's content revision changes, e.g. after a variable change),
-//! its time is the real clock since the frame appeared, quantised to the timeline's fps so a
+//! its time comes from the prototype player (which owns the play/pause clock that the "Control
+//! animation" actions drive), quantised to the timeline's fps so a
 //! texture is re-rendered at most once per timeline frame.
 
 use desigma_doc::motion::MotionPlayer;
@@ -14,8 +15,6 @@ use std::collections::{HashMap, HashSet};
 /// Per-frame evaluation state of one Present session.
 #[derive(Default)]
 pub struct PresentMotion {
-    /// Egui time at which each frame first appeared.
-    started: HashMap<NodeId, f64>,
     /// Frames asked for during the current egui frame.
     seen: HashSet<NodeId>,
     /// Whether a frame (or anything inside it) is animated.
@@ -42,7 +41,6 @@ impl PresentMotion {
     /// Frames that left the screen start over when they come back.
     pub fn end_frame(&mut self) {
         let seen = &self.seen;
-        self.started.retain(|f, _| seen.contains(f));
         self.players.retain(|f, _| seen.contains(f));
     }
 
@@ -60,16 +58,17 @@ impl PresentMotion {
     }
 
     /// The time to show `frame` at, or `None` when it has no animation.
-    pub fn time_of(&mut self, doc: &Document, frame: NodeId, now: f64) -> Option<FrameTime> {
+    /// `elapsed_ms` is the frame's playback clock and `playing` whether it runs (see
+    /// `Player::motion_state`).
+    pub fn time_of(&mut self, doc: &Document, frame: NodeId, elapsed_ms: f32, playing: bool) -> Option<FrameTime> {
         if !self.animated(doc, frame) {
             return None;
         }
         let page = doc.page_of(frame)?;
         let tl = doc.timeline(page);
         self.seen.insert(frame);
-        let start = *self.started.entry(frame).or_insert(now);
-        let elapsed = ((now - start).max(0.0) * 1000.0) as f32;
-        if !tl.finished(elapsed) {
+        let elapsed = elapsed_ms.max(0.0);
+        if playing && !tl.finished(elapsed) {
             self.active = true;
         }
         let t = tl.playback_time(elapsed);
@@ -121,17 +120,17 @@ mod tests {
     }
 
     #[test]
-    fn frames_play_from_when_they_appear() {
+    fn frames_follow_the_clock_they_are_given() {
         let (d, frame, plain, id) = doc(false);
         let mut m = PresentMotion::default();
         m.begin_frame();
-        assert!(m.time_of(&d, plain, 5.0).is_none(), "frames without animation are drawn as before");
-        let t0 = m.time_of(&d, frame, 5.0).unwrap();
+        assert!(m.time_of(&d, plain, 0.0, true).is_none(), "frames without animation are drawn as before");
+        let t0 = m.time_of(&d, frame, 0.0, true).unwrap();
         assert_eq!((t0.t_ms, t0.step), (0.0, 0));
         assert!(m.active);
         m.end_frame();
         m.begin_frame();
-        let t = m.time_of(&d, frame, 5.43).unwrap();
+        let t = m.time_of(&d, frame, 430.0, true).unwrap();
         assert_eq!(t.step, 4, "quantised to the 10 fps timeline");
         assert!((t.t_ms - 400.0).abs() < 1e-3);
         let doc_t = m.evaluated(&d, frame, 0, t.t_ms).unwrap();
@@ -139,29 +138,32 @@ mod tests {
         assert!(m.shown(frame).is_some());
         m.end_frame();
         m.begin_frame();
-        let end = m.time_of(&d, frame, 9.0).unwrap();
+        let end = m.time_of(&d, frame, 4000.0, true).unwrap();
         assert_eq!(end.t_ms, 1000.0, "a one-shot timeline holds its last state");
         assert!(!m.active, "nothing left to repaint for");
     }
 
     #[test]
-    fn looping_timelines_never_finish_and_restart_when_the_frame_returns() {
+    fn a_paused_frame_holds_and_does_not_repaint() {
         let (d, frame, _p, _id) = doc(true);
         let mut m = PresentMotion::default();
         m.begin_frame();
-        m.time_of(&d, frame, 1.0);
+        let t = m.time_of(&d, frame, 450.0, false).unwrap();
+        assert_eq!(t.step, 4);
+        assert!(!m.active, "paused: no animation repaints");
         m.end_frame();
         m.begin_frame();
-        let t = m.time_of(&d, frame, 3.25).unwrap();
-        assert!(m.active);
+        m.time_of(&d, frame, 450.0, true);
+        assert!(m.active, "a looping timeline never finishes");
+    }
+
+    #[test]
+    fn looping_timelines_wrap_around() {
+        let (d, frame, _p, _id) = doc(true);
+        let mut m = PresentMotion::default();
+        m.begin_frame();
+        let t = m.time_of(&d, frame, 2250.0, true).unwrap();
         assert!((t.t_ms - 200.0).abs() < 1e-3, "2.25 s into a 1 s loop is 250 ms, shown at the 200 ms frame: {}", t.t_ms);
-        m.end_frame();
-        // the frame was not drawn for a while: its clock restarts
-        m.begin_frame();
-        m.end_frame();
-        m.begin_frame();
-        let again = m.time_of(&d, frame, 10.0).unwrap();
-        assert_eq!(again.step, 0);
     }
 
     #[test]
@@ -169,7 +171,7 @@ mod tests {
         let (mut d, frame, _p, id) = doc(false);
         let mut m = PresentMotion::default();
         m.begin_frame();
-        m.time_of(&d, frame, 0.0);
+        m.time_of(&d, frame, 0.0, true);
         assert!(m.evaluated(&d, frame, 1, 500.0).is_some());
         d.get_mut(id).unwrap().name = "changed".into();
         assert_ne!(m.evaluated(&d, frame, 1, 500.0).unwrap().get(id).unwrap().name, "changed", "same revision: cached player");

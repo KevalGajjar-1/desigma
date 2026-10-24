@@ -78,7 +78,7 @@ impl Options {
     /// Whether a launch with these options starts on the home screen: explicitly
     /// with `--home`, or interactively with nothing else to open.
     pub fn wants_home(&self) -> bool {
-        self.open_id.is_none() && (self.home || (self.file.is_none() && self.screenshot.is_none() && self.fixture.is_none()))
+        self.open_id.is_none() && (self.home || (self.file.is_none() && self.screenshot.is_none() && self.fixture.is_none() && !self.motion))
     }
 }
 
