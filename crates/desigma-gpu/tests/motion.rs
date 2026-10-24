@@ -52,13 +52,17 @@ fn evaluated_pages_match_the_cpu_renderer() {
     let mut player = MotionPlayer::new(&doc, page);
     for t in [0.0, 250.0, 600.0, 1000.0] {
         let shown = player.seek(&doc, t).clone();
+        // `compare` compiles every page as revision 0: drop the geometry cached for the last time
+        g.compiler.geom.clear();
         let c = compare(&mut g, &format!("motion_{t}"), &shown, page, Viewport::default(), SIZE, 8);
         assert!(c.report.ratio < 0.03, "t = {t} ms: mismatch {:.3}%", c.report.ratio * 100.0);
     }
     // the animation really moved: frame 0 and frame 1000 differ
     let a = player.seek(&doc, 0.0).clone();
+    g.compiler.geom.clear();
     let first = g.render_page(&a, page, &Viewport::default(), SIZE);
     let b = player.seek(&doc, 1000.0).clone();
+    g.compiler.geom.clear();
     let last = g.render_page(&b, page, &Viewport::default(), SIZE);
     assert_ne!(first.data(), last.data());
 }

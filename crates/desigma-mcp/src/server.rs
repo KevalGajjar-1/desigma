@@ -97,9 +97,15 @@ impl Session {
     }
 
     fn png_path(&self, path: &str) -> Result<PathBuf, String> {
+        self.export_file_path(path, "png")
+    }
+
+    /// Output path of an export of kind `ext` (`png`, `gif`, `webm`, `zip`): inside the workspace,
+    /// an existing parent, and never a symlink at the leaf.
+    fn export_file_path(&self, path: &str, ext: &str) -> Result<PathBuf, String> {
         let requested = self.root.join(path);
-        if requested.extension().and_then(|x| x.to_str()) != Some("png") {
-            return Err("Export path must end in .png".into());
+        if requested.extension().and_then(|x| x.to_str()) != Some(ext) {
+            return Err(format!("Export path must end in .{ext}"));
         }
         let parent = requested
             .parent()
@@ -115,7 +121,7 @@ impl Session {
         // outside the workspace entirely, so `fs::write` must never follow it.
         if let Ok(meta) = fs::symlink_metadata(&resolved) {
             if meta.file_type().is_symlink() || !meta.is_file() {
-                return Err("Export path must be a regular .png file inside the workspace".into());
+                return Err(format!("Export path must be a regular .{ext} file inside the workspace"));
             }
         }
         Ok(resolved)
@@ -195,9 +201,28 @@ impl Session {
                 fs::write(&path, png).map_err(|e| format!("Cannot write PNG: {e}"))?;
                 Ok(json!({"path":path,"width":width,"height":height}))
             }
+            "desigma_export_animation" => {
+                let a: crate::motion::ExportAnimArgs = parse(args)?;
+                let path = self.export_file_path(&a.path, crate::motion::extension(&a.format)?)?;
+                let (bytes, mut info) = crate::motion::export(&self.engine, &a)?;
+                fs::write(&path, &bytes).map_err(|e| format!("Cannot write animation: {e}"))?;
+                info["path"] = json!(path);
+                info["bytes"] = json!(bytes.len());
+                Ok(info)
+            }
             _ => {
                 let result = self.engine.call(name, args)?;
-                if matches!(name, "desigma_create_node" | "desigma_update_node" | "desigma_delete_node" | "desigma_undo" | "desigma_redo")
+                if matches!(
+                    name,
+                    "desigma_create_node"
+                        | "desigma_update_node"
+                        | "desigma_delete_node"
+                        | "desigma_undo"
+                        | "desigma_redo"
+                        | "desigma_add_keyframe"
+                        | "desigma_apply_animation_preset"
+                        | "desigma_set_timeline"
+                )
                     && result.get("changed").and_then(Value::as_bool) != Some(false)
                 {
                     self.dirty = true;
@@ -223,6 +248,10 @@ impl Session {
             "desigma_export_image" => {
                 let a: crate::engine::ExportArgs = parse(args.clone())?;
                 args["path"] = json!(self.png_path(&a.path)?);
+            }
+            "desigma_export_animation" => {
+                let a: crate::motion::ExportAnimArgs = parse(args.clone())?;
+                args["path"] = json!(self.export_file_path(&a.path, crate::motion::extension(&a.format)?)?);
             }
             _ => {}
         }
