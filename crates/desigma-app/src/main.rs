@@ -21,6 +21,7 @@ mod libraries;
 #[cfg(test)]
 mod lint;
 mod loopback;
+mod motion;
 mod ops;
 mod panels;
 mod plugins;
