@@ -6,11 +6,12 @@ Download the file for your platform from the
 | Platform | File |
 |---|---|
 | macOS (Apple Silicon and Intel) | `desigma-<version>-macos.dmg` (one universal file for both) |
-| Windows (x64) | `desigma-<version>-x86_64-pc-windows-msvc.zip` |
+| Windows (x64), installer | `desigma-<version>-x86_64-windows-setup.exe` (recommended) |
+| Windows (x64), portable | `desigma-<version>-x86_64-pc-windows-msvc.zip` |
 | Linux (x64) | `desigma-<version>-x86_64-unknown-linux-gnu.tar.gz` |
 | macOS, for scripts and CLI use | `desigma-<version>-macos-universal.tar.gz` |
 
-The macOS disk image holds `desigma.app` (the editor, with the `desigma-diff` tool inside). The
+The Windows installer needs no administrator rights. The macOS disk image holds `desigma.app` (the editor, with the `desigma-diff` tool inside). The
 Windows and Linux archives hold the `desigma` editor, the `desigma-diff` tool, the licenses and the
 README. `SHA256SUMS` on the release page lets you check the download:
 
@@ -28,9 +29,27 @@ release is built by GitHub Actions from a tagged commit.
 
 ### Windows
 
-1. Unzip the archive and double-click `desigma.exe` (it carries the desigma icon and version info).
-2. SmartScreen shows **"Windows protected your PC"**. Click **More info**.
-3. Click **Run anyway**. Windows remembers the choice for this file.
+**Installer (recommended).**
+
+1. Download `desigma-<version>-x86_64-windows-setup.exe` and double-click it.
+2. SmartScreen shows **"Windows protected your PC"**. Click **More info**, then **Run anyway**.
+3. Follow the wizard. By default desigma installs for your user only, into
+   `%LOCALAPPDATA%\Programs\desigma`, with no administrator prompt. Choose "Install for all
+   users" when the wizard asks to put it in `C:\Program Files\desigma` instead.
+4. Tick **Create a desktop shortcut** and **Open .desigma files with desigma** if you want them,
+   and leave **Launch desigma** ticked to start it right away.
+
+Running a newer installer later upgrades the existing install in place. To uninstall, use
+**Settings → Apps → Installed apps → desigma → Uninstall**. Your design files are never touched.
+For a silent install, run the setup with `/VERYSILENT /CURRENTUSER`.
+
+**Portable zip.** Unzip the archive anywhere and double-click `desigma.exe` (it carries the
+desigma icon and version info). The SmartScreen steps are the same. Delete the folder to remove it.
+
+**If Windows Defender quarantines the download or the exe.** Unsigned builds are occasionally
+flagged by mistake. Open **Windows Security → Virus & threat protection → Protection history**,
+restore the item and choose **Allow on device**, then check the file against `SHA256SUMS`
+(`certutil -hashfile <file> SHA256`) before running it.
 
 ### macOS
 
