@@ -318,3 +318,53 @@ fn ticket_survives_a_link_round_trip() {
     assert_eq!(parsed, ticket);
     assert!(parsed.password_required);
 }
+
+#[test]
+fn a_severed_guest_comes_back_with_its_secret_without_approval() {
+    let (host, ticket) = host_with(|o| o.require_approval = true);
+    let t2 = ticket.clone();
+    let first = std::thread::spawn(move || Guest::join_resume(&t2, "Ann", None, gopts(), None).unwrap());
+    let request = host_wait(&host, |e| match e {
+        HostEvent::JoinRequest { request, .. } => Some(request),
+        _ => None,
+    });
+    host.respond(request, true);
+    let guest = first.join().unwrap();
+    let peer = guest.wait_joined(T).unwrap();
+    host_wait(&host, |e| matches!(e, HostEvent::PeerJoined { .. }).then_some(()));
+    assert_eq!(host.join_token(peer), None, "a first visit shows no secret");
+    host.allow_resume("sesame");
+
+    // the network fails: the guest sees a lost connection, not a kick
+    host.sever(peer);
+    let reason = guest_wait(&guest, |e| match e {
+        GuestEvent::Disconnected(r) => Some(r),
+        _ => None,
+    });
+    assert!(matches!(reason, DisconnectReason::Lost(_)), "{reason:?}");
+    host_wait(&host, |e| matches!(e, HostEvent::PeerLeft { .. }).then_some(()));
+
+    // it dials again with the secret and is let in at once
+    let back = Guest::join_resume(&ticket, "Ann", None, gopts(), Some("sesame".into())).unwrap();
+    let again = back.wait_joined(T).unwrap();
+    let new_peer = host_wait(&host, |e| match e {
+        HostEvent::PeerJoined { peer, .. } => Some(peer),
+        HostEvent::JoinRequest { .. } => panic!("a returning guest is not asked about again"),
+        _ => None,
+    });
+    assert_eq!(new_peer, again);
+    assert_eq!(host.join_token(new_peer).as_deref(), Some("sesame"));
+    assert_eq!(host.join_token(new_peer), None, "handed out once");
+    host.send(new_peer, b"hi again".to_vec()).unwrap();
+    assert_eq!(guest_msg(&back), b"hi again");
+
+    // an unknown secret still goes through approval
+    let t3 = ticket.clone();
+    let stranger = std::thread::spawn(move || Guest::join_resume(&t3, "Eve", None, gopts(), Some("guess".into())).unwrap());
+    let request = host_wait(&host, |e| match e {
+        HostEvent::JoinRequest { request, .. } => Some(request),
+        _ => None,
+    });
+    host.respond(request, false);
+    assert_eq!(stranger.join().unwrap().wait_joined(T), Err(JoinError::Denied));
+}

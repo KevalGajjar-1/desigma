@@ -85,6 +85,12 @@ impl Guest {
     /// Start joining. Returns immediately; watch for [`GuestEvent::Joined`] /
     /// [`GuestEvent::JoinFailed`], or call [`Guest::wait_joined`].
     pub fn join(ticket: &Ticket, name: &str, password: Option<&str>, opts: GuestOptions) -> Result<Guest, NetError> {
+        Guest::join_resume(ticket, name, password, opts, None)
+    }
+
+    /// [`Guest::join`] that shows the host a `resume` secret from an earlier visit (after a lost
+    /// connection). See [`Host::join_token`](crate::Host::join_token).
+    pub fn join_resume(ticket: &Ticket, name: &str, password: Option<&str>, opts: GuestOptions, resume: Option<String>) -> Result<Guest, NetError> {
         let rt = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
             .thread_name("desigma-net")
@@ -95,7 +101,7 @@ impl Guest {
         let (stop, _) = watch::channel(false);
         let (tx, rx) = mpsc::channel(QUEUE);
         let shared = Arc::new(Shared { events, state: Arc::new((Mutex::new(None), Condvar::new())), conn: Mutex::new(None), stop });
-        let hello = Hello { version: opts.version, name: name.to_string(), password: password.map(str::to_string) };
+        let hello = Hello { version: opts.version, name: name.to_string(), password: password.map(str::to_string), resume };
         let main = rt.spawn(run(shared.clone(), ticket.clone(), hello, opts.network, rx));
         Ok(Guest { shared, queue, tx, rt: Some(rt), main: Some(main) })
     }
