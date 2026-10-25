@@ -15,6 +15,7 @@ members = [
     "crates/desigma-mcp",
     "crates/desigma-net",
     "crates/desigma-collab",
+    "crates/desigma-server",
 ]
 
 [workspace.package]

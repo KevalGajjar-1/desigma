@@ -1,5 +1,8 @@
 //! Plumbing between the tokio runtime and the synchronous UI thread.
-use iroh::{endpoint::presets, Endpoint, RelayMode};
+use iroh::{
+    endpoint::{presets, BindOpts},
+    Endpoint, RelayMode, SecretKey,
+};
 use std::{
     sync::{
         mpsc::{self, Receiver, Sender},
@@ -69,11 +72,29 @@ impl<T> EventQueue<T> {
 
 /// Bind an endpoint for `network`. `Direct` skips relays and discovery.
 pub async fn bind(network: Network, accept: bool) -> Result<Endpoint, NetError> {
+    bind_with(network, accept, None, None).await
+}
+
+/// [`bind`] with a fixed identity (`secret_key`, so the endpoint id survives restarts) and/or a
+/// fixed UDP `port` (IPv6 is best effort).
+pub async fn bind_with(network: Network, accept: bool, secret_key: Option<[u8; 32]>, port: Option<u16>) -> Result<Endpoint, NetError> {
     let alpns = if accept { vec![ALPN.to_vec()] } else { Vec::new() };
-    let b = match network {
+    let mut b = match network {
         Network::Internet => Endpoint::builder(presets::N0),
         Network::Direct => Endpoint::builder(presets::Minimal).relay_mode(RelayMode::Disabled),
     };
+    if let Some(k) = secret_key {
+        b = b.secret_key(SecretKey::from_bytes(&k));
+    }
+    if let Some(port) = port {
+        let bad = |e: iroh::endpoint::InvalidSocketAddr| NetError::Bind(e.to_string());
+        b = b
+            .clear_ip_transports()
+            .bind_addr(format!("0.0.0.0:{port}"))
+            .map_err(bad)?
+            .bind_addr_with_opts(format!("[::]:{port}"), BindOpts::default().set_is_required(false))
+            .map_err(bad)?;
+    }
     b.alpns(alpns).bind().await.map_err(|e| NetError::Bind(e.to_string()))
 }
 

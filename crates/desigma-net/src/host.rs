@@ -30,6 +30,11 @@ const APPROVAL_TIMEOUT: Duration = Duration::from_secs(120);
 const MAX_PASSWORD_FAILS: u32 = 5;
 const LOCKOUT: Duration = Duration::from_secs(60);
 
+/// A fresh random endpoint secret key, for [`HostOptions::secret_key`].
+pub fn generate_secret_key() -> [u8; 32] {
+    iroh::SecretKey::generate().to_bytes()
+}
+
 #[derive(Clone, Debug)]
 pub struct HostOptions {
     /// Required from guests when set.
@@ -41,11 +46,16 @@ pub struct HostOptions {
     pub max_peers: usize,
     /// Protocol version to announce; only tests change this.
     pub version: u32,
+    /// Fixed endpoint identity (32 secret key bytes) so the ticket's endpoint id survives restarts;
+    /// a fresh one is generated when `None`. For always-on hosts.
+    pub secret_key: Option<[u8; 32]>,
+    /// Fixed UDP port to listen on; a random free one when `None`.
+    pub port: Option<u16>,
 }
 
 impl Default for HostOptions {
     fn default() -> Self {
-        Self { password: None, require_approval: false, network: Network::Internet, max_peers: 32, version: PROTOCOL_VERSION }
+        Self { password: None, require_approval: false, network: Network::Internet, max_peers: 32, version: PROTOCOL_VERSION, secret_key: None, port: None }
     }
 }
 
@@ -276,7 +286,7 @@ impl Inner {
 }
 
 async fn run(inner: Arc<Inner>) {
-    let ep = match rt::bind(inner.opts.network, true).await {
+    let ep = match rt::bind_with(inner.opts.network, true, inner.opts.secret_key, inner.opts.port).await {
         Ok(ep) => ep,
         Err(e) => {
             inner.events.emit(HostEvent::Failed(e.to_string()));

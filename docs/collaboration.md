@@ -1,6 +1,6 @@
 # Live collaboration — design and plan
 
-Status: phases 1-4 done (core sync, transport, app integration, presence); polish is open. Target: 2–10 people editing one file live, on Windows, macOS and Linux,
+Status: phases 1-4 done (core sync, transport, app integration, presence); the headless server is done; the rest of polish is open. Target: 2–10 people editing one file live, on Windows, macOS and Linux,
 with no account and no server to run.
 
 ## How it works for users
@@ -183,3 +183,20 @@ Known gaps: macOS delivers URLs as Apple events, which winit does not surface, s
 the way in; an already running instance is not reused for links (a new window opens); the board has a floating
 Share strip instead of the inspector row; fonts and reconnect are phase 5.
 
+## Phase 5: `desigma-server`
+
+Code: `crates/desigma-server` (library plus the `desigma-server` binary; usage, systemd unit and security
+notes in its README).
+
+* **Same protocol.** The server is a headless desktop host: a `HostSession` over a desigma-net `Host`, with the
+  same `ToGuest` / `ToHost` JSON, snapshot on join, `Dest` routing and presence relay as
+  `desigma-app/src/collab/mod.rs`. That loop is tied to app state (toasts, undo rebase, remote cursors), so it
+  is repeated in about 60 lines instead of being extracted. The app joins it with no changes.
+* **Authority and persistence.** It applies guests' ops to its own document, autosaves when changed (default
+  10 s) and on Ctrl-C / `SIGTERM`, always temp file plus rename, with rotating `FILE.bak.N` backups.
+  `.fig` / REST `.json` / `.svg` inputs are imported once and saved as `.desigma` next to the source.
+* **Stable link.** `HostOptions` gained `secret_key` (fixed endpoint identity) and `port`; the server keeps the
+  key in `.<name>.desigma-key` (mode 0600 on Unix). `Ticket::relay_only` drops direct addresses so the link
+  does not change when the IP does.
+* **No approval.** Nobody is there to click Accept, so everyone passing the password is let in; the password
+  (preferably via `--password-env`) is the gate, and `--view-only` makes everyone a viewer.
