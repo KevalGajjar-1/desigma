@@ -13,6 +13,8 @@ pub struct HostSession {
     peers: BTreeMap<PeerId, Role>,
     /// Resume secret of every guest that ever joined (and was not forgotten), connected or not.
     tokens: BTreeMap<PeerId, String>,
+    /// Role a disconnected guest had, restored when it resumes.
+    departed: BTreeMap<PeerId, Role>,
     next_peer: PeerId,
     /// Images a guest announced and the host asked for.
     awaiting: BTreeSet<(PeerId, String)>,
@@ -22,7 +24,15 @@ impl HostSession {
     /// Starts a session on `doc`; the host allocates ids in range 0.
     pub fn new(doc: &mut Document) -> Self {
         doc.set_id_peer(0);
-        Self { shadow: doc.clone_without_images(), seq: 0, peers: BTreeMap::new(), tokens: BTreeMap::new(), next_peer: 1, awaiting: BTreeSet::new() }
+        Self {
+            shadow: doc.clone_without_images(),
+            seq: 0,
+            peers: BTreeMap::new(),
+            tokens: BTreeMap::new(),
+            departed: BTreeMap::new(),
+            next_peer: 1,
+            awaiting: BTreeSet::new(),
+        }
     }
 
     /// Current global sequence number.
@@ -42,7 +52,9 @@ impl HostSession {
     /// A guest's connection ended. Its peer index (and id range) stays reserved for
     /// [`Self::resume`] until the session is over, or [`Self::forget_peer`].
     pub fn remove_peer(&mut self, peer: PeerId) {
-        self.peers.remove(&peer);
+        if let Some(role) = self.peers.remove(&peer) {
+            self.departed.insert(peer, role);
+        }
         self.awaiting.retain(|(p, _)| *p != peer);
     }
 
@@ -50,6 +62,17 @@ impl HostSession {
     pub fn forget_peer(&mut self, peer: PeerId) {
         self.remove_peer(peer);
         self.tokens.remove(&peer);
+        self.departed.remove(&peer);
+    }
+
+    /// The resume secret of `peer`.
+    pub fn token(&self, peer: PeerId) -> Option<&str> {
+        self.tokens.get(&peer).map(String::as_str)
+    }
+
+    /// The role of a connected guest.
+    pub fn role(&self, peer: PeerId) -> Option<Role> {
+        self.peers.get(&peer).copied()
     }
 
     /// Message that gives a guest its resume secret. Send it after the snapshot.
@@ -59,11 +82,13 @@ impl HostSession {
 
     /// A guest that lost its connection comes back with the secret it was given: it gets its
     /// old peer index and id range again. The caller then sends a fresh [`Self::snapshot`] and
-    /// [`Self::resume_msg`]. `None` if the secret is unknown. The old connection may still look
+    /// [`Self::resume_msg`]. The guest keeps the role it had; `role` is for one that never had
+    /// one. `None` if the secret is unknown. The old connection may still look
     /// alive to the transport; the caller drops it.
     pub fn resume(&mut self, token: &str, role: Role) -> Option<PeerId> {
         let peer = self.tokens.iter().find(|(_, t)| same(t, token)).map(|(p, _)| *p)?;
         self.awaiting.retain(|(p, _)| *p != peer);
+        let role = self.departed.remove(&peer).or_else(|| self.peers.get(&peer).copied()).unwrap_or(role);
         self.peers.insert(peer, role);
         Some(peer)
     }
