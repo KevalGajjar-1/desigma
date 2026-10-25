@@ -117,7 +117,7 @@ The top bar gets an avatar row; clicking an avatar follows that person.
 iroh runs on Windows, macOS and Linux; the protocol is the same everywhere. The
 `desigma://` link handler is registered per OS: Inno Setup registry keys on Windows,
 `CFBundleURLTypes` in `Info.plist` on macOS, `x-scheme-handler` in the `.desktop` file on Linux.
-Pasting the link always works as a fallback.
+Pasting the link always works as a fallback. See "Links and files reach the running editor" below.
 
 Every peer must speak the same protocol version. A mismatch is refused with "update desigma".
 
@@ -179,7 +179,17 @@ the desigma-net adapters, `presence.rs`, `ui.rs`, `draw.rs`, `tests.rs`).
 * **Link scheme.** `desigma desigma://join/...` opens Join prefilled. Registered by the Windows installer
   (`scripts/windows/desigma.iss`), `CFBundleURLTypes` (macOS) and `x-scheme-handler/desigma` (Linux).
 
-Known gaps: macOS delivers URLs as Apple events, which winit does not surface, so there pasting the link is
-the way in; an already running instance is not reused for links (a new window opens); the board has a floating
+* **Links and files reach the running editor.** On macOS, links and Finder opens arrive as Apple events,
+  which winit does not surface; `src/macos.rs` registers an `NSAppleEventManager` handler (`GURL` and
+  `odoc`) at startup and again once the app has launched. On Windows and Linux a second
+  `desigma desigma://join/...` (or `desigma FILE`) process connects to the running editor and exits without
+  a window (`src/instance.rs`): a `127.0.0.1` listener on an ephemeral port, with the port and a random token
+  in `instance.json` (per-user runtime or local data dir, 0600 on unix). It accepts only
+  `<token> open-link desigma://join/...`, `open-file <absolute path>` and `ping`, in lines of at most
+  4 KiB. A stale file (connection refused) just means a normal start. Both paths feed one inbox that the UI
+  drains each frame: Join opens prefilled, a file opens like a dropped one, and the window is
+  un-minimized and focused (or asks for attention when the OS refuses focus).
+
+Known gaps: the macOS handlers are compiled in CI but untested by hand; the board has a floating
 Share strip instead of the inspector row; fonts and reconnect are phase 5.
 

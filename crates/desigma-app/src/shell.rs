@@ -30,6 +30,8 @@ pub struct Shell {
     app: App,
     shot: Option<Shot>,
     title: String,
+    /// Listens for links and files handed over by a second launch; `None` when another editor owns it.
+    _instance: Option<crate::instance::Instance>,
 }
 
 impl Shell {
@@ -54,6 +56,16 @@ impl Shell {
         let saved = library.as_deref().and_then(|l| crate::comments::settings::load_flag(l, "use_gpu"));
         shell.app.canvas.gpu.pref = if screenshot { gpu_flag } else { gpu_flag || saved.unwrap_or(true) };
         shell.app.updater.start(library.as_deref(), launch);
+        // Links and files from a second launch (and, on macOS, from Finder and the browser)
+        crate::instance::set_context(&cc.egui_ctx);
+        #[cfg(target_os = "macos")]
+        crate::macos::register();
+        if launch {
+            match crate::instance::Instance::start(&crate::instance::default_dir(), crate::instance::push) {
+                Ok(i) => shell._instance = i,
+                Err(e) => eprintln!("desigma: cannot listen for links: {e}"),
+            }
+        }
         // --bridge turns the agent bridge on for this launch only; the Preferences toggle saves it
         let saved_bridge = library.as_deref().and_then(|l| crate::comments::settings::load_flag(l, crate::bridge::FLAG)) == Some(true);
         if launch && (bridge_flag || saved_bridge) {
@@ -241,7 +253,7 @@ impl Shell {
             frames: 0,
             requested: false,
         });
-        Self { app, shot, title: String::new() }
+        Self { app, shot, title: String::new(), _instance: None }
     }
 
     fn drive_screenshot(&mut self, ctx: &Context) {
@@ -571,6 +583,7 @@ impl eframe::App for Shell {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.app.now = ctx.input(|i| i.time);
         self.app.poll_bridge();
+        self.handle_opens(ctx);
         crate::collab::pump(&mut self.app, ctx);
     }
 
@@ -584,6 +597,27 @@ impl eframe::App for Shell {
 }
 
 impl Shell {
+    /// Links and files handed over by a second launch or the OS (see `instance.rs`): a link
+    /// opens Join session prefilled, a file opens like the CLI path argument, and the window
+    /// comes to the front.
+    fn handle_opens(&mut self, ctx: &Context) {
+        let opens = crate::instance::take();
+        if opens.is_empty() {
+            return;
+        }
+        for open in opens {
+            match open {
+                crate::instance::Open::Link(link) => self.app.open_join(Some(link)),
+                crate::instance::Open::File(path) => self.app.open_path(path),
+            }
+        }
+        ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+        ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+        // when the OS refuses to steal focus this flashes the taskbar / bounces the Dock instead
+        ctx.send_viewport_cmd(egui::ViewportCommand::RequestUserAttention(egui::UserAttentionType::Informational));
+        ctx.request_repaint();
+    }
+
     /// Files dropped on the window: `.svg` files are placed at the drop point,
     /// anything else (the first file) is opened as a document.
     fn handle_drops(&mut self, ctx: &Context) {
