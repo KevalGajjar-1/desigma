@@ -241,9 +241,12 @@ impl Drop for NetGuest {
 /// Clear, plain-language text for every way joining can fail.
 pub fn join_error_text(e: &JoinError) -> String {
     match e {
-        JoinError::VersionMismatch { host, guest } => {
-            format!("The host runs a different version of the sharing protocol (host {host}, yours {guest}). Update desigma on the older side and try again.")
-        }
+        JoinError::VersionMismatch { host, guest } if host < guest => format!(
+            "The host runs an older desigma that cannot share with yours (sharing protocol {host}, yours {guest}). Ask them to update to the latest release and share the file again."
+        ),
+        JoinError::VersionMismatch { host, guest } => format!(
+            "The host runs a newer desigma than yours (sharing protocol {host}, yours {guest}). Update desigma to the latest release and try again."
+        ),
         JoinError::WrongPassword => "Wrong password. Check it with the person who shared the link.".into(),
         JoinError::Locked { retry_secs } => format!("Too many wrong passwords. Try again in {retry_secs} seconds."),
         JoinError::Denied => "The host declined your request to join.".into(),

@@ -462,6 +462,9 @@ fn join_error_texts_are_clear() {
         let t = link::join_error_text(&e);
         assert!(t.len() > 20 && !t.contains("Error"), "{t}");
     }
+    // The older side is the one told to update.
+    assert!(link::join_error_text(&VersionMismatch { host: 1, guest: 2 }).contains("Ask them to update"));
+    assert!(link::join_error_text(&VersionMismatch { host: 2, guest: 1 }).contains("Update desigma"));
 }
 
 #[test]
