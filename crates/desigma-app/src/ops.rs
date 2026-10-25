@@ -847,6 +847,10 @@ impl App {
                 }
             }
         }
+        let again = p.clone();
+        if !self.leave_ok(move |app| app.open_path(again)) {
+            return;
+        }
         match io::load_path(&p) {
             Ok(doc) => {
                 let name = doc.name.clone();
@@ -883,6 +887,9 @@ impl App {
     }
 
     pub fn new_document(&mut self) {
+        if !self.leave_ok(|app| app.new_document()) {
+            return;
+        }
         let mut d = Document::new("Untitled");
         d.add_page("Page 1");
         self.replace_document(d, None);
@@ -890,6 +897,9 @@ impl App {
 
     /// A new, empty board (whiteboard) document.
     pub fn new_board_document(&mut self) {
+        if !self.leave_ok(|app| app.new_board_document()) {
+            return;
+        }
         self.replace_document(crate::board::create::new_document("Untitled"), None);
     }
 

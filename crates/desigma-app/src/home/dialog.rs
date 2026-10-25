@@ -28,6 +28,8 @@ pub enum Intent {
     OpenDevLink(String),
     Shortcuts,
     About,
+    /// Leaving the open file while sharing it or joined to it.
+    LeaveSession,
 }
 
 /// One row of the project picker: a project or one of its folders.
@@ -366,7 +368,7 @@ pub fn show(app: &mut App, ctx: &Context) {
 
 /// Runs the confirmed dialog.
 pub fn finish(app: &mut App, d: Dialog) {
-    if crate::history::finish_dialog(app, &d) || crate::dev::finish_dialog(app, &d) {
+    if crate::history::finish_dialog(app, &d) || crate::dev::finish_dialog(app, &d) || crate::collab::finish_dialog(app, &d) {
         return;
     }
     let Some(lib) = app.lib.clone() else { return };
@@ -421,7 +423,7 @@ pub fn finish(app: &mut App, d: Dialog) {
             }
             Ok(())
         }
-        Intent::Shortcuts | Intent::About | Intent::AuthorName | Intent::NameVersion(_) | Intent::OpenDevLink(_) => {
+        Intent::Shortcuts | Intent::About | Intent::LeaveSession | Intent::AuthorName | Intent::NameVersion(_) | Intent::OpenDevLink(_) => {
             dirty = false;
             Ok(())
         }

@@ -43,6 +43,17 @@ pub trait HostLink {
     fn send(&self, peer: u32, bytes: Vec<u8>);
     fn send_presence(&self, peer: u32, bytes: &[u8]);
     fn kick(&self, peer: u32);
+    /// The link to share right now (addresses can change while sharing).
+    fn link(&self) -> Option<String> {
+        None
+    }
+    /// The resume secret `peer` showed when it connected, if any.
+    fn join_token(&self, _peer: u32) -> Option<String> {
+        None
+    }
+    /// A guest holding this secret comes back without being asked about again.
+    fn allow_resume(&self, _token: &str) {}
+    fn revoke_resume(&self, _token: &str) {}
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -61,6 +72,10 @@ pub enum GuestEv {
     Presence(Vec<u8>),
     Closed(Closed),
 }
+
+/// Dials the host again for a guest whose connection dropped, showing the resume secret. Each
+/// call is one attempt.
+pub type Redial = Box<dyn Fn(Option<&str>) -> Result<Box<dyn GuestLink>, String>>;
 
 pub trait GuestLink {
     fn drain(&self) -> Vec<GuestEv>;
@@ -87,6 +102,11 @@ impl NetHost {
     }
     fn host(&self) -> &Host {
         self.0.as_ref().expect("host lives until dropped")
+    }
+    /// Cuts a guest's connection like a network failure would (tests).
+    #[cfg(test)]
+    pub fn sever(&self, peer: u32) {
+        self.host().sever(peer);
     }
 }
 
@@ -119,6 +139,18 @@ impl HostLink for NetHost {
     fn kick(&self, peer: u32) {
         self.host().kick(peer);
     }
+    fn link(&self) -> Option<String> {
+        self.host().ticket().map(|t| t.to_link())
+    }
+    fn join_token(&self, peer: u32) -> Option<String> {
+        self.host().join_token(peer)
+    }
+    fn allow_resume(&self, token: &str) {
+        self.host().allow_resume(token);
+    }
+    fn revoke_resume(&self, token: &str) {
+        self.host().revoke_resume(token);
+    }
 }
 
 impl Drop for NetHost {
@@ -135,7 +167,12 @@ pub struct NetGuest(Option<Guest>);
 
 impl NetGuest {
     pub fn join(ticket: &Ticket, name: &str, password: Option<&str>, wake: Box<dyn Fn() + Send + Sync>) -> Result<Self, String> {
-        let g = Guest::join(ticket, name, password, GuestOptions { network: network(), ..Default::default() }).map_err(|e| e.to_string())?;
+        Self::join_resume(ticket, name, password, wake, None)
+    }
+
+    /// [`Self::join`] showing the secret of an earlier visit.
+    pub fn join_resume(ticket: &Ticket, name: &str, password: Option<&str>, wake: Box<dyn Fn() + Send + Sync>, resume: Option<String>) -> Result<Self, String> {
+        let g = Guest::join_resume(ticket, name, password, GuestOptions { network: network(), ..Default::default() }, resume).map_err(|e| e.to_string())?;
         g.set_wake(wake);
         Ok(Self(Some(g)))
     }

@@ -60,6 +60,9 @@ impl App {
     }
 
     pub fn new_deck_document(&mut self) {
+        if !self.leave_ok(|app| app.new_deck_document()) {
+            return;
+        }
         self.replace_document(new_document("Untitled deck"), None);
         self.decks = DecksState::default();
         if let Some(id) = self.deck_slides().first().copied() {

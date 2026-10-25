@@ -10,20 +10,26 @@
 //! once things go quiet); send presence; ease the other people's cursors; move the view when
 //! following someone.
 
+pub mod assets;
 pub mod draw;
+mod exchange;
 pub mod link;
 pub mod presence;
+mod reconnect;
 #[cfg(test)]
 pub(crate) mod tests;
 pub mod ui;
 
 use crate::app::App;
+use crate::home::dialog::{Dialog, Intent};
+use assets::{FontIoBox, FontKey, ImageCache, ImageInfo};
 use desigma_collab::{rebase_history, ClientMsg, Dest, GuestSession, HostSession, Out, Role, ServerMsg};
 use desigma_doc::NodeId;
-use link::{Closed, GuestEv, GuestLink, HostEv, HostLink};
+use link::{Closed, GuestEv, GuestLink, HostEv, HostLink, Redial};
 use presence::{Presence, Remote};
+use reconnect::Reconnect;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap, VecDeque};
 
 /// Host to guest, over the reliable lane.
 #[derive(Serialize, Deserialize)]
@@ -31,13 +37,27 @@ pub enum ToGuest {
     Sync(ServerMsg),
     /// What the guest may do. Sent before the snapshot and whenever the host changes it.
     Role(Role),
+    /// The digest of every embedded image, sent before the snapshot, so a guest can read the
+    /// ones it has cached instead of asking for them.
+    Images(Vec<ImageInfo>),
+    /// A font the guest asked for. Empty `bytes`: the host cannot share it.
+    Font {
+        key: FontKey,
+        #[serde(with = "desigma_collab::b64", default)]
+        bytes: Vec<u8>,
+    },
 }
 
 /// Guest to host, over the reliable lane.
 #[derive(Serialize, Deserialize)]
 pub enum ToHost {
     Sync(ClientMsg),
+    /// Fonts the guest lacks and the document uses.
+    Fonts(Vec<FontKey>),
 }
+
+/// What to do once the user agrees to leave the session.
+type AfterLeave = Box<dyn FnOnce(&mut App)>;
 
 /// Local edits are numbered at most this often (20 Hz).
 const FLUSH_GAP: f64 = 0.05;
@@ -72,15 +92,30 @@ pub struct GuestState {
     pub link: Box<dyn GuestLink>,
     pub sess: GuestSession,
     pub role: Role,
-    /// Set when the connection ended; the document stays as a local copy.
+    /// Set when the connection ended for good; the document stays as a local copy.
     pub ended: Option<Closed>,
     pub banner_hidden: bool,
+    /// Dials the host again after a lost connection.
+    pub redial: Option<Redial>,
+    /// Set while the connection is down and we are dialling again; the document stays editable.
+    pub reconnect: Option<Reconnect>,
+    /// The host's digest of each image key.
+    pub digests: HashMap<String, String>,
+    pub fonts: exchange::FontAsk,
+}
+
+impl GuestState {
+    /// Connected to the host right now.
+    pub fn live(&self) -> bool {
+        self.ended.is_none() && self.reconnect.is_none()
+    }
 }
 
 /// Dialled the host, snapshot not here yet.
 pub struct Joining {
     pub link: Box<dyn GuestLink>,
     pub role: Role,
+    pub redial: Option<Redial>,
 }
 
 #[derive(Default)]
@@ -108,6 +143,12 @@ pub struct CollabState {
     last_now: f64,
     /// A `desigma://join/...` link from the command line, to open the Join dialog on.
     pub pending_link: Option<String>,
+    /// Image bytes received before, by content digest.
+    pub images: ImageCache,
+    /// Where fonts are read from (host) and loaded to (guest).
+    pub font_io: FontIoBox,
+    /// What to do once the user agrees to leave the session ("Stop sharing?").
+    leave: Option<AfterLeave>,
 }
 
 impl CollabState {
@@ -135,8 +176,38 @@ impl CollabState {
     }
     /// A live connection (not an ended guest copy).
     pub fn connected(&self) -> bool {
-        self.host.is_some() || self.guest.as_ref().is_some_and(|g| g.ended.is_none())
+        self.host.is_some() || self.guest.as_ref().is_some_and(|g| g.live())
     }
+    /// The question to ask before leaving the file, if there is a live session to lose.
+    fn leave_dialog(&self) -> Option<Dialog> {
+        let (title, body, ok) = if let Some(h) = &self.host {
+            let body = match h.peers.len() {
+                0 => "Nobody is in the file now. The link stops working.".to_string(),
+                1 => "1 person will be disconnected.".to_string(),
+                n => format!("{n} people will be disconnected."),
+            };
+            ("Stop sharing?", body, "Stop sharing")
+        } else if self.guest.as_ref().is_some_and(|g| g.ended.is_none()) {
+            ("Leave the session?", "You will be disconnected. Save a copy first if you want to keep this file.".to_string(), "Leave")
+        } else {
+            return None;
+        };
+        let mut d = Dialog::confirm(Intent::LeaveSession, title, &[&body], ok);
+        d.danger = self.host.is_some();
+        Some(d)
+    }
+}
+
+/// Runs the confirmed "Leave the session?" dialog.
+pub fn finish_dialog(app: &mut App, d: &Dialog) -> bool {
+    if d.intent != Intent::LeaveSession {
+        return false;
+    }
+    app.end_collab();
+    if let Some(then) = app.collab.leave.take() {
+        then(app);
+    }
+    true
 }
 
 /// What the window knows that the session needs this frame.
@@ -206,18 +277,38 @@ impl App {
         if ticket.password_required && password.is_empty() {
             return Err("This session needs a password. Ask the person who shared it.".into());
         }
-        let c = ctx.clone();
-        let wake: Box<dyn Fn() + Send + Sync> = Box::new(move || c.request_repaint());
+        let wake = |c: egui::Context| -> Box<dyn Fn() + Send + Sync> { Box::new(move || c.request_repaint()) };
         let pw = (!password.is_empty()).then_some(password);
-        let g = link::NetGuest::join(&ticket, name, pw, wake).map_err(|e| format!("Cannot start joining: {e}"))?;
-        self.join_with(Box::new(g));
+        let g = link::NetGuest::join(&ticket, name, pw, wake(ctx.clone())).map_err(|e| format!("Cannot start joining: {e}"))?;
+        let (ctx, name, password) = (ctx.clone(), name.to_string(), password.to_string());
+        let redial: Redial = Box::new(move |token| {
+            let pw = (!password.is_empty()).then_some(password.as_str());
+            link::NetGuest::join_resume(&ticket, &name, pw, wake(ctx.clone()), token.map(str::to_string)).map(|g| Box::new(g) as Box<dyn GuestLink>)
+        });
+        self.join_with_redial(Box::new(g), Some(redial));
         Ok(())
     }
 
     /// [`Self::join_session`] over any transport.
+    #[cfg(test)]
     pub fn join_with(&mut self, link: Box<dyn GuestLink>) {
+        self.join_with_redial(link, None);
+    }
+
+    /// [`Self::join_with`] that can dial again when the connection drops.
+    pub fn join_with_redial(&mut self, link: Box<dyn GuestLink>, redial: Option<Redial>) {
         self.end_collab();
-        self.collab.joining = Some(Joining { link, role: Role::Editor });
+        self.collab.joining = Some(Joining { link, role: Role::Editor, redial });
+    }
+
+    /// Whether it is fine to leave the open file now. While sharing or joined it asks first
+    /// ("Stop sharing?" / "Leave the session?") and returns `false`; `then` runs once the user
+    /// agrees, with the session already ended. Use it before anything that replaces the document.
+    pub fn leave_ok(&mut self, then: impl FnOnce(&mut App) + 'static) -> bool {
+        let Some(dialog) = self.collab.leave_dialog() else { return true };
+        self.collab.leave = Some(Box::new(then));
+        self.dialog = Some(dialog);
+        false
     }
 
     /// Aborts a join that is still connecting.
@@ -238,7 +329,10 @@ impl App {
         let Some(h) = self.collab.host.as_mut() else { return };
         if let Some(p) = h.peers.remove(&peer) {
             h.link.kick(p.net);
-            h.sess.remove_peer(peer);
+            if let Some(t) = h.sess.token(peer) {
+                h.link.revoke_resume(t);
+            }
+            h.sess.forget_peer(peer);
             self.collab.remotes.remove(&peer);
             if self.collab.following == Some(peer) {
                 self.collab.following = None;
@@ -379,7 +473,7 @@ fn send_presence(app: &mut App, bytes: &[u8]) {
         for p in h.peers.values() {
             h.link.send_presence(p.net, bytes);
         }
-    } else if let Some(g) = app.collab.guest.as_ref().filter(|g| g.ended.is_none()) {
+    } else if let Some(g) = app.collab.guest.as_ref().filter(|g| g.live()) {
         g.link.send_presence(bytes);
     }
 }
@@ -419,16 +513,35 @@ fn host_io(app: &mut App, now: f64, wake: &mut f64) {
                 // Our own latest edits go to the guests already in; the newcomer gets them in its snapshot.
                 let outs = h.sess.local_changes(&app.doc);
                 deliver(app, &h, outs);
-                let cp = h.sess.add_peer(h.role);
-                h.link.send(peer, encode(&ToGuest::Role(h.role)));
+                // A guest whose connection dropped comes back as the same person, same id range.
+                let resumed = h.link.join_token(peer).and_then(|t| h.sess.resume(&t, h.role));
+                let cp = resumed.unwrap_or_else(|| h.sess.add_peer(h.role));
+                let role = h.sess.role(cp).unwrap_or(h.role);
+                if resumed.is_none() {
+                    if let Some(t) = h.sess.token(cp) {
+                        h.link.allow_resume(t);
+                    }
+                }
+                // the old connection of a resumed guest may not have been noticed as dead yet
+                if let Some(old) = h.peers.remove(&cp) {
+                    h.link.kick(old.net);
+                }
+                h.link.send(peer, encode(&ToGuest::Role(role)));
+                let images = exchange::image_index(&app.doc);
+                if !images.is_empty() {
+                    h.link.send(peer, encode(&ToGuest::Images(images)));
+                }
                 h.link.send(peer, encode(&ToGuest::Sync(h.sess.snapshot(cp))));
-                h.peers.insert(cp, Peer { net: peer, name: name.clone(), role: h.role });
+                if let Some(m) = h.sess.resume_msg(cp) {
+                    h.link.send(peer, encode(&ToGuest::Sync(m)));
+                }
+                h.peers.insert(cp, Peer { net: peer, name: name.clone(), role });
                 // the newcomer sees the guests already here without waiting for their next update
                 for r in app.collab.remotes.values() {
                     h.link.send_presence(peer, &r.p.encode());
                 }
                 app.collab.pres.reset();
-                app.show_toast(format!("{name} joined"), false);
+                app.show_toast(if resumed.is_some() { format!("{name} reconnected") } else { format!("{name} joined") }, false);
             }
             HostEv::Left { peer } => {
                 if let Some(cp) = h.peers.iter().find(|(_, p)| p.net == peer).map(|(c, _)| *c) {
@@ -447,11 +560,16 @@ fn host_io(app: &mut App, now: f64, wake: &mut f64) {
             }
             HostEv::Msg { peer, bytes } => {
                 let Some(cp) = h.peers.iter().find(|(_, p)| p.net == peer).map(|(c, _)| *c) else { continue };
-                let Ok(ToHost::Sync(msg)) = serde_json::from_slice(&bytes) else { continue };
-                let outs = h.sess.receive(&mut app.doc, cp, msg);
-                deliver(app, &h, outs);
-                app.remote_changed();
-                force = true;
+                match serde_json::from_slice::<ToHost>(&bytes) {
+                    Ok(ToHost::Sync(msg)) => {
+                        let outs = h.sess.receive(&mut app.doc, cp, msg);
+                        deliver(app, &h, outs);
+                        app.remote_changed();
+                        force = true;
+                    }
+                    Ok(ToHost::Fonts(keys)) => exchange::answer_fonts(app, &h, cp, keys),
+                    Err(_) => {}
+                }
             }
             HostEv::Presence { peer, bytes } => {
                 let Some(cp) = h.peers.iter().find(|(_, p)| p.net == peer).map(|(c, _)| *c) else { continue };
@@ -466,6 +584,12 @@ fn host_io(app: &mut App, now: f64, wake: &mut f64) {
                 }
                 presence::apply(&mut app.collab.remotes, p, now);
             }
+        }
+    }
+    // the address can change while sharing; the Share popover shows the current one
+    if app.collab.share.open {
+        if let Some(link) = h.link.link() {
+            h.url = Some(link);
         }
     }
     if let Some(e) = failed {
@@ -507,52 +631,31 @@ fn deliver(app: &mut App, h: &HostState, outs: Vec<Out>) {
 }
 
 fn guest_io(app: &mut App, now: f64, wake: &mut f64) {
-    // Connecting: wait for the verdict and the snapshot.
-    if let Some(j) = app.collab.joining.as_mut() {
-        let mut snapshot = None;
-        let mut failed = None;
-        let mut early = vec![];
-        for ev in j.link.drain() {
-            match ev {
-                GuestEv::Joined => {}
-                // arrives with the snapshot; shown once the file is open
-                GuestEv::Presence(b) => early.push(b),
-                GuestEv::Failed(e) => failed = Some(link::join_error_text(&e)),
-                GuestEv::Closed(c) => failed = Some(format!("The connection closed before the file arrived ({c:?}).")),
-                GuestEv::Msg(bytes) => match serde_json::from_slice::<ToGuest>(&bytes) {
-                    Ok(ToGuest::Role(r)) => j.role = r,
-                    Ok(ToGuest::Sync(s @ ServerMsg::Snapshot { .. })) => snapshot = Some(s),
-                    _ => {}
-                },
-            }
-        }
-        if let Some(e) = failed {
-            app.collab.joining = None;
-            if let Some(j) = app.collab.join.as_mut() {
-                j.error = Some(e);
-                j.connecting = false;
-            }
-        } else if let Some(s) = snapshot {
-            if let Some(j) = app.collab.joining.take() {
-                finish_join(app, j, s);
-                let me = app.collab.self_peer();
-                for p in early.iter().filter_map(|b| Presence::decode(b)).filter(|p| Some(p.peer) != me) {
-                    presence::apply(&mut app.collab.remotes, p, now);
-                }
-            }
-        }
+    if app.collab.joining.is_some() {
+        joining_io(app, now);
         return;
     }
     let Some(mut g) = app.collab.guest.take() else { return };
+    if g.reconnect.is_some() {
+        reconnect::io(app, &mut g, now, wake);
+        app.collab.guest = Some(g);
+        return;
+    }
     let mut force = false;
     let mut changed = false;
     for ev in g.link.drain() {
         match ev {
             GuestEv::Joined | GuestEv::Failed(_) => {}
-            GuestEv::Closed(c) if g.ended.is_none() => {
-                g.ended = Some(c);
+            GuestEv::Closed(c) if g.ended.is_none() && g.reconnect.is_none() => {
                 app.collab.remotes.clear();
                 app.collab.following = None;
+                if reconnect::wanted(&g, &c) {
+                    // keep the document, dial again
+                    g.reconnect = Some(Reconnect::new(now));
+                    g.banner_hidden = false;
+                } else {
+                    g.ended = Some(c);
+                }
             }
             GuestEv::Closed(_) => {}
             GuestEv::Presence(bytes) => {
@@ -561,23 +664,12 @@ fn guest_io(app: &mut App, now: f64, wake: &mut f64) {
                 }
             }
             GuestEv::Msg(bytes) => {
-                if g.ended.is_some() {
+                if !g.live() {
                     continue;
                 }
-                match serde_json::from_slice::<ToGuest>(&bytes) {
-                    Ok(ToGuest::Role(r)) => g.role = r,
-                    Ok(ToGuest::Sync(msg)) => {
-                        let r = g.sess.receive(&mut app.doc, msg);
-                        for m in r.out {
-                            g.link.send(encode(&ToHost::Sync(m)));
-                        }
-                        for op in &r.applied {
-                            rebase_history(&mut app.hist, op);
-                        }
-                        changed |= r.changed;
-                        force = true;
-                    }
-                    Err(_) => {}
+                if let Ok(msg) = serde_json::from_slice::<ToGuest>(&bytes) {
+                    changed |= guest_msg(app, &mut g, msg);
+                    force = true;
                 }
             }
         }
@@ -585,7 +677,7 @@ fn guest_io(app: &mut App, now: f64, wake: &mut f64) {
     if changed {
         app.remote_changed();
     }
-    if g.ended.is_none() && app.history.viewing.is_none() && flush_due(app, now, force, wake) {
+    if g.live() && app.history.viewing.is_none() && flush_due(app, now, force, wake) {
         if let Some(m) = g.sess.local_changes(&app.doc) {
             g.link.send(encode(&ToHost::Sync(m)));
         }
@@ -593,8 +685,82 @@ fn guest_io(app: &mut App, now: f64, wake: &mut f64) {
     app.collab.guest = Some(g);
 }
 
+/// Handles one message of the host for a joined guest. Returns whether the document changed.
+fn guest_msg(app: &mut App, g: &mut GuestState, msg: ToGuest) -> bool {
+    match msg {
+        ToGuest::Role(r) => {
+            g.role = r;
+            false
+        }
+        ToGuest::Images(list) => {
+            g.digests.extend(list.into_iter().map(|i| (i.key, i.digest)));
+            false
+        }
+        ToGuest::Font { key, bytes } => exchange::font_arrived(app, g, key, bytes),
+        ToGuest::Sync(msg) => feed(app, g, VecDeque::from([msg])),
+    }
+}
+
+/// Gives sync messages to the guest session, answers what it asks for (images already in the
+/// cache are read from there, not requested), and keeps the undo history off other people's edits.
+fn feed(app: &mut App, g: &mut GuestState, mut queue: VecDeque<ServerMsg>) -> bool {
+    let mut changed = false;
+    while let Some(msg) = queue.pop_front() {
+        let Some(msg) = exchange::vet(app, g, msg) else { continue };
+        let r = g.sess.receive(&mut app.doc, msg);
+        exchange::send_out(app, g, r.out, &mut queue);
+        for op in &r.applied {
+            rebase_history(&mut app.hist, op);
+        }
+        changed |= r.changed;
+    }
+    changed
+}
+
+/// Connecting: wait for the verdict and the snapshot.
+fn joining_io(app: &mut App, now: f64) {
+    let Some(j) = app.collab.joining.as_mut() else { return };
+    let mut snapshot = None;
+    let mut failed = None;
+    let mut early = vec![];
+    let mut digests = vec![];
+    let mut later = vec![];
+    for ev in j.link.drain() {
+        match ev {
+            GuestEv::Joined => {}
+            // arrives with the snapshot; shown once the file is open
+            GuestEv::Presence(b) => early.push(b),
+            GuestEv::Failed(e) => failed = Some(link::join_error_text(&e)),
+            GuestEv::Closed(c) => failed = Some(format!("The connection closed before the file arrived ({c:?}).")),
+            GuestEv::Msg(bytes) => match serde_json::from_slice::<ToGuest>(&bytes) {
+                Ok(ToGuest::Role(r)) => j.role = r,
+                Ok(ToGuest::Images(list)) if snapshot.is_none() => digests.extend(list),
+                Ok(ToGuest::Sync(s @ ServerMsg::Snapshot { .. })) if snapshot.is_none() => snapshot = Some(s),
+                // sent right behind the snapshot: not to be lost
+                Ok(m) if snapshot.is_some() => later.push(m),
+                _ => {}
+            },
+        }
+    }
+    if let Some(e) = failed {
+        app.collab.joining = None;
+        if let Some(j) = app.collab.join.as_mut() {
+            j.error = Some(e);
+            j.connecting = false;
+        }
+    } else if let Some(s) = snapshot {
+        if let Some(j) = app.collab.joining.take() {
+            finish_join(app, j, s, digests, later);
+            let me = app.collab.self_peer();
+            for p in early.iter().filter_map(|b| Presence::decode(b)).filter(|p| Some(p.peer) != me) {
+                presence::apply(&mut app.collab.remotes, p, now);
+            }
+        }
+    }
+}
+
 /// The snapshot arrived: the shared file replaces whatever the editor had open.
-fn finish_join(app: &mut App, j: Joining, snapshot: ServerMsg) {
+fn finish_join(app: &mut App, j: Joining, snapshot: ServerMsg, digests: Vec<ImageInfo>, later: Vec<ToGuest>) {
     let Some((sess, doc, requests)) = GuestSession::join(snapshot) else {
         j.link.leave();
         if let Some(u) = app.collab.join.as_mut() {
@@ -603,14 +769,32 @@ fn finish_join(app: &mut App, j: Joining, snapshot: ServerMsg) {
         }
         return;
     };
-    for r in requests {
-        j.link.send(encode(&ToHost::Sync(r)));
-    }
     app.replace_document(doc, None);
     app.home = None;
     app.collab.pacing = Pacing { rev: app.canvas.tiles.rev(), ..Default::default() };
     app.collab.pres.reset();
-    app.collab.guest = Some(GuestState { link: j.link, sess, role: j.role, ended: None, banner_hidden: false });
+    let digests = digests.into_iter().map(|i| (i.key, i.digest)).collect();
+    let mut g = GuestState {
+        link: j.link,
+        sess,
+        role: j.role,
+        ended: None,
+        banner_hidden: false,
+        redial: j.redial,
+        reconnect: None,
+        digests,
+        fonts: Default::default(),
+    };
+    let mut queue = VecDeque::new();
+    exchange::send_out(app, &mut g, requests, &mut queue);
+    let mut changed = feed(app, &mut g, queue);
+    for m in later {
+        changed |= guest_msg(app, &mut g, m);
+    }
+    if changed {
+        app.remote_changed();
+    }
+    app.collab.guest = Some(g);
     app.collab.join = None;
     app.show_toast("Joined the session", false);
 }

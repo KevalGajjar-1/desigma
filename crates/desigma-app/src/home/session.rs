@@ -75,6 +75,9 @@ impl App {
 
     /// Shows the home screen ("Back to files"), saving pending edits first.
     pub fn go_home(&mut self) {
+        if !self.leave_ok(|app| app.go_home()) {
+            return;
+        }
         let Some(lib) = self.lib.clone() else {
             self.show_toast("The projects library is unavailable", true);
             return;
@@ -94,6 +97,10 @@ impl App {
 
     /// Opens a library file in the editor.
     pub fn open_library_file(&mut self, id: &str) {
+        let again = id.to_string();
+        if !self.leave_ok(move |app| app.open_library_file(&again)) {
+            return;
+        }
         let Some(lib) = self.lib.clone() else { return };
         let loaded = lib.file(id).and_then(|e| lib.load_file(id).map(|d| (e, d)));
         let (entry, mut doc) = match loaded {
@@ -138,6 +145,10 @@ impl App {
     }
 
     fn new_library_file_of(&mut self, target: Option<(String, Option<String>)>, kind: DocumentKind) {
+        let again = (target.clone(), kind);
+        if !self.leave_ok(move |app| app.new_library_file_of(again.0, again.1)) {
+            return;
+        }
         let Some(lib) = self.lib.clone() else {
             if kind == DocumentKind::Board {
                 self.new_board_document();

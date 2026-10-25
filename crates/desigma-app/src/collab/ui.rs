@@ -34,6 +34,10 @@ const POP_W: f32 = 320.0;
 impl App {
     /// File → Join session…, the home screen button and `desigma://` links.
     pub fn open_join(&mut self, link: Option<String>) {
+        let again = link.clone();
+        if !self.leave_ok(move |app| app.open_join(again)) {
+            return;
+        }
         let name = self.author();
         let link = link.or_else(|| self.collab.pending_link.take()).unwrap_or_default();
         self.collab.join = Some(JoinUi { link, name, password: String::new(), error: None, connecting: false, fresh: true });
@@ -588,6 +592,7 @@ pub fn banner(app: &mut App, ui: &mut Ui, canvas: Rect) {
         Some(super::link::Closed::Kicked) => ("The host removed you from the session \u{2014} you can save a copy".to_string(), true),
         Some(super::link::Closed::Lost(_)) => ("Connection lost \u{2014} you can save a copy".to_string(), true),
         Some(_) => ("Session ended \u{2014} you can save a copy".to_string(), true),
+        None if g.reconnect.is_some() => ("Reconnecting\u{2026} your changes are kept and sync when you are back".to_string(), false),
         None if g.role == Role::Viewer => ("You are viewing this file. The host has turned editing off for you".to_string(), false),
         None => return,
     };
