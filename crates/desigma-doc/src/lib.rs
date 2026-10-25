@@ -159,6 +159,23 @@ impl Document {
         self.id_peer.map(|p| p as u32)
     }
 
+    /// An unused key for a new style named `{base} {n}`. Inside a collaboration session the key
+    /// carries the peer (`{base} {n} (p{peer})`), so two people creating a style at once never
+    /// pick the same key; without one it is the plain `{base} {n}`. Returns the key and `n`.
+    pub fn fresh_style_key(&self, base: &str) -> (String, u32) {
+        let mut n = 1;
+        loop {
+            let key = match self.id_peer {
+                Some(peer) => format!("{base} {n} (p{peer})"),
+                None => format!("{base} {n}"),
+            };
+            if !self.styles.contains_key(&key) && !self.style_meta.contains_key(&key) {
+                return (key, n);
+            }
+            n += 1;
+        }
+    }
+
     fn alloc_peer_id(&mut self, peer: u64) -> NodeId {
         let base = peer << PEER_ID_BITS;
         let top = self.nodes.range(NodeId(base)..NodeId(base + (1 << PEER_ID_BITS))).next_back().map_or(0, |(id, _)| id.0 - base);

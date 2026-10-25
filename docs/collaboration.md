@@ -76,7 +76,7 @@ The diff only compares nodes that changed since the last diff; unchanged ones ar
   | `styles` (with `style_meta`) | by style id; the style and its metadata are one entry, so a concurrent edit never mixes the two |
   | `variables`, `variable_collections` | by id. A collection's `variables` list is merged: variables two people added to the same collection at once are both listed |
   | `comments` | `[thread]` is the thread (anchor, resolved) without its messages, `[thread, message]` one message. Two replies to one thread both survive, and resolving while someone replies keeps both. A reply to a thread deleted at the same moment is dropped (delete wins). Threads are ordered by the time of their first message, messages by `created`, ties by id, on every peer |
-  | `board_session` | `[timer]` (the whole timer is one value), `[vote]` (votes per person and `ended`), `[vote, node]` (the count on one node). Votes on different nodes merge; two votes on the same node at once are one count, last writer wins, because the vote model has no voter dimension |
+  | `board_session` | `[timer]` (the whole timer is one value), `[vote]` (votes per person and `ended`), `[vote, node, voter]` (one person's count on one node; the node's tally is the sum). Every person writes only their own voter entries, so votes on the same node at once all count |
   | `flows` | by start frame (a frame starts at most one flow); kept in start-node order |
   | `guides`, `timelines` | by page; a page's guide list is one value |
 
@@ -95,6 +95,11 @@ The diff only compares nodes that changed since the last diff; unchanged ones ar
 `NodeId` is a counter, so two peers would hand out the same ids. On join, each peer gets an index
 (host 0, guests 1, 2, …) and allocates ids in its own range `(peer << 40) | n`. Existing ids keep
 working.
+
+Ids of the other keyed collections are made so that two people creating one at the same time cannot
+pick the same: variable and collection ids are `prefix:d{peer}-{n}` (plain `prefix:d{n}` outside a
+session), style keys carry `(p{peer})`, comment threads and messages are random UUIDs, flows are keyed
+by their start node.
 
 ### Undo
 
@@ -342,10 +347,18 @@ Code: `crates/desigma-collab/src/entries.rs`. Before protocol 3 every document-l
 * **Order.** Comment threads and flows are kept sorted after every entry write (threads by first message time
   then id, messages by `created` then id, flows by start node), so all peers end up with the same order. Local
   edits that append out of that order are put in order by the next entry write from anyone.
-* **Known limits.** Two votes on the same node at once are one vote (the vote model counts per node, with no
-  voter). Variable and collection ids made by the editor from a counter (`<prefix>:d1`) can collide between two
-  people; a collision is the same entry, so last writer wins. Removing the first message of a thread changes
-  where the thread sorts.
+* **Votes per person.** A vote is the entry `[vote, node, voter]` -> that voter's count, and a node's tally is the
+  sum over its voters, so two people voting on one sticky at once both count. The voter id is a random id kept per
+  install in `settings.json` (`voter_id`), not the peer index, so it survives restarts and reconnects and works
+  offline. Each person only writes their own voter entries, and "N votes each" counts only that person's votes.
+  Files saved before this kept a plain count per node; they load as the votes of the voter `legacy` (totals stay
+  the same) and save in the new shape (`{"node": {"voter": n}}`). The wire shape of the key changed without a
+  version bump, as protocol 3 had not shipped.
+* **Ids made at the same time.** New variable and collection ids are `prefix:d{peer}-{n}` when the document has an id
+  peer (`Document::id_peer()`, set by the session) and `prefix:d{n}` otherwise, so existing ids and files are
+  unchanged; style keys likewise (`Color style {n} (p{peer})`, `Document::fresh_style_key`). Comment thread and
+  message ids are random UUIDs and flows are keyed by start node, so those were already unique.
+* **Known limits.** Removing the first message of a thread changes where the thread sorts.
 * **Tests.** `sim.rs`: focused cases (concurrent comments, replies, resolve with reply, delete with reply, votes,
   styles, same-style edit, variables, flows/guides/timelines, undo of own style/comment/vote/variable, viewer,
   invalid entries) and `run_keyed_sim`, where every peer only adds distinct keys (also across outages) and every

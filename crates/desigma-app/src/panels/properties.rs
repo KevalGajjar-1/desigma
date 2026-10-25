@@ -1211,18 +1211,15 @@ fn sample_canvas(app: &App, pos: Pos2) -> Option<[u8; 3]> {
 /// Creates a colour style from the picker's paint and links it to the edited layers.
 fn create_style(app: &mut App, pk: &mut Picker) {
     let stroke = matches!(pk.target, PickTarget::Stroke(_));
-    let mut n = 1;
-    while app.doc.styles.contains_key(&format!("Color style {n}")) {
-        n += 1;
-    }
-    let key = format!("Color style {n}");
+    let (key, n) = app.doc.fresh_style_key("Color style");
+    let name = format!("Color style {n}");
     // Creating the style and linking it to the layers is one undo step (the picker's transaction).
     let mut styles = app.doc.styles.clone();
     let mut style_meta = app.doc.style_meta.clone();
     styles.insert(key.clone(), Style::Fill(vec![Paint { visible: true, ..pk.paint.clone() }]));
     style_meta.insert(
         key.clone(),
-        StyleMeta { name: key.clone(), key: None, description: String::new(), property: if stroke { StyleProperty::Stroke } else { StyleProperty::Fill } },
+        StyleMeta { name, key: None, description: String::new(), property: if stroke { StyleProperty::Stroke } else { StyleProperty::Fill } },
     );
     if let Err(e) = pk.tx.cmd(&mut app.doc, Command::SetStyles { styles, style_meta }) {
         app.show_toast(format!("Edit failed: {e}"), true);

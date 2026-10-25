@@ -12,7 +12,7 @@
 //! | `styles` (with `style_meta`) | `[id]` -> `{style, meta}` |
 //! | `variables`, `variable_collections` | `[id]` |
 //! | `comments` | `[thread]` -> the thread without its messages, `[thread, message]` -> the message |
-//! | `board_session` | `[timer]`, `[vote]` -> the vote settings, `[vote, node]` -> the count |
+//! | `board_session` | `[timer]`, `[vote]` -> the vote settings, `[vote, node, voter]` -> that voter's count on the node |
 //! | `flows` | `[start node]` |
 //! | `guides`, `timelines` | `[page]` |
 
@@ -86,8 +86,10 @@ pub fn entries(doc: &Document, field: &str) -> BTreeMap<Vec<String>, Value> {
             }
             if let Some(v) = &doc.board_session.vote {
                 m.insert(k("vote"), json!({ "votes_per_person": v.votes_per_person, "ended": v.ended }));
-                for (node, n) in v.votes.iter().filter(|(_, n)| **n > 0) {
-                    m.insert(vec!["vote".into(), node.0.to_string()], json!(n));
+                for (node, by) in &v.votes {
+                    for (voter, n) in by.iter().filter(|(_, n)| **n > 0) {
+                        m.insert(vec!["vote".into(), node.0.to_string(), voter.clone()], json!(n));
+                    }
                 }
             }
         }
@@ -286,7 +288,7 @@ pub(crate) fn set_entry(doc: &mut Document, field: &str, key: &[String], value: 
                 vote.ended = ended;
             }
         },
-        ("board_session", [k, node]) if k == "vote" => {
+        ("board_session", [k, node, voter]) if k == "vote" => {
             let node = node_key(field, node)?;
             let n = match value {
                 None => 0,
@@ -294,9 +296,14 @@ pub(crate) fn set_entry(doc: &mut Document, field: &str, key: &[String], value: 
             };
             let Some(vote) = doc.board_session.vote.as_mut() else { return if n == 0 { Ok(()) } else { orphan() } };
             if n == 0 {
-                vote.votes.remove(&node);
+                if let Some(by) = vote.votes.get_mut(&node) {
+                    by.remove(voter);
+                    if by.is_empty() {
+                        vote.votes.remove(&node);
+                    }
+                }
             } else {
-                vote.votes.insert(node, n);
+                vote.votes.entry(node).or_default().insert(voter.clone(), n);
             }
         }
         ("flows", [start]) => {
