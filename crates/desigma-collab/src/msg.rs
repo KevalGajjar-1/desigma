@@ -1,6 +1,6 @@
 //! Messages between host and guests. Plain serde types; a transport carries them as JSON.
 
-use crate::Op;
+use crate::{Entry, Op};
 use desigma_doc::{Document, Node, NodeId};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -58,14 +58,16 @@ pub enum ServerMsg {
     /// The host handled the guest's batch `client_seq`. `rejected` lists indices of its ops the
     /// host refused; a [`ServerMsg::Correction`] follows. `orders` is the host's child order of
     /// every parent the batch touched, which settles sibling order the guest got wrong while
-    /// its own edits were in flight. `doc` is the host's value of every document-level field
-    /// the batch wrote, for the same reason.
+    /// its own edits were in flight. `doc` is the host's value of every whole-value document field
+    /// the batch wrote, and `entries` its value of every keyed entry the batch wrote, for the
+    /// same reason.
     Ack {
         client_seq: u64,
         seq: u64,
         rejected: Vec<usize>,
         orders: Vec<(NodeId, Vec<NodeId>)>,
         doc: BTreeMap<String, Value>,
+        entries: Vec<Entry>,
     },
     /// The current state of what rejected ops touched.
     Correction {
@@ -99,8 +101,10 @@ pub enum Fix {
     Node { node: Box<Node>, after: Option<NodeId> },
     /// The node does not exist (with its subtree).
     Gone(NodeId),
-    /// Current values of document-level fields.
+    /// Current values of whole-value document fields.
     Doc(BTreeMap<String, Value>),
+    /// Current values of keyed document entries.
+    Entries(Vec<Entry>),
 }
 
 /// Who receives a host message.

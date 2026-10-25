@@ -1,5 +1,6 @@
 //! Ops, and how they are applied to a document.
 
+use crate::entries::set_entry;
 use desigma_doc::{Document, Node, NodeId, NodeKind};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -20,8 +21,12 @@ pub enum Op {
     Move { id: NodeId, parent: NodeId, after: Option<NodeId> },
     /// Remove a node and its subtree.
     Delete { id: NodeId },
-    /// Changed document-level fields (see [`DOC_FIELDS`]).
+    /// Changed whole-value document fields ([`LWW_FIELDS`]): last writer wins as a unit.
     DocPatch { fields: BTreeMap<String, Value> },
+    /// One entry of a keyed document collection ([`crate::ENTRY_FIELDS`]): set it to `value`, or
+    /// remove it when `None`. Entries merge independently, so two people adding or changing
+    /// different ones both win. `key` is the path to the entry (see `entries.rs`).
+    DocEntry { field: String, key: Vec<String>, value: Option<Value> },
     /// An embedded image with this content hash exists; its bytes are fetched separately.
     Image { hash: String },
 }
@@ -45,6 +50,9 @@ pub enum ApplyError {
     BadPatch(NodeId),
     /// A doc patch with an unknown or malformed field.
     BadDocField(String),
+    /// An entry whose parent is gone (a reply to a deleted comment thread, a vote in a session
+    /// that no longer exists).
+    NoEntryParent(String),
 }
 
 impl fmt::Display for ApplyError {
@@ -58,14 +66,15 @@ impl fmt::Display for ApplyError {
             Self::BadPlacement(id) => write!(f, "node {id:?} cannot be placed there"),
             Self::BadPatch(id) => write!(f, "invalid patch for node {id:?}"),
             Self::BadDocField(name) => write!(f, "invalid document field {name:?}"),
+            Self::NoEntryParent(name) => write!(f, "entry of {name:?} has no parent"),
         }
     }
 }
 
 impl std::error::Error for ApplyError {}
 
-/// Document-level fields synced by [`Op::DocPatch`]. Everything in [`Document`] except `nodes`,
-/// `images` and the id counters.
+/// Document-level fields synced by [`Op::DocPatch`] and [`Op::DocEntry`]. Everything in
+/// [`Document`] except `nodes`, `images` and the id counters.
 pub const DOC_FIELDS: &[&str] = &[
     "name",
     "kind",
@@ -83,6 +92,10 @@ pub const DOC_FIELDS: &[&str] = &[
     "library_page",
     "board_session",
 ];
+
+/// Fields written whole by [`Op::DocPatch`]. `pages` has its own merge (pages the writer did not
+/// know survive); the rest are plain last-writer-wins values.
+pub const LWW_FIELDS: &[&str] = &["name", "kind", "pages", "prototype_device", "library", "library_page"];
 
 /// Node fields a patch never touches: identity and placement.
 pub(crate) const RESERVED: &[&str] = &["id", "parent", "children"];
@@ -132,18 +145,9 @@ fn set_doc_field(doc: &mut Document, name: &str, v: &Value) -> Result<(), ApplyE
             doc.pages = out;
             Ok(())
         }
-        "styles" => set_field(&mut doc.styles, name, v),
-        "style_meta" => set_field(&mut doc.style_meta, name, v),
-        "flows" => set_field(&mut doc.flows, name, v),
-        "variables" => set_field(&mut doc.variables, name, v),
-        "variable_collections" => set_field(&mut doc.variable_collections, name, v),
-        "guides" => set_field(&mut doc.guides, name, v),
-        "timelines" => set_field(&mut doc.timelines, name, v),
         "prototype_device" => set_field(&mut doc.prototype_device, name, v),
-        "comments" => set_field(&mut doc.comments, name, v),
         "library" => set_field(&mut doc.library, name, v),
         "library_page" => set_field(&mut doc.library_page, name, v),
-        "board_session" => set_field(&mut doc.board_session, name, v),
         _ => Err(ApplyError::BadDocField(name.to_string())),
     }
 }
@@ -324,6 +328,7 @@ pub(crate) fn apply_mode(doc: &mut Document, op: &Op, mode: Mode) -> Result<(), 
             }
             Ok(())
         }
+        Op::DocEntry { field, key, value } => set_entry(doc, field, key, value.as_ref(), strict),
         Op::Image { hash } => {
             doc.images.entry(hash.clone()).or_default();
             Ok(())

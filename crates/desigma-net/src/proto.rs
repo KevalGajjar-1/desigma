@@ -4,7 +4,10 @@ use serde::{Deserialize, Serialize};
 
 /// Bump on any incompatible wire change; peers must match exactly.
 /// 2: image payloads are base64, `Hello::resume`, resume tokens.
-pub const PROTOCOL_VERSION: u32 = 2;
+/// 3: keyed document collections (styles, variables, comments, votes, flows, guides, timelines)
+/// travel as per-entry `Op::DocEntry`; `DocPatch` carries only whole-value fields; `Ack::entries`
+/// and `Fix::Entries`.
+pub const PROTOCOL_VERSION: u32 = 3;
 
 /// Handshake frames are tiny; refuse anything bigger before a guest is trusted.
 pub const MAX_HANDSHAKE: usize = 16 * 1024;
