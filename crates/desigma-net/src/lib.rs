@@ -17,7 +17,7 @@ mod rt;
 mod ticket;
 
 pub use guest::{DisconnectReason, Guest, GuestEvent, GuestOptions};
-pub use host::{Host, HostEvent, HostOptions};
+pub use host::{generate_secret_key, Host, HostEvent, HostOptions};
 pub use proto::PROTOCOL_VERSION;
 pub use ticket::Ticket;
 

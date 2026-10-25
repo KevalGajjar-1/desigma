@@ -27,6 +27,16 @@ impl Ticket {
         self.addr.id
     }
 
+    /// The same ticket with only relay addresses, when it has any. Direct addresses change
+    /// between runs; a link meant to last (an always-on host) should not carry them.
+    pub fn relay_only(&self) -> Ticket {
+        let mut t = self.clone();
+        if t.addr.addrs.iter().any(|a| a.is_relay()) {
+            t.addr.addrs.retain(|a| a.is_relay());
+        }
+        t
+    }
+
     /// Bare ticket text (lowercase base32).
     pub fn encode(&self) -> String {
         let wire = Wire { v: TICKET_VERSION, pw: self.password_required, addr: self.addr.clone() };

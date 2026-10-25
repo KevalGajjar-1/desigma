@@ -1557,6 +1557,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "desigma-server"
+version = "0.1.0"
+dependencies = [
+ "desigma-collab",
+ "desigma-doc",
+ "desigma-library",
+ "desigma-net",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "desigma-svg"
 version = "0.1.0"
 dependencies = [
