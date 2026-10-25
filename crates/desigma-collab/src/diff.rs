@@ -1,6 +1,7 @@
 //! Turning the difference between a shadow copy and the current document into ops.
 
-use crate::ops::{doc_fields, field_diff, Op};
+use crate::entries::diff_docs;
+use crate::ops::{doc_fields, field_diff, Op, LWW_FIELDS};
 use desigma_doc::{Document, NodeId};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
@@ -8,7 +9,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 /// document equal to `doc` (nodes, pages, doc-level fields; images by hash).
 ///
 /// Order: creates (parents first), patches, reparenting moves (never through a transient
-/// cycle), sibling-order moves, deletes of subtree roots, doc patch, images. Nodes equal by
+/// cycle), sibling-order moves, deletes of subtree roots, doc patch, doc entries, images. Nodes equal by
 /// `PartialEq` are skipped without serializing.
 pub fn diff(shadow: &Document, doc: &Document) -> Vec<Op> {
     let mut created = BTreeSet::new();
@@ -134,10 +135,11 @@ pub fn diff(shadow: &Document, doc: &Document) -> Vec<Op> {
     }
 
     let (a, b) = (doc_fields(shadow), doc_fields(doc));
-    let fields: BTreeMap<_, _> = b.into_iter().filter(|(k, v)| a.get(k) != Some(v)).collect();
+    let fields: BTreeMap<_, _> = b.into_iter().filter(|(k, v)| LWW_FIELDS.contains(&k.as_str()) && a.get(k) != Some(v)).collect();
     if !fields.is_empty() {
         ops.push(Op::DocPatch { fields });
     }
+    diff_docs(shadow, doc, &mut ops);
     for hash in doc.images.keys() {
         if !shadow.images.contains_key(hash) {
             ops.push(Op::Image { hash: hash.clone() });

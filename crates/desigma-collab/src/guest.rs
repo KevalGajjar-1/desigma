@@ -1,13 +1,14 @@
 //! Guest side: sends local changes, applies the host's ops without clobbering unacknowledged
 //! local edits.
 
+use crate::entries::{entries, entry_id};
 use crate::ops::{apply_mode, apply_order, field_diff, node_fields, Mode};
-use crate::{diff, ApplyError, ClientMsg, Fix, Op, OutMsg, PeerId, ServerMsg};
+use crate::{diff, ApplyError, ClientMsg, Entry, Fix, Op, OutMsg, PeerId, ServerMsg};
 use desigma_doc::{Document, NodeId};
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 
-/// Pseudo node id for document-level pending fields.
+/// Pseudo node id for document-level pending fields and entries (see `entry_id`).
 const DOC_KEY: NodeId = NodeId(u64::MAX);
 /// Pseudo field for a node's place in the tree (parent and sibling order).
 const POS: &str = "@pos";
@@ -229,6 +230,7 @@ impl GuestSession {
             Op::Move { id, .. } => keys.push((*id, POS.to_string())),
             Op::Patch { id, fields } => keys.extend(fields.keys().map(|k| (*id, k.clone()))),
             Op::DocPatch { fields } => keys.extend(fields.keys().map(|k| (DOC_KEY, k.clone()))),
+            Op::DocEntry { field, key, .. } => keys.push((DOC_KEY, entry_id(field, key))),
             Op::Delete { .. } | Op::Image { .. } => {}
         }
         for k in keys {
@@ -256,9 +258,9 @@ impl GuestSession {
                     self.remote(doc, op, &mut r);
                 }
             }
-            ServerMsg::Ack { client_seq, seq, rejected, orders, doc: fields } => {
+            ServerMsg::Ack { client_seq, seq, rejected, orders, doc: fields, entries } => {
                 self.seq = self.seq.max(seq);
-                self.ack(doc, client_seq, &rejected, &orders, fields, &mut r);
+                self.ack(doc, client_seq, &rejected, &orders, (fields, entries), &mut r);
             }
             ServerMsg::Correction { fixes, .. } => {
                 let mut refetch: Vec<NodeId> = Vec::new();
@@ -331,7 +333,7 @@ impl GuestSession {
         client_seq: u64,
         rejected: &[usize],
         orders: &[(NodeId, Vec<NodeId>)],
-        fields: BTreeMap<String, Value>,
+        (fields, host_entries): (BTreeMap<String, Value>, Vec<Entry>),
         r: &mut Received,
     ) {
         let Some(at) = self.inflight.iter().position(|b| b.seq == client_seq) else { return };
@@ -404,6 +406,21 @@ impl GuestSession {
             let _ = self.apply_both(doc, &Op::DocPatch { fields });
             r.changed = true;
         }
+        // Likewise per entry. Where the host's value is not what we have, it is somebody
+        // else's write that landed after ours; let history know, like any remote write.
+        let mut mine: BTreeMap<String, BTreeMap<Vec<String>, Value>> = BTreeMap::new();
+        let settled: Vec<Entry> = host_entries.into_iter().filter(|e| !self.is_pending(DOC_KEY, &entry_id(&e.field, &e.key))).collect();
+        for e in settled {
+            let local = mine.entry(e.field.clone()).or_insert_with(|| entries(doc, &e.field));
+            if local.get(&e.key) == e.value.as_ref() {
+                continue;
+            }
+            mine.remove(&e.field);
+            let op = Op::DocEntry { field: e.field, key: e.key, value: e.value };
+            let _ = self.apply_both(doc, &op);
+            r.changed = true;
+            r.applied.push(op);
+        }
     }
 
     fn apply_both(&mut self, doc: &mut Document, op: &Op) -> Result<(), ApplyError> {
@@ -428,6 +445,12 @@ impl GuestSession {
                     return;
                 }
                 Op::DocPatch { fields }
+            }
+            Op::DocEntry { field, key, value } => {
+                if self.is_pending(DOC_KEY, &entry_id(&field, &key)) {
+                    return;
+                }
+                Op::DocEntry { field, key, value }
             }
             Op::Move { id, .. } if self.is_pending(id, POS) => return,
             op => op,
@@ -459,6 +482,7 @@ impl GuestSession {
         match fix {
             Fix::Gone(id) => vec![Op::Delete { id }],
             Fix::Doc(fields) => vec![Op::DocPatch { fields: fields.into_iter().collect() }],
+            Fix::Entries(es) => es.into_iter().map(|e| Op::DocEntry { field: e.field, key: e.key, value: e.value }).collect(),
             Fix::Node { node, after } => {
                 let id = node.id;
                 match doc.nodes.get(&id) {

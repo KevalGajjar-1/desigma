@@ -37,6 +37,18 @@ fn base_doc() -> Document {
         let id = d.alloc_id();
         d.insert(page, Node::frame(id, Rect::new(i as f32 * 100.0, 0.0, 90.0, 90.0))).unwrap();
     }
+    d.variable_collections.insert(
+        "col".into(),
+        VariableCollection {
+            id: "col".into(),
+            name: "Col".into(),
+            modes: vec![VariableMode { id: "m".into(), name: "M".into() }],
+            default_mode: "m".into(),
+            variables: Vec::new(),
+            key: None,
+        },
+    );
+    d.board_session.vote = Some(VoteSession::new(VOTES_MAX));
     d
 }
 
@@ -66,6 +78,10 @@ fn containers(d: &Document) -> Vec<NodeId> {
 
 /// One random edit of the kind the app makes directly on its document.
 fn random_edit(rng: &mut Rng, d: &mut Document) {
+    if rng.chance(14) {
+        keyed_edit(rng, d, &mut Vec::new(), true);
+        return;
+    }
     match rng.below(100) {
         0..=27 => {
             let Some(parent) = rng.pick(&containers(d)) else { return };
@@ -119,6 +135,200 @@ fn random_edit(rng: &mut Rng, d: &mut Document) {
             if d.pages.len() > 1 {
                 let (a, b) = (rng.below(d.pages.len()), rng.below(d.pages.len()));
                 d.pages.swap(a, b);
+            }
+        }
+    }
+}
+
+/// An entry a peer added that nobody ever removes: it must survive every merge.
+#[derive(Clone, Debug, PartialEq)]
+enum Kept {
+    Style(String),
+    Thread(String),
+    Reply(String, String),
+    Variable(String),
+    Vote(NodeId),
+}
+
+fn stamp() -> String {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    format!("2026-01-01T00:00:00.{:09}Z", NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
+}
+
+fn msg(id: &str, text: &str) -> Comment {
+    Comment { id: id.into(), author: "a".into(), text: text.into(), created: stamp(), edited: None }
+}
+
+fn thread_at(id: &str, page: NodeId, first: &str) -> CommentThread {
+    let anchor = CommentAnchor { page, node: None, offset: Vec2::new(1.0, 2.0) };
+    CommentThread { id: id.into(), anchor, messages: vec![msg(&format!("{id}-0"), first)], resolved: false }
+}
+
+fn fill(r: u8) -> Style {
+    Style::Fill(vec![Paint::solid(Color::rgb(r, 0, 0))])
+}
+
+fn variable(id: &str, n: f32) -> Variable {
+    Variable {
+        id: id.into(),
+        name: id.into(),
+        collection: "col".into(),
+        kind: VariableKind::Number,
+        values: [("m".to_string(), VariableValue::Number(n))].into(),
+        description: String::new(),
+        scopes: Vec::new(),
+        hidden_from_publishing: false,
+        key: None,
+    }
+}
+
+fn add_variable(d: &mut Document, id: &str, n: f32) {
+    d.variables.insert(id.into(), variable(id, n));
+    d.variable_collections.get_mut("col").unwrap().variables.push(id.into());
+}
+
+fn vote_key(peer: u32, i: usize) -> NodeId {
+    NodeId((u64::from(peer) << PEER_ID_BITS) | (1_000_000 + i as u64))
+}
+
+/// One random edit of the keyed collections (comments, styles, variables, votes, flows, guides,
+/// timelines). Entries nobody removes (`k` ids) are reported in `kept`; with `destructive` other
+/// entries are removed too. Each peer only creates ids of its own, as the app does.
+fn keyed_edit(rng: &mut Rng, d: &mut Document, kept: &mut Vec<Kept>, destructive: bool) {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    let peer = d.id_peer().unwrap_or(0);
+    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let page = d.pages[0];
+    let tag = if destructive && rng.chance(40) { "x" } else { "k" };
+    let id = format!("{tag}{peer}-{n}");
+    let threads: Vec<usize> = (0..d.comments.len()).collect();
+    match rng.below(24) {
+        0..=2 => {
+            d.comments.push(thread_at(&id, page, "hello"));
+            if tag == "k" {
+                kept.push(Kept::Thread(id));
+            }
+        }
+        3..=6 => {
+            let Some(i) = rng.pick(&threads) else { return };
+            let t = &mut d.comments[i];
+            // a reply in a thread nobody removes is kept
+            let keep = t.id.starts_with('k') && tag == "k";
+            let mid = format!("{}{peer}-{n}", if keep { "k" } else { "x" });
+            t.messages.push(msg(&mid, "reply"));
+            if keep {
+                kept.push(Kept::Reply(t.id.clone(), mid));
+            }
+        }
+        7 => {
+            if let Some(i) = rng.pick(&threads) {
+                d.comments[i].resolved = !d.comments[i].resolved;
+            }
+        }
+        8 => {
+            if let Some(i) = rng.pick(&threads) {
+                let t = &mut d.comments[i];
+                let at = rng.below(t.messages.len());
+                t.messages[at].text = format!("edited {}", rng.below(100));
+                t.messages[at].edited = Some("later".into());
+            }
+        }
+        9 => {
+            if !destructive {
+                return;
+            }
+            let Some(i) = rng.pick(&threads) else { return };
+            let t = &mut d.comments[i];
+            if rng.chance(40) && t.id.starts_with('x') {
+                d.comments.remove(i);
+            } else if t.messages.len() > 1 {
+                // never the first message: it decides where the thread sorts
+                let at = 1 + rng.below(t.messages.len() - 1);
+                if t.messages[at].id.starts_with('x') {
+                    t.messages.remove(at);
+                }
+            }
+        }
+        10..=12 => {
+            d.styles.insert(id.clone(), fill(rng.below(256) as u8));
+            d.style_meta.insert(id.clone(), StyleMeta { name: format!("S{n}"), ..Default::default() });
+            if tag == "k" {
+                kept.push(Kept::Style(id));
+            }
+        }
+        13 => {
+            let keys: Vec<String> = d.styles.keys().cloned().collect();
+            let Some(k) = rng.pick(&keys.iter().collect::<Vec<_>>()) else { return };
+            if destructive && k.starts_with('x') && rng.chance(50) {
+                d.styles.remove(k);
+                d.style_meta.remove(k);
+            } else {
+                d.styles.insert(k.clone(), fill(rng.below(256) as u8));
+            }
+        }
+        14..=16 => {
+            add_variable(d, &id, rng.below(100) as f32);
+            if tag == "k" {
+                kept.push(Kept::Variable(id));
+            }
+        }
+        17 => {
+            let keys: Vec<String> = d.variables.keys().cloned().collect();
+            let Some(k) = rng.pick(&keys.iter().collect::<Vec<_>>()) else { return };
+            if destructive && k.starts_with('x') && rng.chance(50) {
+                d.variables.remove(k);
+                d.variable_collections.get_mut("col").unwrap().variables.retain(|v| v != k);
+            } else {
+                d.variables.get_mut(k).unwrap().values.insert("m".into(), VariableValue::Number(rng.below(100) as f32));
+            }
+        }
+        18..=20 => {
+            let Some(v) = d.board_session.vote.as_mut() else { return };
+            let i = rng.below(if destructive { 5 } else { 3 });
+            let key = vote_key(peer, i);
+            if rng.chance(70) || !v.votes.contains_key(&key) {
+                *v.votes.entry(key).or_insert(0) += 1;
+                if i < 3 {
+                    kept.push(Kept::Vote(key));
+                }
+            } else if v.votes[&key] > 1 {
+                *v.votes.get_mut(&key).unwrap() -= 1;
+            } else if i >= 3 {
+                v.votes.remove(&key);
+            }
+        }
+        21 => match rng.below(4) {
+            0 => d.board_session.timer = Some(TimerState::new(1 + rng.below(9) as u32)),
+            1 => d.board_session.timer = None,
+            2 => {
+                if let Some(v) = d.board_session.vote.as_mut() {
+                    v.ended = rng.chance(10);
+                }
+            }
+            _ => {
+                if let Some(v) = d.board_session.vote.as_mut() {
+                    v.votes_per_person = 5 + rng.below(10) as u32;
+                }
+            }
+        },
+        22 => {
+            let start = NodeId(1 + rng.below(6) as u64);
+            d.flows.retain(|f| f.start != start);
+            if !destructive || rng.chance(70) {
+                d.flows.push(Flow { name: format!("F{n}"), page, start, description: String::new() });
+                d.flows.sort_by_key(|f| f.start);
+            }
+        }
+        _ => {
+            if rng.chance(50) {
+                d.guides.entry(page).or_default().push(Guide { axis: GuideAxis::X, offset: rng.below(500) as f32, frame: None });
+                if destructive && rng.chance(20) {
+                    d.guides.remove(&page);
+                }
+            } else if destructive && rng.chance(30) {
+                d.timelines.remove(&page);
+            } else {
+                d.timelines.insert(page, TimelineSettings { duration_ms: 1000 + rng.below(5000) as u32, ..Default::default() });
             }
         }
     }
@@ -524,6 +734,8 @@ struct Net {
     down: Vec<VecDeque<ServerMsg>>,
     /// Guests whose connection is up; messages to the others are lost.
     online: Vec<bool>,
+    /// Each guest's undo history. Remote changes are rebased into it as the app does.
+    hist: Vec<History>,
 }
 
 impl Net {
@@ -535,7 +747,15 @@ impl Net {
             g.receive(&mut d, host.resume_msg(p).unwrap());
             guests.push((p, g, d));
         }
-        Self { hd, host, up: vec![VecDeque::new(); n], down: vec![VecDeque::new(); n], online: vec![true; n], guests }
+        Self {
+            hd,
+            host,
+            up: vec![VecDeque::new(); n],
+            down: vec![VecDeque::new(); n],
+            online: vec![true; n],
+            hist: (0..n).map(|_| History::default()).collect(),
+            guests,
+        }
     }
 
     fn route(&mut self, outs: Vec<Out>) {
@@ -584,6 +804,9 @@ impl Net {
         assert_eq!(peer, self.guests[i].0, "same peer index");
         let (_, g, d) = &mut self.guests[i];
         let r = g.rejoin(d, self.host.snapshot(peer)).expect("snapshot for the same peer");
+        for op in &r.applied {
+            rebase_history(&mut self.hist[i], op);
+        }
         self.online[i] = true;
         self.up[i].extend(r.out);
         self.down[i].push_back(self.host.resume_msg(peer).unwrap());
@@ -601,6 +824,9 @@ impl Net {
         let Some(m) = self.down[i].pop_front() else { return false };
         let (_, g, d) = &mut self.guests[i];
         let r = g.receive(d, m);
+        for op in &r.applied {
+            rebase_history(&mut self.hist[i], op);
+        }
         self.up[i].extend(r.out);
         true
     }
@@ -794,6 +1020,370 @@ fn simulation_converges_many_guests() {
     }
     for seed in 2000..2030 {
         run_sim(seed, 1, 200);
+    }
+}
+
+// ---- keyed collections ----
+
+fn settle(net: &mut Net) {
+    net.drain(&mut Rng::new(5));
+}
+
+fn style_json(d: &Document, id: &str) -> Option<serde_json::Value> {
+    d.styles.get(id).map(|s| serde_json::to_value(s).unwrap())
+}
+
+fn thread<'a>(d: &'a Document, id: &str) -> &'a CommentThread {
+    d.comments.iter().find(|t| t.id == id).unwrap_or_else(|| panic!("thread {id} is gone"))
+}
+
+#[test]
+fn two_concurrent_comments_both_survive() {
+    let mut net = Net::new(2);
+    let page = net.hd.pages[0];
+    net.guests[0].2.comments.push(thread_at("t-a", page, "from a"));
+    net.guests[1].2.comments.push(thread_at("t-b", page, "from b"));
+    settle(&mut net);
+    net.assert_converged("comments");
+    let ids: Vec<&str> = net.hd.comments.iter().map(|t| t.id.as_str()).collect();
+    assert_eq!(ids, ["t-a", "t-b"], "both threads, in the order they were opened");
+}
+
+#[test]
+fn two_concurrent_replies_to_one_thread_both_survive() {
+    let mut net = Net::new(2);
+    let page = net.hd.pages[0];
+    net.hd.comments.push(thread_at("t", page, "question"));
+    settle(&mut net);
+    net.guests[0].2.comments[0].messages.push(msg("r-a", "answer a"));
+    net.guests[1].2.comments[0].messages.push(msg("r-b", "answer b"));
+    net.hd.comments[0].messages.push(msg("r-h", "answer host"));
+    settle(&mut net);
+    net.assert_converged("replies");
+    let texts: Vec<&str> = thread(&net.hd, "t").messages.iter().map(|m| m.id.as_str()).collect();
+    assert_eq!(texts, ["t-0", "r-a", "r-b", "r-h"]);
+}
+
+#[test]
+fn resolving_a_thread_while_someone_replies_keeps_both() {
+    let mut net = Net::new(2);
+    let page = net.hd.pages[0];
+    net.hd.comments.push(thread_at("t", page, "question"));
+    settle(&mut net);
+    net.guests[0].2.comments[0].resolved = true;
+    net.guests[1].2.comments[0].messages.push(msg("r", "reply"));
+    settle(&mut net);
+    net.assert_converged("resolve");
+    let t = thread(&net.hd, "t");
+    assert!(t.resolved);
+    assert_eq!(t.messages.len(), 2);
+}
+
+#[test]
+fn editing_a_message_and_replying_in_the_same_thread_keeps_both() {
+    let mut net = Net::new(2);
+    let page = net.hd.pages[0];
+    net.hd.comments.push(thread_at("t", page, "question"));
+    settle(&mut net);
+    net.guests[0].2.comments[0].messages[0].text = "question, edited".into();
+    net.guests[1].2.comments[0].messages.push(msg("r", "reply"));
+    settle(&mut net);
+    net.assert_converged("edit and reply");
+    let t = thread(&net.hd, "t");
+    assert_eq!((t.messages[0].text.as_str(), t.messages.len()), ("question, edited", 2));
+}
+
+#[test]
+fn a_reply_to_a_thread_deleted_at_the_same_time_is_dropped_everywhere() {
+    let mut net = Net::new(2);
+    let page = net.hd.pages[0];
+    net.hd.comments.push(thread_at("t", page, "question"));
+    net.hd.comments.push(thread_at("other", page, "stays"));
+    settle(&mut net);
+    net.guests[0].2.comments.retain(|t| t.id != "t");
+    net.guests[1].2.comments[0].messages.push(msg("r", "reply"));
+    settle(&mut net);
+    net.assert_converged("delete thread");
+    assert_eq!(net.hd.comments.iter().map(|t| t.id.as_str()).collect::<Vec<_>>(), ["other"]);
+}
+
+#[test]
+fn two_concurrent_votes_both_count() {
+    let mut net = Net::new(2);
+    let kids = net.hd.get(net.hd.pages[0]).unwrap().children.clone();
+    net.guests[0].2.board_session.vote.as_mut().unwrap().add(kids[0]);
+    net.guests[1].2.board_session.vote.as_mut().unwrap().add(kids[1]);
+    net.hd.board_session.vote.as_mut().unwrap().add(kids[2]);
+    settle(&mut net);
+    net.assert_converged("votes");
+    let v = net.hd.board_session.vote.as_ref().unwrap();
+    assert_eq!((v.count(kids[0]), v.count(kids[1]), v.count(kids[2])), (1, 1, 1));
+    // the timer is one value: the later writer wins, without touching the votes
+    net.guests[0].2.board_session.timer = Some(TimerState::new(3));
+    net.guests[1].2.board_session.timer = Some(TimerState::new(7));
+    net.guests[1].2.board_session.vote.as_mut().unwrap().add(kids[0]);
+    net.sync_guest(0);
+    net.sync_guest(1);
+    net.deliver_up(0);
+    net.deliver_up(1);
+    settle(&mut net);
+    net.assert_converged("timer");
+    assert_eq!(net.hd.board_session.timer.as_ref().unwrap().total_secs, 420.0);
+    assert_eq!(net.hd.board_session.vote.as_ref().unwrap().count(kids[0]), 2);
+}
+
+#[test]
+fn two_concurrent_new_styles_both_survive() {
+    let mut net = Net::new(2);
+    for (i, id) in ["s-a", "s-b"].into_iter().enumerate() {
+        let d = &mut net.guests[i].2;
+        d.styles.insert(id.into(), fill(i as u8 + 1));
+        d.style_meta.insert(id.into(), StyleMeta { name: id.into(), ..Default::default() });
+    }
+    settle(&mut net);
+    net.assert_converged("styles");
+    assert_eq!(net.hd.styles.keys().collect::<Vec<_>>(), ["s-a", "s-b"]);
+    assert_eq!(net.hd.style_meta.keys().collect::<Vec<_>>(), ["s-a", "s-b"]);
+}
+
+#[test]
+fn a_concurrent_edit_of_one_style_is_last_in_host_order() {
+    let mut net = Net::new(2);
+    net.hd.styles.insert("s".into(), fill(0));
+    net.hd.style_meta.insert("s".into(), StyleMeta { name: "S".into(), ..Default::default() });
+    settle(&mut net);
+    net.guests[0].2.styles.insert("s".into(), fill(10));
+    net.guests[0].2.style_meta.get_mut("s").unwrap().name = "from 0".into();
+    net.guests[1].2.styles.insert("s".into(), fill(20));
+    net.guests[1].2.style_meta.get_mut("s").unwrap().description = "from 1".into();
+    net.sync_guest(0);
+    net.sync_guest(1);
+    net.deliver_up(0);
+    net.deliver_up(1);
+    settle(&mut net);
+    net.assert_converged("same style");
+    assert_eq!(style_json(&net.hd, "s"), Some(serde_json::to_value(fill(20)).unwrap()));
+    let m = &net.hd.style_meta["s"];
+    assert_eq!((m.name.as_str(), m.description.as_str()), ("S", "from 1"), "a style and its metadata come from the same writer");
+}
+
+#[test]
+fn two_concurrent_variables_land_in_the_same_collection() {
+    let mut net = Net::new(2);
+    add_variable(&mut net.guests[0].2, "v-a", 1.0);
+    add_variable(&mut net.guests[1].2, "v-b", 2.0);
+    settle(&mut net);
+    net.assert_converged("variables");
+    assert_eq!(net.hd.variables.keys().collect::<Vec<_>>(), ["v-a", "v-b"]);
+    let mut listed = net.hd.variable_collections["col"].variables.clone();
+    listed.sort();
+    assert_eq!(listed, ["v-a", "v-b"], "the collection lists both");
+}
+
+#[test]
+fn flows_guides_and_timelines_merge_per_entry() {
+    let mut net = Net::new(2);
+    let page = net.hd.pages[0];
+    let kids = net.hd.get(page).unwrap().children.clone();
+    let flow = |name: &str, start| Flow { name: name.into(), page, start, description: String::new() };
+    net.guests[0].2.flows.push(flow("one", kids[0]));
+    net.guests[1].2.flows.push(flow("two", kids[1]));
+    net.guests[0].2.guides.insert(page, vec![Guide { axis: GuideAxis::X, offset: 5.0, frame: None }]);
+    net.guests[1].2.timelines.insert(page, TimelineSettings { duration_ms: 4000, ..Default::default() });
+    settle(&mut net);
+    net.assert_converged("flows");
+    assert_eq!(net.hd.flows.iter().map(|f| f.name.as_str()).collect::<Vec<_>>(), ["one", "two"]);
+    assert_eq!((net.hd.guides[&page].len(), net.hd.timelines[&page].duration_ms), (1, 4000));
+}
+
+#[test]
+fn undoing_my_style_does_not_remove_yours() {
+    let mut net = Net::new(2);
+    let (mut styles, mut meta) = (net.guests[0].2.styles.clone(), net.guests[0].2.style_meta.clone());
+    styles.insert("mine".into(), fill(1));
+    meta.insert("mine".into(), StyleMeta { name: "Mine".into(), ..Default::default() });
+    net.hist[0].exec(&mut net.guests[0].2, Command::SetStyles { styles, style_meta: meta }).unwrap();
+    net.guests[1].2.styles.insert("yours".into(), fill(2));
+    net.guests[1].2.style_meta.insert("yours".into(), StyleMeta { name: "Yours".into(), ..Default::default() });
+    settle(&mut net);
+    assert_eq!(net.hd.styles.keys().collect::<Vec<_>>(), ["mine", "yours"]);
+    net.hist[0].undo(&mut net.guests[0].2).unwrap();
+    settle(&mut net);
+    net.assert_converged("undo style");
+    assert_eq!(net.hd.styles.keys().collect::<Vec<_>>(), ["yours"]);
+    assert_eq!(net.hd.style_meta.keys().collect::<Vec<_>>(), ["yours"]);
+    net.hist[0].redo(&mut net.guests[0].2).unwrap();
+    settle(&mut net);
+    net.assert_converged("redo style");
+    assert_eq!(net.hd.styles.keys().collect::<Vec<_>>(), ["mine", "yours"]);
+}
+
+#[test]
+fn undoing_my_comment_vote_and_variable_keeps_what_others_added() {
+    let mut net = Net::new(2);
+    let page = net.hd.pages[0];
+    let kids = net.hd.get(page).unwrap().children.clone();
+    // mine
+    let mut comments = net.guests[0].2.comments.clone();
+    comments.push(thread_at("mine", page, "mine"));
+    net.hist[0].exec(&mut net.guests[0].2, Command::SetComments { comments }).unwrap();
+    let mut session = net.guests[0].2.board_session.clone();
+    session.vote.as_mut().unwrap().add(kids[0]);
+    net.hist[0].exec(&mut net.guests[0].2, Command::SetBoardSession { session }).unwrap();
+    let (mut vars, mut cols) = (net.guests[0].2.variables.clone(), net.guests[0].2.variable_collections.clone());
+    vars.insert("mine".into(), variable("mine", 1.0));
+    cols.get_mut("col").unwrap().variables.push("mine".into());
+    net.hist[0].exec(&mut net.guests[0].2, Command::SetVariables { variables: vars, collections: cols }).unwrap();
+    // yours, concurrently
+    net.guests[1].2.comments.push(thread_at("yours", page, "yours"));
+    net.guests[1].2.comments[0].messages.push(msg("yours-r", "reply"));
+    net.guests[1].2.board_session.vote.as_mut().unwrap().add(kids[1]);
+    add_variable(&mut net.guests[1].2, "yours", 2.0);
+    settle(&mut net);
+    net.assert_converged("both");
+    for _ in 0..3 {
+        net.hist[0].undo(&mut net.guests[0].2).unwrap();
+    }
+    settle(&mut net);
+    net.assert_converged("undone");
+    assert_eq!(net.hd.comments.iter().map(|t| t.id.as_str()).collect::<Vec<_>>(), ["yours"]);
+    assert_eq!(net.hd.comments[0].messages.len(), 2);
+    let v = net.hd.board_session.vote.as_ref().unwrap();
+    assert_eq!((v.count(kids[0]), v.count(kids[1])), (0, 1));
+    assert_eq!(net.hd.variables.keys().collect::<Vec<_>>(), ["yours"]);
+    assert_eq!(net.hd.variable_collections["col"].variables, ["yours"]);
+}
+
+#[test]
+fn a_viewer_cannot_write_entries_and_is_corrected() {
+    let (mut hd, mut host) = session();
+    let (peer, mut g, mut d) = join(&mut host, Role::Viewer);
+    d.styles.insert("s".into(), fill(1));
+    let Some(m) = g.local_changes(&d) else { panic!("a change") };
+    let outs = host.receive(&mut hd, peer, m);
+    assert!(hd.styles.is_empty());
+    for o in outs {
+        g.receive(&mut d, o.msg);
+    }
+    assert!(d.styles.is_empty(), "the correction removed it again");
+}
+
+#[test]
+fn entries_of_unknown_fields_or_with_wrong_keys_are_refused() {
+    let mut d = base_doc();
+    let set = |field: &str, key: &[&str], value: serde_json::Value| Op::DocEntry {
+        field: field.into(),
+        key: key.iter().map(|k| k.to_string()).collect(),
+        value: Some(value),
+    };
+    assert!(apply(&mut d, &set("name", &["x"], serde_json::json!("n"))).is_err());
+    assert!(apply(&mut d, &set("styles", &[], serde_json::json!({}))).is_err());
+    assert!(apply(&mut d, &set("board_session", &["vote", "nan"], serde_json::json!(1))).is_err());
+    assert!(apply(&mut d, &set("comments", &["gone", "m"], serde_json::json!({ "id": "m", "author": "", "text": "", "created": "", "edited": null }))).is_err());
+    // the keyed fields no longer travel as whole values
+    assert!(apply(&mut d, &Op::DocPatch { fields: [("comments".to_string(), serde_json::json!([]))].into() }).is_err());
+    assert!(apply(&mut d, &Op::DocPatch { fields: [("name".to_string(), serde_json::json!("ok"))].into() }).is_ok());
+    // removing what is not there is fine
+    apply(&mut d, &Op::DocEntry { field: "styles".into(), key: vec!["nope".into()], value: None }).unwrap();
+}
+
+#[test]
+fn entry_ops_have_a_fixed_json_shape() {
+    let op = Op::DocEntry { field: "comments".into(), key: vec!["t".into(), "m".into()], value: None };
+    assert_eq!(serde_json::to_string(&op).unwrap(), r#"{"DocEntry":{"field":"comments","key":["t","m"],"value":null}}"#);
+}
+
+/// Everyone only ever adds distinct keys (and edits any), with outages when `outages`: every
+/// addition must be in the final document.
+fn run_keyed_sim(seed: u64, guests: usize, steps: usize, outages: bool) {
+    let mut rng = Rng::new(seed);
+    let mut net = Net::new(guests);
+    let mut kept = Vec::new();
+    for step in 0..steps {
+        match rng.below(12) {
+            0..=3 => {
+                let who = rng.below(guests + 1);
+                for _ in 0..1 + rng.below(3) {
+                    let d = if who == guests { &mut net.hd } else { &mut net.guests[who].2 };
+                    keyed_edit(&mut rng, d, &mut kept, false);
+                }
+                if rng.chance(75) {
+                    if who == guests {
+                        net.sync_host();
+                    } else {
+                        net.sync_guest(who);
+                    }
+                }
+            }
+            4..=5 => {
+                let i = rng.below(guests);
+                if net.online[i] {
+                    net.deliver_down(i);
+                }
+            }
+            6..=7 => {
+                let i = rng.below(guests);
+                if net.online[i] {
+                    net.deliver_up(i);
+                }
+            }
+            8 if outages => {
+                let i = rng.below(guests);
+                if net.online[i] {
+                    net.cut(i);
+                }
+            }
+            9 if outages => {
+                let i = rng.below(guests);
+                if !net.online[i] && rng.chance(40) {
+                    net.reconnect(i);
+                }
+            }
+            _ => {}
+        }
+        if step % 89 == 0 && net.online.iter().all(|o| *o) {
+            net.drain(&mut rng);
+            net.assert_converged(&format!("keyed seed {seed} step {step}"));
+        }
+    }
+    for i in 0..guests {
+        if !net.online[i] {
+            net.reconnect(i);
+        }
+    }
+    net.drain(&mut rng);
+    net.assert_converged(&format!("keyed seed {seed} end"));
+    assert!(!kept.is_empty());
+    for k in &kept {
+        let d = &net.hd;
+        let ok = match k {
+            Kept::Style(id) => d.styles.contains_key(id) && d.style_meta.contains_key(id),
+            Kept::Thread(id) => d.comments.iter().any(|t| t.id == *id),
+            Kept::Reply(t, m) => d.comments.iter().any(|x| x.id == *t && x.messages.iter().any(|c| c.id == *m)),
+            Kept::Variable(id) => d.variables.contains_key(id) && d.variable_collections["col"].variables.contains(id),
+            Kept::Vote(key) => d.board_session.vote.as_ref().is_some_and(|v| v.count(*key) > 0),
+        };
+        assert!(ok, "seed {seed}: lost {k:?}");
+    }
+}
+
+#[test]
+fn concurrent_inserts_of_distinct_keys_are_never_lost() {
+    for seed in 0..12 {
+        run_keyed_sim(seed, 3, 250, false);
+    }
+    for seed in 100..106 {
+        run_keyed_sim(seed, 5, 300, false);
+    }
+    for seed in 200..210 {
+        run_keyed_sim(seed, 1, 200, false);
+    }
+}
+
+#[test]
+fn concurrent_inserts_of_distinct_keys_survive_outages() {
+    for seed in 300..316 {
+        run_keyed_sim(seed, 3, 250, true);
     }
 }
 

@@ -1,6 +1,7 @@
 //! Host side: the single authority that validates, orders and broadcasts every change.
 
-use crate::ops::{apply, doc_fields, RESERVED};
+use crate::entries::entries_now;
+use crate::ops::{apply, doc_fields, LWW_FIELDS, RESERVED};
 use crate::{diff, ClientMsg, Dest, Fix, Op, Out, PeerId, Role, ServerMsg};
 use desigma_doc::{Document, NodeId, PEER_ID_BITS};
 use std::collections::{BTreeMap, BTreeSet};
@@ -177,6 +178,7 @@ impl HostSession {
         let mut bad = Vec::new();
         let mut touched = BTreeSet::new();
         let mut doc_keys = BTreeSet::new();
+        let mut entry_keys = BTreeSet::new();
         for (i, mut op) in ops.into_iter().enumerate() {
             if role == Role::Viewer {
                 rejected.push(i);
@@ -206,6 +208,9 @@ impl HostSession {
                 if let Op::DocPatch { fields } = &op {
                     doc_keys.extend(fields.keys().cloned());
                 }
+                if let Op::DocEntry { field, key, .. } = &op {
+                    entry_keys.insert((field.clone(), key.clone()));
+                }
                 if let Op::Create { parent: Some(p), .. } | Op::Move { parent: p, .. } = &op {
                     touched.insert(*p);
                 }
@@ -227,7 +232,8 @@ impl HostSession {
         let orders = touched.into_iter().filter_map(|p| doc.nodes.get(&p).map(|n| (p, n.children.clone()))).collect();
         let now = if doc_keys.is_empty() { BTreeMap::new() } else { doc_fields(doc) };
         let doc_vals = now.into_iter().filter(|(k, _)| doc_keys.contains(k)).collect();
-        outs.push(Out { to: Dest::Peer(peer), msg: ServerMsg::Ack { client_seq, seq: self.seq, rejected, orders, doc: doc_vals } });
+        let entries = entries_now(doc, &entry_keys);
+        outs.push(Out { to: Dest::Peer(peer), msg: ServerMsg::Ack { client_seq, seq: self.seq, rejected, orders, doc: doc_vals, entries } });
         if !fixes.is_empty() {
             outs.push(Out { to: Dest::Peer(peer), msg: ServerMsg::Correction { client_seq, fixes } });
         }
@@ -248,8 +254,11 @@ impl HostSession {
             }
             Op::DocPatch { fields } => {
                 let now = doc_fields(doc);
-                fixes.push(Fix::Doc(fields.keys().filter_map(|k| now.get(k).map(|v| (k.clone(), v.clone()))).collect()));
+                fixes.push(Fix::Doc(
+                    fields.keys().filter(|k| LWW_FIELDS.contains(&k.as_str())).filter_map(|k| now.get(k).map(|v| (k.clone(), v.clone()))).collect(),
+                ));
             }
+            Op::DocEntry { field, key, .. } => fixes.push(Fix::Entries(entries_now(doc, [&(field.clone(), key.clone())]))),
             Op::Delete { .. } | Op::Image { .. } => {}
         }
     }
