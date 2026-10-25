@@ -28,6 +28,17 @@
   <string>public.app-category.graphics-design</string>
   <key>NSHumanReadableCopyright</key>
   <string>MIT OR Apache-2.0, desigma contributors</string>
+  <key>CFBundleURLTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleURLName</key>
+      <string>desigma session link</string>
+      <key>CFBundleURLSchemes</key>
+      <array>
+        <string>desigma</string>
+      </array>
+    </dict>
+  </array>
   <key>CFBundleDocumentTypes</key>
   <array>
     <dict>
