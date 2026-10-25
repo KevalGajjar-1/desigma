@@ -1,11 +1,11 @@
 //! Bytes that travel next to the document: images (read from the local cache when the guest has
 //! them) and fonts (asked from the host when the guest cannot load them itself).
 
-use super::assets::{self, digest, FontKey, ImageInfo};
-use super::{encode, GuestState, HostState, ToGuest, ToHost};
+use super::assets::{self, digest, font_key, FontKey};
+use super::{encode, GuestState, HostState, ToHost};
 use crate::app::App;
+use desigma_collab::wire;
 use desigma_collab::{ClientMsg, ServerMsg};
-use desigma_doc::Document;
 use desigma_fonts::FontRequest;
 use std::collections::{BTreeSet, VecDeque};
 
@@ -20,11 +20,6 @@ pub struct FontAsk {
     missing: Vec<FontKey>,
     /// Fonts the host sent and the guest loaded.
     pub loaded: Vec<FontKey>,
-}
-
-/// The digest of every non-empty embedded image, by key.
-pub fn image_index(doc: &Document) -> Vec<ImageInfo> {
-    doc.images.iter().filter(|(_, b)| !b.is_empty()).map(|(k, b)| ImageInfo { key: k.clone(), digest: digest(b) }).collect()
 }
 
 /// Checks image bytes from the host against the digest it announced, and keeps them in the cache.
@@ -61,11 +56,14 @@ pub fn send_out(app: &mut App, g: &mut GuestState, outs: Vec<ClientMsg>, local: 
 pub fn answer_fonts(app: &App, h: &HostState, peer: u32, keys: Vec<FontKey>) {
     let Some(p) = h.peers.get(&peer) else { return };
     let used = desigma_fonts::requests_for(&app.doc);
-    for key in keys.into_iter().take(assets::MAX_FONTS_PER_REQUEST) {
+    wire::answer_fonts(&*h.link, p.net, keys, |key| {
         let wanted = used.contains(&FontRequest::new(key.family.clone(), key.weight, key.italic));
-        let bytes = if wanted { app.collab.font_io.0.file(&key).filter(|b| b.len() <= assets::MAX_FONT) } else { None };
-        h.link.send(p.net, encode(&ToGuest::Font { key, bytes: bytes.unwrap_or_default() }));
-    }
+        if wanted {
+            app.collab.font_io.0.file(key).filter(|b| b.len() <= assets::MAX_FONT)
+        } else {
+            None
+        }
+    });
 }
 
 /// Guest: a font the host sent (or could not). Returns whether the document must be redrawn.
@@ -101,7 +99,7 @@ impl App {
         let mut rest = Vec::new();
         let mut keys = Vec::new();
         for r in failed {
-            let key = FontKey::of(&r);
+            let key = font_key(&r);
             if !used.contains(&r) {
                 rest.push(r);
             } else if g.live() && g.fonts.asked.insert(key.clone()) {

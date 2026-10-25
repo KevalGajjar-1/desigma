@@ -1403,7 +1403,6 @@ dependencies = [
  "semver",
  "serde",
  "serde_json",
- "sha2",
  "unicode-segmentation",
  "ureq",
  "url",
@@ -1419,6 +1418,7 @@ dependencies = [
  "desigma-doc",
  "serde",
  "serde_json",
+ "sha2",
  "uuid",
 ]
 

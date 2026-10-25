@@ -56,6 +56,24 @@ pub trait HostLink {
     fn revoke_resume(&self, _token: &str) {}
 }
 
+impl desigma_collab::wire::HostWire for dyn HostLink {
+    fn send(&self, net: u32, bytes: Vec<u8>) {
+        HostLink::send(self, net, bytes);
+    }
+    fn send_presence(&self, net: u32, bytes: &[u8]) {
+        HostLink::send_presence(self, net, bytes);
+    }
+    fn kick(&self, net: u32) {
+        HostLink::kick(self, net);
+    }
+    fn join_token(&self, net: u32) -> Option<String> {
+        HostLink::join_token(self, net)
+    }
+    fn allow_resume(&self, token: &str) {
+        HostLink::allow_resume(self, token);
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Closed {
     Kicked,

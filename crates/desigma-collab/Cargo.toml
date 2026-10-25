@@ -9,5 +9,6 @@ license.workspace = true
 desigma-doc.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sha2 = "0.11"
 data-encoding = "2"
 uuid = { version = "1", features = ["v4"] }

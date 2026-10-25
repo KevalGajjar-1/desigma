@@ -185,7 +185,7 @@ the desigma-net adapters, `presence.rs`, `ui.rs`, `draw.rs`, `tests.rs`).
 * **Frame loop.** `collab::pump` runs in `Shell::logic` (also while the window is occluded). Drain the
   transport, hand guest messages to the sync core, number our own edits when the canvas revision changed
   (at most 20 Hz, flushed once idle), send presence, ease remote cursors, follow.
-* **Wire.** Reliable lane carries `ToGuest { Sync(ServerMsg), Role }` and `ToHost { Sync(ClientMsg) }` as JSON;
+* **Wire.** Reliable lane carries `ToGuest { Sync, Role, Images, Font }` and `ToHost { Sync, Fonts }` (`desigma_collab::wire`) as JSON;
   desigma-net deflates big frames. The host fans out itself (per peer), so a joiner only gets messages after
   its snapshot. Presence is a datagram of at most 1000 bytes (selection cut to fit); the host stamps the sender
   and relays it to the others, replays known presence to a newcomer, and sends `gone` when someone leaves.
@@ -274,10 +274,17 @@ follow; a font the host could not send is not retried.
 Code: `crates/desigma-server` (library plus the `desigma-server` binary; usage, systemd unit and security
 notes in its README).
 
-* **Same protocol.** The server is a headless desktop host: a `HostSession` over a desigma-net `Host`, with the
-  same `ToGuest` / `ToHost` JSON, snapshot on join, `Dest` routing and presence relay as
-  `desigma-app/src/collab/mod.rs`. That loop is tied to app state (toasts, undo rebase, remote cursors), so it
-  is repeated in about 60 lines instead of being extracted. The app joins it with no changes.
+* **Same protocol, same code.** The wire types (`ToGuest`, `ToHost`, `ImageInfo`, `FontKey`, the SHA-256
+  `digest`) and the UI-free host routing live in `desigma_collab::wire`; the app host and the server both call
+  it. `admit` is the one join sequence: the resume secret the transport saw (`join_token`) re-seats a returning
+  guest as the same peer (`HostSession::resume`), otherwise `add_peer` + `allow_resume`; a stale connection of
+  that peer is kicked; then `Role`, `Images` (when the file has images), `Snapshot`, `Resume`. `route` delivers
+  `Out`s by `Dest`, `relay` passes presence on, `answer_fonts` answers `ToHost::Fonts` through a callback. The
+  transport is the small `HostWire` trait (the app implements it for its `HostLink`, the server on
+  `desigma_net::Host`). What stays in each host: the app's toasts, approval, undo rebase and cursors; the
+  server's autosave. A test pins the JSON of every variant.
+* **Reconnect and fonts.** Returning guests get their peer back with no approval. The server has no font
+  system, so every `Fonts` request is answered with empty bytes ("cannot share").
 * **Authority and persistence.** It applies guests' ops to its own document, autosaves when changed (default
   10 s) and on Ctrl-C / `SIGTERM`, always temp file plus rename, with rotating `FILE.bak.N` backups.
   `.fig` / REST `.json` / `.svg` inputs are imported once and saved as `.desigma` next to the source.

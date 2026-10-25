@@ -1,11 +1,11 @@
 //! The server logic in-process on `Network::Direct`: guests join through desigma-net, edit, and
 //! the document, the autosave and the link survive a restart.
 
+use desigma_collab::wire::{self, FontKey, ToGuest, ToHost};
 use desigma_collab::{ClientMsg, GuestSession, Role, ServerMsg};
 use desigma_doc::{Document, Node, NodeId, Rect};
 use desigma_net::{DisconnectReason, Guest, GuestEvent, GuestOptions, JoinError, Network, Ticket};
 use desigma_server::{Config, Server};
-use serde::{Deserialize, Serialize};
 use std::{
     path::{Path, PathBuf},
     sync::{
@@ -17,17 +17,6 @@ use std::{
 };
 
 const T: Duration = Duration::from_secs(20);
-
-// The app's wire enums (desigma-app/src/collab/mod.rs); the JSON must stay identical.
-#[derive(Serialize, Deserialize)]
-enum ToGuest {
-    Sync(ServerMsg),
-    Role(Role),
-}
-#[derive(Serialize, Deserialize)]
-enum ToHost {
-    Sync(ClientMsg),
-}
 
 fn dir(name: &str) -> PathBuf {
     let d = std::env::temp_dir().join(format!("desigma-server-it-{name}-{}", std::process::id()));
@@ -107,7 +96,7 @@ fn open(g: &Guest) -> (GuestSession, Document, Role, Vec<serde_json::Value>) {
                     assert!(reqs.is_empty());
                     return (sess, doc, role, presence);
                 }
-                ToGuest::Sync(_) => {}
+                ToGuest::Sync(_) | ToGuest::Images(_) | ToGuest::Font { .. } => {}
             },
             _ => {}
         }
@@ -280,6 +269,130 @@ fn a_figma_import_is_saved_as_desigma_and_then_wins() {
     std::fs::remove_file(d.join("in.json")).unwrap();
     let server = Server::start(cfg).unwrap();
     assert_eq!(server.path(), d.join("in.desigma"));
+    server.shutdown().unwrap();
+    let _ = std::fs::remove_dir_all(d);
+}
+
+/// Next reliable message from the host, as a typed value.
+fn next_msg(g: &Guest) -> ToGuest {
+    let end = Instant::now() + T;
+    loop {
+        let left = end.checked_duration_since(Instant::now()).expect("no message");
+        if let Some(GuestEvent::Message(b)) = g.recv_timeout(left) {
+            return serde_json::from_slice(&b).unwrap();
+        }
+    }
+}
+
+#[test]
+fn image_digests_arrive_before_the_snapshot_and_fonts_get_an_empty_answer() {
+    let d = dir("images");
+    let file = d.join("i.desigma");
+    let mut doc = Document::new("Shared");
+    doc.add_page("Page 1");
+    doc.images.insert("img-1".into(), vec![1, 2, 3, 4]);
+    std::fs::write(&file, doc.to_json().unwrap()).unwrap();
+    let mut cfg = config(&file, free_port());
+    cfg.password = None;
+    let server = Server::start(cfg).unwrap();
+    let link = server.link().to_string();
+    let running = Running::start(server);
+    let g = join(&link, "Ivy", None).unwrap();
+
+    assert!(matches!(next_msg(&g), ToGuest::Role(Role::Editor)));
+    match next_msg(&g) {
+        ToGuest::Images(list) => {
+            assert_eq!(list.len(), 1);
+            assert_eq!((list[0].key.as_str(), list[0].digest.as_str()), ("img-1", wire::digest(&[1, 2, 3, 4]).as_str()));
+        }
+        _ => panic!("the image digests come right after the role"),
+    }
+    assert!(matches!(next_msg(&g), ToGuest::Sync(ServerMsg::Snapshot { .. })));
+    assert!(matches!(next_msg(&g), ToGuest::Sync(ServerMsg::Resume { .. })));
+
+    let key = FontKey { family: "Inter".into(), weight: 400, italic: false };
+    g.send(serde_json::to_vec(&ToHost::Fonts(vec![key.clone()])).unwrap()).unwrap();
+    match next_msg(&g) {
+        ToGuest::Font { key: k, bytes } => {
+            assert_eq!(k, key);
+            assert!(bytes.is_empty(), "the server has no fonts to share");
+        }
+        _ => panic!("expected the font answer"),
+    }
+    running.stop().shutdown().unwrap();
+    let _ = std::fs::remove_dir_all(d);
+}
+
+#[test]
+fn a_severed_guest_resumes_as_the_same_peer_and_edits_converge() {
+    let d = dir("resume");
+    let file = d.join("r.desigma");
+    let a = seed(&file);
+    let mut cfg = config(&file, free_port());
+    cfg.password = None;
+    let server = Server::start(cfg).unwrap();
+    let link = server.link().to_string();
+    let sever = server.sever_flag();
+    let running = Running::start(server);
+
+    let ana = join(&link, "Ana", None).unwrap();
+    let (mut sess, mut doc, _, _) = open(&ana);
+    let peer = sess.peer();
+    // the secret follows the snapshot
+    let mut token = None;
+    while token.is_none() {
+        if let ToGuest::Sync(m) = next_msg(&ana) {
+            sess.receive(&mut doc, m);
+        }
+        token = sess.token().map(str::to_string);
+    }
+
+    // the network fails; Ana edits offline while Bea joins and edits
+    sever.store(true, Ordering::Relaxed);
+    wait_for("the loss", || match ana.recv_timeout(Duration::from_millis(100)) {
+        Some(GuestEvent::Disconnected(DisconnectReason::Lost(_))) => Some(()),
+        _ => None,
+    });
+    doc.nodes.get_mut(&a).unwrap().name = "Ana offline".into();
+    let c = doc.alloc_id();
+    let mut rect = Node::rectangle(c, Rect::new(5.0, 5.0, 10.0, 10.0));
+    rect.name = "Added offline".into();
+    let page = doc.pages[0];
+    doc.insert(page, rect).unwrap();
+    let bea = join(&link, "Bea", None).unwrap();
+    let (mut bsess, mut bdoc, ..) = open(&bea);
+    assert_ne!(bsess.peer(), peer);
+    let bid = bdoc.alloc_id();
+    let mut brect = Node::rectangle(bid, Rect::new(1.0, 1.0, 5.0, 5.0));
+    brect.name = "Added by Bea".into();
+    let bpage = bdoc.pages[0];
+    bdoc.insert(bpage, brect).unwrap();
+    commit(&bea, &mut bsess, &mut bdoc);
+
+    // Ana returns with her secret: same peer index, no password needed to be asked again
+    let ticket = Ticket::parse(&link).unwrap();
+    let ana2 = Guest::join_resume(&ticket, "Ana", None, GuestOptions { network: Network::Direct, ..Default::default() }, token).unwrap();
+    ana2.wait_joined(T).unwrap();
+    let snapshot = loop {
+        if let ToGuest::Sync(s @ ServerMsg::Snapshot { .. }) = next_msg(&ana2) {
+            break s;
+        }
+    };
+    assert!(matches!(snapshot, ServerMsg::Snapshot { peer: p, .. } if p == peer), "same peer index");
+    let r = sess.rejoin(&mut doc, snapshot).expect("snapshot for the same peer");
+    for m in r.out {
+        send(&ana2, m);
+    }
+    commit(&ana2, &mut sess, &mut doc);
+    assert!(names(&doc).contains(&"Added by Bea".to_string()), "the outage's edits arrive with the snapshot");
+
+    let server = running.stop();
+    let on_server = server.document();
+    assert_eq!(on_server.get(a).unwrap().name, "Ana offline");
+    assert!(names(on_server).contains(&"Added offline".to_string()));
+    assert!(names(on_server).contains(&"Added by Bea".to_string()));
+    assert_eq!(on_server.nodes.get(&c).map(|n| n.name.as_str()), Some("Added offline"));
+    assert_eq!(c.0 >> 40, u64::from(peer));
     server.shutdown().unwrap();
     let _ = std::fs::remove_dir_all(d);
 }
