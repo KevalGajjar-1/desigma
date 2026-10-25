@@ -29,7 +29,11 @@ pub enum ClientMsg {
     /// Ask for the bytes of an embedded image.
     ImageRequest { hash: String },
     /// Bytes of an image, sent on the host's request or in answer to one.
-    ImageData { hash: String, bytes: Vec<u8> },
+    ImageData {
+        hash: String,
+        #[serde(with = "crate::b64")]
+        bytes: Vec<u8>,
+    },
 }
 
 /// What the guest's `local_changes` produces.
@@ -78,7 +82,13 @@ pub enum ServerMsg {
     },
     ImageData {
         hash: String,
+        #[serde(with = "crate::b64")]
         bytes: Vec<u8>,
+    },
+    /// The secret that lets this guest rejoin as the same peer after a lost connection (see
+    /// [`crate::HostSession::resume`]). Sent after the snapshot.
+    Resume {
+        token: String,
     },
 }
 

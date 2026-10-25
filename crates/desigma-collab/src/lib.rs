@@ -6,6 +6,7 @@
 //! writes to fields with unacknowledged local changes, and settle on the host's order. A
 //! transport only has to carry [`ClientMsg`] / [`ServerMsg`] as JSON.
 
+pub mod b64;
 mod diff;
 mod guest;
 mod host;

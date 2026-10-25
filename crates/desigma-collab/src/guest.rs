@@ -46,6 +46,8 @@ pub struct Received {
 /// document since the last [`Self::local_changes`] / [`Self::receive`].
 pub struct GuestSession {
     peer: PeerId,
+    /// Secret for [`HostSession::resume`](crate::HostSession::resume), once the host sent it.
+    token: Option<String>,
     shadow: Document,
     /// Exact replica of the host's state as of `seq`: only host-ordered ops are applied to it.
     /// Whenever nothing is in flight the document is brought back to it, which settles any
@@ -79,6 +81,7 @@ impl GuestSession {
         let missing: Vec<String> = doc.images.iter().filter(|(_, b)| b.is_empty()).map(|(h, _)| h.clone()).collect();
         let s = Self {
             peer,
+            token: None,
             shadow: doc.clone_without_images(),
             base: doc.clone_without_images(),
             seq,
@@ -100,6 +103,60 @@ impl GuestSession {
 
     pub fn peer(&self) -> PeerId {
         self.peer
+    }
+
+    /// The secret to rejoin as this peer after the connection was lost; `None` until the host
+    /// has sent it (right after the snapshot).
+    pub fn token(&self) -> Option<&str> {
+        self.token.as_deref()
+    }
+
+    /// Continues the session on a new connection after the old one was lost. `snapshot` is the
+    /// host's fresh [`ServerMsg::Snapshot`] for the same peer (see
+    /// [`HostSession::resume`](crate::HostSession::resume)); `None` if it is another peer (the
+    /// secret was not known) or not a snapshot.
+    ///
+    /// Local work the host never confirmed is the difference between the last state the host is
+    /// known to have (`base`) and `doc`. It is laid over the new snapshot with the usual rules
+    /// (per field, the local write is the later one; deleted nodes stay deleted) and `doc` is
+    /// brought to that result in place. The next [`Self::local_changes`] then sends exactly
+    /// what the host is still missing. Image requests for what is missing come back in `out`.
+    pub fn rejoin(&mut self, doc: &mut Document, snapshot: ServerMsg) -> Option<Received> {
+        let ServerMsg::Snapshot { doc: snap, seq, peer } = snapshot else { return None };
+        if peer != self.peer {
+            return None;
+        }
+        let snap = *snap;
+        let unconfirmed: Vec<Op> = diff(&self.base, doc).into_iter().filter(|op| !matches!(op, Op::Image { .. })).collect();
+        let mut target = snap.clone_without_images();
+        for op in &unconfirmed {
+            let _ = apply_mode(&mut target, op, Mode::Remote);
+        }
+        let mut r = Received::default();
+        for op in diff(doc, &target).into_iter().filter(|op| !matches!(op, Op::Image { .. })) {
+            let _ = apply_mode(doc, &op, Mode::Remote);
+            r.applied.push(op);
+        }
+        r.changed = !r.applied.is_empty();
+        let missing: Vec<String> = snap.images.keys().filter(|h| doc.images.get(*h).is_none_or(|b| b.is_empty())).cloned().collect();
+        for hash in snap.images.keys() {
+            doc.images.entry(hash.clone()).or_default();
+        }
+        self.shadow = snap.clone_without_images();
+        self.base = snap.clone_without_images();
+        self.seq = seq;
+        self.open.clear();
+        self.open_keys.clear();
+        self.open_tombs.clear();
+        self.open_roots.clear();
+        self.open_placed.clear();
+        self.open_patches.clear();
+        self.inflight.clear();
+        self.pending.clear();
+        self.tombstones.clear();
+        self.requested = missing.iter().cloned().collect();
+        r.out = missing.into_iter().map(|hash| ClientMsg::ImageRequest { hash }).collect();
+        Some(r)
     }
 
     /// Global sequence number of the last host message handled.
@@ -191,6 +248,7 @@ impl GuestSession {
         let mut r = Received::default();
         match msg {
             ServerMsg::Snapshot { .. } => {}
+            ServerMsg::Resume { token } => self.token = Some(token),
             ServerMsg::Ops { seq, ops, .. } => {
                 self.seq = self.seq.max(seq);
                 for op in ops {
