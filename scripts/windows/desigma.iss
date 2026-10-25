@@ -84,5 +84,11 @@ Root: HKA; Subkey: "Software\Classes\desigma.Document"; ValueType: string; Value
 Root: HKA; Subkey: "Software\Classes\desigma.Document\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\{#AppExe},0"; Tasks: fileassoc
 Root: HKA; Subkey: "Software\Classes\desigma.Document\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#AppExe}"" ""%1"""; Tasks: fileassoc
 
+; The desigma:// link scheme: clicking a session link opens the Join dialog.
+Root: HKA; Subkey: "Software\Classes\desigma"; ValueType: string; ValueName: ""; ValueData: "URL:desigma session link"; Flags: uninsdeletekey
+Root: HKA; Subkey: "Software\Classes\desigma"; ValueType: string; ValueName: "URL Protocol"; ValueData: ""
+Root: HKA; Subkey: "Software\Classes\desigma\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\{#AppExe},0"
+Root: HKA; Subkey: "Software\Classes\desigma\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#AppExe}"" ""%1"""
+
 [Run]
 Filename: "{app}\{#AppExe}"; Description: "{cm:LaunchProgram,{#AppName}}"; Flags: nowait postinstall skipifsilent

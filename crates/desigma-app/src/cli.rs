@@ -5,6 +5,8 @@ use std::path::PathBuf;
 #[derive(Debug, Default, PartialEq)]
 pub struct Options {
     pub file: Option<PathBuf>,
+    /// A `desigma://join/...` link: opens the Join session dialog with it filled in.
+    pub join: Option<String>,
     pub screenshot: Option<PathBuf>,
     pub size: Option<(u32, u32)>,
     /// Device pixel ratio of `--screenshot` (`--scale 2` writes a PNG twice the `--size`, with crisp UI and text).
@@ -88,7 +90,9 @@ impl Options {
 /// Values of `--panel`: `variables` / `variables-floating` open the local variables view,
 /// `libraries` the Libraries modal, `updater` / `updater-banner` check the update feed (`DESIGMA_UPDATE_URL`)
 /// and show the update dialog or banner; the others are inspector popups opened on the selection for screenshots.
-pub const PANELS: [&str; 26] = [
+pub const PANELS: [&str; 28] = [
+    "share",
+    "collab",
     "plugins",
     "plugin-install",
     "interaction",
@@ -230,6 +234,14 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Options, String> 
             "-h" | "--help" => o.help = true,
             "-V" | "--version" => o.version = true,
             s if s.starts_with("--") => return Err(format!("unknown option {s}")),
+            s if s.get(..10).is_some_and(|p| p.eq_ignore_ascii_case("desigma://")) => o.join = Some(a),
+            // a file manager may hand over `file:///...` URLs (the Linux launcher passes %U)
+            s if s.starts_with("file://") => {
+                if o.file.is_some() {
+                    return Err("only one file can be opened".into());
+                }
+                o.file = Some(url::Url::parse(s).ok().and_then(|u| u.to_file_path().ok()).ok_or_else(|| format!("invalid file URL {s}"))?);
+            }
             _ => {
                 if o.file.is_some() {
                     return Err("only one file can be opened".into());
@@ -251,7 +263,8 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Options, String> 
     Ok(o)
 }
 
-pub const USAGE: &str = "usage: desigma [FILE] [--screenshot OUT.png] [--size WxH] [--scale FACTOR] [--select LAYER|none] [--menu main|main/File|shape|palette] [--panel interaction|present-variables|variables|variables-floating|libraries|picker|picker-page|fill-d9|picker-gradient|effects-menu|stroke-settings|type-details|effect-noise|effect-texture|effect-glass|version-history|dev-annotate|dev-compare|motion-inspector|motion-easing|motion-library|motion-clip|updater|updater-banner]\n               [--zoom PERCENT] [--rulers] [--grid] [--gpu] [--bridge] [--home] [--library DIR] [--layout-grid grid|columns|rows] [--edit-text LAYER [--select-text START-END]]\n  FILE  .fig, .json (Figma REST or native), .svg or .desigma; without a file the projects home screen opens
+pub const USAGE: &str = "usage: desigma [FILE|desigma://join/LINK] [--screenshot OUT.png] [--size WxH] [--scale FACTOR] [--select LAYER|none] [--menu main|main/File|shape|palette] [--panel interaction|present-variables|variables|variables-floating|libraries|picker|picker-page|fill-d9|picker-gradient|effects-menu|stroke-settings|type-details|effect-noise|effect-texture|effect-glass|version-history|dev-annotate|dev-compare|motion-inspector|motion-easing|motion-library|motion-clip|updater|updater-banner|share|collab]\n               [--zoom PERCENT] [--rulers] [--grid] [--gpu] [--bridge] [--home] [--library DIR] [--layout-grid grid|columns|rows] [--edit-text LAYER [--select-text START-END]]\n  FILE  .fig, .json (Figma REST or native), .svg or .desigma; without a file the projects home screen opens
+  desigma://join/LINK  open the Join session dialog with a shared link filled in
   --scale    with --screenshot: device pixel ratio (2 writes a PNG twice --size, rendered crisp rather than upscaled)
   --home     show the home screen (also in --screenshot mode)
   --present  open presentation preview; --fullscreen starts it in native fullscreen (F11 toggles, Esc returns)
@@ -304,6 +317,20 @@ mod tests {
         assert!(p(&["--dev", "cobol"]).is_err());
         assert!(p(&["--dev"]).is_err());
         assert!(p(&["--panel", "dev-compare"]).is_ok());
+    }
+
+    #[test]
+    fn parses_session_link() {
+        let o = p(&["desigma://join/abc"]).unwrap();
+        assert_eq!(o.join.as_deref(), Some("desigma://join/abc"));
+        assert!(o.file.is_none() && o.wants_home());
+        assert!(p(&["DESIGMA://join/abc", "x.fig"]).unwrap().file.is_some());
+    }
+
+    #[test]
+    fn file_urls_become_paths() {
+        #[cfg(unix)]
+        assert_eq!(p(&["file:///tmp/a.desigma"]).unwrap().file, Some("/tmp/a.desigma".into()));
     }
 
     #[test]

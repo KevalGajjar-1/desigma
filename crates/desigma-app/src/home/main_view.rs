@@ -43,6 +43,11 @@ pub fn show(lib: &Library, h: &mut Home, ui: &mut Ui, rect: Rect, acts: &mut Vec
             acts.push(Act::NewBoard);
         }
         right -= 8.0;
+        let r = button(ui, &p, &mut right, head.center().y, "Join session", Kind::Secondary, "home-join");
+        if r.clicked() {
+            acts.push(Act::JoinSession);
+        }
+        right -= 8.0;
         let r = button(ui, &p, &mut right, head.center().y, "Import\u{2026}", Kind::Secondary, "home-import");
         if r.clicked() {
             acts.push(Act::Import);

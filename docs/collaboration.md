@@ -1,6 +1,6 @@
 # Live collaboration — design and plan
 
-Status: planned. Target: 2–10 people editing one file live, on Windows, macOS and Linux,
+Status: phases 1-4 done (core sync, transport, app integration, presence); polish is open. Target: 2–10 people editing one file live, on Windows, macOS and Linux,
 with no account and no server to run.
 
 ## How it works for users
@@ -144,11 +144,42 @@ Every peer must speak the same protocol version. A mismatch is refused with "upd
    * Framed messages, peer join and leave events, broadcast.
    * A background tokio runtime with channels to the UI thread.
    * Loopback tests with two endpoints in one process (no relay).
-3. **App integration.**
+3. **App integration (done).**
    * Share and Join dialogs and the session lifecycle.
    * Applying remote ops to `App::doc`, plus the shadow and diff loop.
    * Roles, kick and end session.
    * The `desigma://` handler on all three OSes.
-4. **Presence.** Cursors, selections, avatars, Follow.
+4. **Presence (done).** Cursors, selections, avatars, Follow.
 5. **Polish.** Font transfer, image cache, reconnect after a dropped connection, and a headless
    `desigma-server` that can host a file permanently (same protocol).
+
+## Implementation notes (phases 3 and 4)
+
+Code: `crates/desigma-app/src/collab/` (`mod.rs` session and per-frame pump, `link.rs` transport traits and
+the desigma-net adapters, `presence.rs`, `ui.rs`, `draw.rs`, `tests.rs`).
+
+* **Frame loop.** `collab::pump` runs in `Shell::logic` (also while the window is occluded). Drain the
+  transport, hand guest messages to the sync core, number our own edits when the canvas revision changed
+  (at most 20 Hz, flushed once idle), send presence, ease remote cursors, follow.
+* **Wire.** Reliable lane carries `ToGuest { Sync(ServerMsg), Role }` and `ToHost { Sync(ClientMsg) }` as JSON;
+  desigma-net deflates big frames. The host fans out itself (per peer), so a joiner only gets messages after
+  its snapshot. Presence is a datagram of at most 1000 bytes (selection cut to fit); the host stamps the sender
+  and relays it to the others, replays known presence to a newcomer, and sends `gone` when someone leaves.
+  Silent people expire after 12 s; keepalives go out every 2 s.
+* **Transport traits.** `HostLink` / `GuestLink` wrap desigma-net so tests can use in-memory channels.
+  `DESIGMA_COLLAB_NETWORK=direct` skips relays (LAN, loopback).
+* **Undo.** Guest messages go through `rebase_history`; the host rebases its own history for guest ops. An undo
+  that fails with NotFound after a remote delete is silent.
+* **Read-only.** `App::read_only()` (old version or view-only guest) gates `run_tx` and the canvas. The host
+  still rejects viewer ops and corrects the guest.
+* **Ids.** The app only allocates through `Document::alloc_id`; nothing resets `next_id`. A shared document
+  keeps its id range until the session ends. Viewing or restoring old versions is refused while hosting.
+* **Joining.** The shared file replaces the open document (like File, Open), is not tied to a path, and
+  "Save a copy" uses Save to library. The display name is the "Your name" setting (OS user name by default).
+* **Link scheme.** `desigma desigma://join/...` opens Join prefilled. Registered by the Windows installer
+  (`scripts/windows/desigma.iss`), `CFBundleURLTypes` (macOS) and `x-scheme-handler/desigma` (Linux).
+
+Known gaps: macOS delivers URLs as Apple events, which winit does not surface, so there pasting the link is
+the way in; an already running instance is not reused for links (a new window opens); the board has a floating
+Share strip instead of the inspector row; fonts and reconnect are phase 5.
+

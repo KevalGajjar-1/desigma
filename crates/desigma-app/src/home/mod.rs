@@ -218,6 +218,8 @@ pub enum Act {
     NewFile,
     NewBoard,
     Import,
+    /// Opens the Join session dialog.
+    JoinSession,
     NewProject,
     RenameProject(String),
     DeleteProject(String),
@@ -407,6 +409,7 @@ pub fn apply(app: &mut App, act: Act) {
             };
             app.new_library_board(target);
         }
+        Act::JoinSession => app.open_join(None),
         Act::Import => {
             let paths = rfd::FileDialog::new()
                 .add_filter("Design files", &["fig", "json", "svg", "desigma"])

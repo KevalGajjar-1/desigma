@@ -119,11 +119,12 @@ impl App {
 
     // ------------------------------------------------------------ plumbing
     pub fn run_tx(&mut self, tx: Tx) -> bool {
-        if self.history.viewing.is_some() {
-            // an old version is shown read-only
+        if self.read_only() {
+            // an old version, or a file shared view-only, is shown read-only
             tx.cancel(&mut self.doc);
             self.changed();
-            self.show_toast("Viewing an old version is read-only", true);
+            let msg = if self.history.viewing.is_some() { "Viewing an old version is read-only" } else { "The host shared this file as view only" };
+            self.show_toast(msg, true);
             return false;
         }
         if self.scrub.is_some() {
@@ -206,6 +207,8 @@ impl App {
                 true
             }
             Ok(false) => false,
+            // a person in the session deleted what this step touches: nothing to undo
+            Err(desigma_doc::DocError::NotFound(_)) if self.collab.active() => false,
             Err(e) => {
                 self.show_toast(format!("Undo failed: {e}"), true);
                 false
@@ -225,6 +228,8 @@ impl App {
                 true
             }
             Ok(false) => false,
+            // a person in the session deleted what this step touches: nothing to redo
+            Err(desigma_doc::DocError::NotFound(_)) if self.collab.active() => false,
             Err(e) => {
                 self.show_toast(format!("Redo failed: {e}"), true);
                 false
@@ -787,6 +792,7 @@ impl App {
     // ------------------------------------------------------------ files
     pub fn replace_document(&mut self, doc: Document, path: Option<PathBuf>) {
         crate::decks::ui::flush_notes(self);
+        self.end_collab();
         self.stop_plugin();
         // Pending edits of the library file being left are saved first (from the live state, not an old version).
         self.exit_version_view();

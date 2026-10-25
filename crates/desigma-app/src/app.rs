@@ -171,6 +171,8 @@ pub struct App {
     pub motion: crate::motion::MotionUi,
     /// Motion inspector: easing editor, animation library and clip popovers.
     pub motion_ins: crate::motion::inspector::InspectorState,
+    /// Live collaboration: sharing, joining, other people's presence.
+    pub collab: crate::collab::CollabState,
 }
 
 impl App {
@@ -222,6 +224,7 @@ impl App {
             updater: Default::default(),
             motion: Default::default(),
             motion_ins: Default::default(),
+            collab: Default::default(),
         }
     }
 

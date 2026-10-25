@@ -83,6 +83,7 @@ impl App {
         self.save_close_version();
         self.stop_plugin();
         self.flush_autosave();
+        self.end_collab();
         self.canvas.reset_interaction();
         let mut home = Home::new();
         home.refresh(&lib);

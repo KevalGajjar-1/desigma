@@ -93,6 +93,10 @@ pub enum Action {
     /// Home screen (file browser).
     BackToFiles,
     SaveToLibrary,
+    /// File -> Share…: start or manage a live session.
+    Share,
+    /// File -> Join session….
+    JoinSession,
     /// File -> Show version history.
     ToggleVersionHistory,
     /// Ctrl+Alt+S: save a named version.
@@ -218,6 +222,8 @@ pub fn run(app: &mut App, ctx: &Context, a: Action) {
         Action::Plugins => app.open_plugins(),
         Action::BackToFiles => app.go_home(),
         Action::SaveToLibrary => app.begin_save_to_library(),
+        Action::Share => app.open_share(),
+        Action::JoinSession => app.open_join(None),
         Action::ToggleVersionHistory => app.toggle_version_history(),
         Action::SaveVersion => app.begin_save_version(),
         Action::YourName => app.ask_author_name(),
@@ -362,6 +368,8 @@ fn main_nodes(app: &App) -> Vec<Node> {
         leaf("Save", "Ctrl+S", Action::Save),
         leaf("Save as…", "Ctrl+Shift+S", Action::SaveAs),
         leaf("Save to library…", "", Action::SaveToLibrary).off(app.lib.is_none() || app.lib_file.is_some()).sep(),
+        leaf("Share…", "", Action::Share).off(app.collab.is_guest()),
+        leaf("Join session…", "", Action::JoinSession).sep(),
         leaf("Show version history", "", Action::ToggleVersionHistory).on(app.history.open),
         leaf("Save to version history…", "Ctrl+Alt+S", Action::SaveVersion).off(!app.has_history()).sep(),
         leaf("Export selection as PNG…", "", Action::Export).off(!has_sel),
@@ -543,6 +551,8 @@ fn file_items(app: &App) -> Vec<(MenuItem, Option<Action>)> {
         (MenuItem::new("Save").shortcut("Ctrl+S"), Some(Action::Save)),
         (MenuItem::new("Save as…").shortcut("Ctrl+Shift+S"), Some(Action::SaveAs)),
         (MenuItem::new("Save to library…").disabled(app.lib.is_none() || app.lib_file.is_some()).sep(), Some(Action::SaveToLibrary)),
+        (MenuItem::new("Share…").disabled(app.collab.is_guest()), Some(Action::Share)),
+        (MenuItem::new("Join session…").sep(), Some(Action::JoinSession)),
         (MenuItem::new("Show version history").checked(app.history.open), Some(Action::ToggleVersionHistory)),
         (MenuItem::new("Save to version history…").shortcut("Ctrl+Alt+S").disabled(!app.has_history()).sep(), Some(Action::SaveVersion)),
         (MenuItem::new("Undo").shortcut("Ctrl+Z").disabled(!app.hist.can_undo()), Some(Action::Undo)),

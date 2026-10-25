@@ -57,7 +57,7 @@ pub fn label_rects(app: &App, rect: ERect) -> Vec<(NodeId, ERect)> {
     out
 }
 
-fn outline(app: &App, p: &Painter, rect: ERect, id: NodeId, col: Color32, width: f32) {
+pub(crate) fn outline(app: &App, p: &Painter, rect: ERect, id: NodeId, col: Color32, width: f32) {
     // a connector is outlined along its line, not around its box
     if let Some(route) = desigma_doc::connector_route(&app.doc, id) {
         let pw = parent_world(&app.doc, id);

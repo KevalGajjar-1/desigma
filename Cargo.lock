@@ -1376,6 +1376,7 @@ version = "0.1.0"
 dependencies = [
  "arboard",
  "cosmic-text",
+ "desigma-collab",
  "desigma-doc",
  "desigma-engine",
  "desigma-export",
@@ -1384,6 +1385,7 @@ dependencies = [
  "desigma-gpu",
  "desigma-library",
  "desigma-mcp",
+ "desigma-net",
  "desigma-render",
  "desigma-svg",
  "eframe",

@@ -960,6 +960,7 @@ mod vector;
 
 mod assets_thumbs;
 mod bridge;
+mod collab;
 mod libraries;
 mod lint;
 mod plugins;

@@ -44,6 +44,10 @@ pub fn show(app: &mut App, ui: &mut Ui, rect: Rect) {
         app.start_present();
     }
 
+    // Session controls (Share, people), left of Present.
+    let row = Rect::from_min_max(Pos2::new(left + theme::RIGHT_TABS_X, pb.top()), Pos2::new(pb.left() - 8.0, pb.bottom()));
+    crate::collab::ui::topbar(app, ui, row);
+
     // Tabs.
     let mut x = left + theme::RIGHT_TABS_X;
     let ty = rect.top() + theme::RIGHT_TABS_Y;

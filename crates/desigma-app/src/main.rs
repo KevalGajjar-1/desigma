@@ -4,6 +4,7 @@ mod bridge;
 mod canvas;
 mod cli;
 mod clipboard;
+mod collab;
 mod comments;
 mod comp_ops;
 mod decks;

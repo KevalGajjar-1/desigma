@@ -102,6 +102,9 @@ impl Shell {
         if let Some(f) = &opts.file {
             app.open_path(f.clone());
         }
+        if let Some(link) = opts.join.clone() {
+            app.open_join(Some(link));
+        }
         if let Some(id) = &opts.open_id {
             app.open_library_file(id);
         } else if opts.home {
@@ -218,6 +221,8 @@ impl Shell {
             Some("version-history") => crate::history::preset::apply(&mut app, opts.library.clone()),
             Some(p @ ("motion-inspector" | "motion-easing" | "motion-library" | "motion-clip")) => crate::motion::inspector::preset(&mut app, p),
             Some(p @ ("dev-annotate" | "dev-compare")) => crate::dev::preset::panel(&mut app, p),
+            Some("share") => app.open_share(),
+            Some("collab") => crate::collab::preview(&mut app),
             Some(p @ ("updater" | "updater-banner")) => crate::updater::preset(&mut app, p),
             Some(panel @ ("variables" | "variables-floating")) => {
                 app.vars.full = panel == "variables";
@@ -566,6 +571,7 @@ impl eframe::App for Shell {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.app.now = ctx.input(|i| i.time);
         self.app.poll_bridge();
+        crate::collab::pump(&mut self.app, ctx);
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
@@ -631,6 +637,7 @@ impl Shell {
         }
         crate::home::show(&mut self.app, ui);
         crate::home::dialog::show(&mut self.app, ctx);
+        crate::collab::ui::join_dialog(&mut self.app, ctx);
         let full = ui.max_rect();
         self.toast(ui, full);
         self.sync_title(ctx);
@@ -731,6 +738,7 @@ impl Shell {
                 crate::board::section::rename_ui(&mut self.app, ui, canvas_rect);
                 crate::board::canvas::zoom_pill(&mut self.app, ui, canvas_rect);
                 crate::board::session::show(&mut self.app, ui, canvas_rect);
+                crate::collab::ui::board_strip(&mut self.app, ui, canvas_rect);
             } else {
                 right::show(&mut self.app, ui, right_rect);
                 let tb = if deck {
@@ -743,6 +751,7 @@ impl Shell {
                 toolbar::show(&mut self.app, ui, tb);
             }
             crate::history::banner::show(&mut self.app, ui, canvas_rect);
+            crate::collab::ui::banner(&mut self.app, ui, canvas_rect);
             self.context_menu(ui, canvas_rect);
             menus::show(&mut self.app, &ctx);
             panels::context::show(&mut self.app, &ctx);
@@ -756,6 +765,9 @@ impl Shell {
         crate::plugins::ui::show(&mut self.app, &ctx);
         crate::updater::ui::show(&mut self.app, &ctx);
         crate::bridge::ui::show(&mut self.app, &ctx);
+        crate::collab::ui::share_popover(&mut self.app, &ctx);
+        crate::collab::ui::requests(&mut self.app, &ctx);
+        crate::collab::ui::join_dialog(&mut self.app, &ctx);
         self.toast(ui, full);
 
         self.sync_title(&ctx);
