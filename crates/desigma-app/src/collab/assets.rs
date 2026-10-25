@@ -7,46 +7,23 @@
 //! digest it was told.
 
 use desigma_fonts::FontRequest;
-use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 use std::time::SystemTime;
 
 /// Largest font file shared with a guest.
 pub const MAX_FONT: usize = 20 * 1024 * 1024;
-/// Most fonts one request may ask for.
-pub const MAX_FONTS_PER_REQUEST: usize = 64;
 /// The image cache stays under this many bytes.
 pub const IMAGE_CACHE_LIMIT: u64 = 500 * 1024 * 1024;
 
-/// SHA-256 of `bytes` as lowercase hex.
-pub fn digest(bytes: &[u8]) -> String {
-    Sha256::digest(bytes).iter().map(|b| format!("{b:02x}")).collect()
-}
+pub use desigma_collab::wire::{digest, FontKey};
 
 fn valid_digest(d: &str) -> bool {
     d.len() == 64 && d.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
-/// The digest of an embedded image, by its key in the document.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ImageInfo {
-    pub key: String,
-    pub digest: String,
-}
-
-/// One font face, as a guest asks for it.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-pub struct FontKey {
-    pub family: String,
-    pub weight: u16,
-    pub italic: bool,
-}
-
-impl FontKey {
-    pub fn of(r: &FontRequest) -> Self {
-        Self { family: r.family.clone(), weight: r.weight, italic: r.italic }
-    }
+/// The font a request names.
+pub fn font_key(r: &FontRequest) -> FontKey {
+    FontKey { family: r.family.clone(), weight: r.weight, italic: r.italic }
 }
 
 /// Where fonts come from on the host and where they go on the guest.

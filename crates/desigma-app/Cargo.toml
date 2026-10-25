@@ -46,7 +46,6 @@ semver = "1"
 url = "2"
 uuid = { version = "1", features = ["v4"] }
 dirs = "5"
-sha2 = "0.11"
 roxmltree = "0.20"
 egui = "0.35"
 resvg = { version = "0.45", default-features = false }

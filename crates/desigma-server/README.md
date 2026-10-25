@@ -113,4 +113,9 @@ cat /var/lib/desigma/my-design.link
 
 * No per-person accounts, approval or `--allow-names` list; the password is shared.
 * One document per process (run several instances for several files).
-* Font transfer, reconnect and the image cache follow the desktop host's phase 5 work.
+* Fonts: the server has no font system, so a guest's font request is always answered with empty bytes
+  (the guest shows its usual missing-font notice). Embedded images are shared, with their digests so
+  guests can use their cache.
+
+Guests that lose their connection rejoin as the same person (same peer, same layer ids) with the secret the
+server gave them; no approval is involved, and edits made during the outage are merged.

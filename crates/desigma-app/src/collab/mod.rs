@@ -22,39 +22,17 @@ pub mod ui;
 
 use crate::app::App;
 use crate::home::dialog::{Dialog, Intent};
-use assets::{FontIoBox, FontKey, ImageCache, ImageInfo};
-use desigma_collab::{rebase_history, ClientMsg, Dest, GuestSession, HostSession, Out, Role, ServerMsg};
+use assets::{FontIoBox, ImageCache};
+use desigma_collab::wire::{self, encode, ImageInfo};
+pub use desigma_collab::wire::{ToGuest, ToHost};
+#[cfg(test)]
+use desigma_collab::ClientMsg;
+use desigma_collab::{rebase_history, GuestSession, HostSession, Out, Role, ServerMsg};
 use desigma_doc::NodeId;
 use link::{Closed, GuestEv, GuestLink, HostEv, HostLink, Redial};
 use presence::{Presence, Remote};
 use reconnect::Reconnect;
-use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, VecDeque};
-
-/// Host to guest, over the reliable lane.
-#[derive(Serialize, Deserialize)]
-pub enum ToGuest {
-    Sync(ServerMsg),
-    /// What the guest may do. Sent before the snapshot and whenever the host changes it.
-    Role(Role),
-    /// The digest of every embedded image, sent before the snapshot, so a guest can read the
-    /// ones it has cached instead of asking for them.
-    Images(Vec<ImageInfo>),
-    /// A font the guest asked for. Empty `bytes`: the host cannot share it.
-    Font {
-        key: FontKey,
-        #[serde(with = "desigma_collab::b64", default)]
-        bytes: Vec<u8>,
-    },
-}
-
-/// Guest to host, over the reliable lane.
-#[derive(Serialize, Deserialize)]
-pub enum ToHost {
-    Sync(ClientMsg),
-    /// Fonts the guest lacks and the document uses.
-    Fonts(Vec<FontKey>),
-}
 
 /// What to do once the user agrees to leave the session.
 type AfterLeave = Box<dyn FnOnce(&mut App)>;
@@ -400,10 +378,6 @@ impl App {
     }
 }
 
-fn encode<T: Serialize>(msg: &T) -> Vec<u8> {
-    serde_json::to_vec(msg).unwrap_or_default()
-}
-
 /// One frame of session work. Call at the start of every frame, before the UI draws.
 pub fn pump(app: &mut App, ctx: &egui::Context) {
     if !app.collab.active() {
@@ -514,34 +488,16 @@ fn host_io(app: &mut App, now: f64, wake: &mut f64) {
                 let outs = h.sess.local_changes(&app.doc);
                 deliver(app, &h, outs);
                 // A guest whose connection dropped comes back as the same person, same id range.
-                let resumed = h.link.join_token(peer).and_then(|t| h.sess.resume(&t, h.role));
-                let cp = resumed.unwrap_or_else(|| h.sess.add_peer(h.role));
-                let role = h.sess.role(cp).unwrap_or(h.role);
-                if resumed.is_none() {
-                    if let Some(t) = h.sess.token(cp) {
-                        h.link.allow_resume(t);
-                    }
-                }
-                // the old connection of a resumed guest may not have been noticed as dead yet
-                if let Some(old) = h.peers.remove(&cp) {
-                    h.link.kick(old.net);
-                }
-                h.link.send(peer, encode(&ToGuest::Role(role)));
-                let images = exchange::image_index(&app.doc);
-                if !images.is_empty() {
-                    h.link.send(peer, encode(&ToGuest::Images(images)));
-                }
-                h.link.send(peer, encode(&ToGuest::Sync(h.sess.snapshot(cp))));
-                if let Some(m) = h.sess.resume_msg(cp) {
-                    h.link.send(peer, encode(&ToGuest::Sync(m)));
-                }
+                let peers = &h.peers;
+                let j = wire::admit(&mut h.sess, &*h.link, &app.doc, peer, h.role, |cp| peers.get(&cp).map(|p| p.net));
+                let (cp, role, resumed) = (j.peer, j.role, j.resumed);
                 h.peers.insert(cp, Peer { net: peer, name: name.clone(), role });
                 // the newcomer sees the guests already here without waiting for their next update
                 for r in app.collab.remotes.values() {
                     h.link.send_presence(peer, &r.p.encode());
                 }
                 app.collab.pres.reset();
-                app.show_toast(if resumed.is_some() { format!("{name} reconnected") } else { format!("{name} joined") }, false);
+                app.show_toast(if resumed { format!("{name} reconnected") } else { format!("{name} joined") }, false);
             }
             HostEv::Left { peer } => {
                 if let Some(cp) = h.peers.iter().find(|(_, p)| p.net == peer).map(|(c, _)| *c) {
@@ -577,11 +533,7 @@ fn host_io(app: &mut App, now: f64, wake: &mut f64) {
                 p.peer = cp;
                 p.gone = false;
                 let out = p.encode();
-                for (other, o) in &h.peers {
-                    if *other != cp {
-                        h.link.send_presence(o.net, &out);
-                    }
-                }
+                wire::relay(&*h.link, cp, &out, h.peers.iter().map(|(c, p)| (*c, p.net)));
                 presence::apply(&mut app.collab.remotes, p, now);
             }
         }
@@ -608,7 +560,7 @@ fn host_io(app: &mut App, now: f64, wake: &mut f64) {
 /// Sends the host's outgoing messages, and keeps the host's own undo history from reverting
 /// what a guest just changed.
 fn deliver(app: &mut App, h: &HostState, outs: Vec<Out>) {
-    for out in outs {
+    for out in &outs {
         if let ServerMsg::Ops { from, ops, .. } = &out.msg {
             if *from != 0 {
                 for op in ops {
@@ -616,18 +568,8 @@ fn deliver(app: &mut App, h: &HostState, outs: Vec<Out>) {
                 }
             }
         }
-        let bytes = encode(&ToGuest::Sync(out.msg));
-        for (cp, p) in &h.peers {
-            let hit = match out.to {
-                Dest::All => true,
-                Dest::AllBut(x) => *cp != x,
-                Dest::Peer(x) => *cp == x,
-            };
-            if hit {
-                h.link.send(p.net, bytes.clone());
-            }
-        }
     }
+    wire::route(&*h.link, outs, h.peers.iter().map(|(c, p)| (*c, p.net)));
 }
 
 fn guest_io(app: &mut App, now: f64, wake: &mut f64) {

@@ -15,6 +15,7 @@ mod ops;
 mod rebase;
 #[cfg(test)]
 mod sim;
+pub mod wire;
 
 pub use diff::diff;
 pub use guest::{GuestSession, Received};

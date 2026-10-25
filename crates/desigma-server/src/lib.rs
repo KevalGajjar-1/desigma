@@ -5,38 +5,50 @@
 //! it applies guests' ops to its document, autosaves, and relays presence. It has no cursor of its
 //! own and nobody to ask for approval, so everyone who passes the password is let in.
 //!
-//! The wire shapes (`ToGuest` / `ToHost`) and the presence relay mirror
-//! `desigma-app/src/collab/mod.rs`; that code is tied to the app's state (toasts, undo history,
-//! remote cursors), so the small routing loop is repeated here instead of shared.
+//! The wire types and the host-side routing (admit or resume a guest, `Dest` delivery, presence
+//! relay, font requests) are `desigma_collab::wire`, the same code the desktop host runs. Guests
+//! that lose their connection come back as the same peer with the resume secret they were given.
+//! The server has no font system, so a font request is answered with empty bytes ("cannot share").
 
 mod key;
 mod store;
 
-use desigma_collab::{ClientMsg, Dest, HostSession, Out, PeerId, Role, ServerMsg};
+use desigma_collab::wire::{self, encode, HostWire, ToHost};
+use desigma_collab::{HostSession, PeerId, Role};
 use desigma_doc::Document;
 use desigma_net::{Host, HostEvent, HostOptions, Network};
-use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
-    sync::atomic::{AtomicBool, Ordering},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
     time::{Duration, Instant},
 };
 
 pub use key::load_or_create_key;
 pub use store::{load_document, save_atomic};
 
-/// Host to guest, over the reliable lane (same JSON as the app's `ToGuest`).
-#[derive(Serialize, Deserialize)]
-enum ToGuest {
-    Sync(ServerMsg),
-    Role(Role),
-}
+/// The transport calls the shared routing needs, straight on the network host.
+struct Wire<'a>(&'a Host);
 
-/// Guest to host (same JSON as the app's `ToHost`).
-#[derive(Serialize, Deserialize)]
-enum ToHost {
-    Sync(ClientMsg),
+impl HostWire for Wire<'_> {
+    fn send(&self, net: u32, bytes: Vec<u8>) {
+        let _ = self.0.send(net, bytes);
+    }
+    fn send_presence(&self, net: u32, bytes: &[u8]) {
+        let _ = self.0.send_presence(net, bytes);
+    }
+    fn kick(&self, net: u32) {
+        self.0.kick(net);
+    }
+    fn join_token(&self, net: u32) -> Option<String> {
+        self.0.join_token(net)
+    }
+    fn allow_resume(&self, token: &str) {
+        self.0.allow_resume(token);
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -64,6 +76,14 @@ pub struct Config {
 }
 
 impl Config {
+    fn role(&self) -> Role {
+        if self.view_only {
+            Role::Viewer
+        } else {
+            Role::Editor
+        }
+    }
+
     pub fn new(file: impl Into<PathBuf>) -> Self {
         Self {
             file: file.into(),
@@ -100,6 +120,8 @@ pub struct Server {
     presence: BTreeMap<PeerId, Vec<u8>>,
     dirty: bool,
     last_save: Instant,
+    /// Tests set it to cut every connection like a network failure.
+    sever: Arc<AtomicBool>,
 }
 
 impl Server {
@@ -124,7 +146,19 @@ impl Server {
             std::fs::write(p, format!("{link}\n")).map_err(|e| format!("cannot write {}: {e}", p.display()))?;
         }
         let sess = HostSession::new(&mut doc);
-        let mut s = Server { cfg, host, sess, doc, doc_path, link, peers: BTreeMap::new(), presence: BTreeMap::new(), dirty: false, last_save: Instant::now() };
+        let mut s = Server {
+            cfg,
+            host,
+            sess,
+            doc,
+            doc_path,
+            link,
+            peers: BTreeMap::new(),
+            presence: BTreeMap::new(),
+            dirty: false,
+            last_save: Instant::now(),
+            sever: Arc::default(),
+        };
         // Make sure the file exists (a fresh import or a new document) and is writable.
         s.save()?;
         Ok(s)
@@ -157,8 +191,20 @@ impl Server {
         }
     }
 
+    /// Setting the flag cuts every guest's connection at the next step, as a network failure
+    /// would (for tests of reconnecting).
+    #[doc(hidden)]
+    pub fn sever_flag(&self) -> Arc<AtomicBool> {
+        self.sever.clone()
+    }
+
     /// Handles queued network events (waiting up to `wait` for the first) and autosaves when due.
     pub fn step(&mut self, wait: Duration) {
+        if self.sever.swap(false, Ordering::Relaxed) {
+            for net in self.host.peers() {
+                self.host.sever(net);
+            }
+        }
         let mut next = self.host.recv_timeout(wait);
         while let Some(ev) = next {
             self.handle(ev);
@@ -194,14 +240,6 @@ impl Server {
         log(&self.cfg.name, msg);
     }
 
-    fn role(&self) -> Role {
-        if self.cfg.view_only {
-            Role::Viewer
-        } else {
-            Role::Editor
-        }
-    }
-
     fn session_peer(&self, net: u32) -> Option<PeerId> {
         self.peers.iter().find(|(_, g)| g.net == net).map(|(c, _)| *c)
     }
@@ -214,16 +252,14 @@ impl Server {
             HostEvent::JoinRequest { request, .. } => self.host.respond(request, true),
             HostEvent::JoinRefused { name, error, .. } => self.log(&format!("{name} could not join: {error}")),
             HostEvent::PeerJoined { peer, name } => {
-                let role = self.role();
-                let cp = self.sess.add_peer(role);
-                let _ = self.host.send(peer, encode(&ToGuest::Role(role)));
-                let _ = self.host.send(peer, encode(&ToGuest::Sync(self.sess.snapshot(cp))));
+                let peers = &self.peers;
+                let j = wire::admit(&mut self.sess, &Wire(&self.host), &self.doc, peer, self.cfg.role(), |cp| peers.get(&cp).map(|g| g.net));
                 // The newcomer sees the guests already here without waiting for their next update.
                 for bytes in self.presence.values() {
                     let _ = self.host.send_presence(peer, bytes);
                 }
-                self.log(&format!("{name} joined ({} online)", self.peers.len() + 1));
-                self.peers.insert(cp, Guest { net: peer, name });
+                self.peers.insert(j.peer, Guest { net: peer, name: name.clone() });
+                self.log(&format!("{name} {} ({} online)", if j.resumed { "reconnected" } else { "joined" }, self.peers.len()));
             }
             HostEvent::PeerLeft { peer } => {
                 let Some(cp) = self.session_peer(peer) else { return };
@@ -236,12 +272,18 @@ impl Server {
             }
             HostEvent::Message { peer, bytes } => {
                 let Some(cp) = self.session_peer(peer) else { return };
-                let Ok(ToHost::Sync(msg)) = serde_json::from_slice(&bytes) else { return };
-                let before = self.sess.seq();
-                let outs = self.sess.receive(&mut self.doc, cp, msg);
-                self.deliver(outs);
-                if self.sess.seq() != before {
-                    self.dirty = true;
+                match serde_json::from_slice(&bytes) {
+                    Ok(ToHost::Sync(msg)) => {
+                        let before = self.sess.seq();
+                        let outs = self.sess.receive(&mut self.doc, cp, msg);
+                        wire::route(&Wire(&self.host), outs, self.peers.iter().map(|(c, g)| (*c, g.net)));
+                        if self.sess.seq() != before {
+                            self.dirty = true;
+                        }
+                    }
+                    // No font system here: every font is "cannot share".
+                    Ok(ToHost::Fonts(keys)) => wire::answer_fonts(&Wire(&self.host), peer, keys, |_| None),
+                    Err(_) => {}
                 }
             }
             HostEvent::Presence { peer, bytes } => {
@@ -251,35 +293,11 @@ impl Server {
                 p.insert("peer".into(), cp.into());
                 p.remove("gone");
                 let out = encode(&serde_json::Value::Object(p));
-                for (other, g) in &self.peers {
-                    if *other != cp {
-                        let _ = self.host.send_presence(g.net, &out);
-                    }
-                }
+                wire::relay(&Wire(&self.host), cp, &out, self.peers.iter().map(|(c, g)| (*c, g.net)));
                 self.presence.insert(cp, out);
             }
         }
     }
-
-    fn deliver(&self, outs: Vec<Out>) {
-        for out in outs {
-            let bytes = encode(&ToGuest::Sync(out.msg));
-            for (cp, g) in &self.peers {
-                let hit = match out.to {
-                    Dest::All => true,
-                    Dest::AllBut(x) => *cp != x,
-                    Dest::Peer(x) => *cp == x,
-                };
-                if hit {
-                    let _ = self.host.send(g.net, bytes.clone());
-                }
-            }
-        }
-    }
-}
-
-fn encode<T: Serialize>(msg: &T) -> Vec<u8> {
-    serde_json::to_vec(msg).unwrap_or_default()
 }
 
 /// One log line on stdout: `2026-10-25 12:00:00 UTC [Server] message`.
