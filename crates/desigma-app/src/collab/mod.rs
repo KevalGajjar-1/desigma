@@ -657,3 +657,14 @@ fn follow(app: &mut App, esc: bool, dt: f64, wake: &mut f64) {
     app.collab.last_follow = Some((nx, ny, zoom, app.page));
     app.changed();
 }
+
+/// `--panel collab` (screenshot aid): two other people on the canvas, one selecting a layer.
+pub fn preview(app: &mut App) {
+    let page = app.page.0;
+    let first = app.doc.pages.first().and_then(|p| app.doc.get(*p)).and_then(|p| p.children.first().copied()).map(|i| i.0);
+    let people = [(1, "Ana", [260.0, 180.0], first.into_iter().collect::<Vec<_>>()), (2, "Boris", [520.0, 340.0], vec![])];
+    for (peer, name, cursor, sel) in people {
+        let p = Presence { peer, name: name.into(), page, cursor: Some(cursor), sel, view: [0.0, 0.0, 1.0], gone: false };
+        presence::apply(&mut app.collab.remotes, p, 0.0);
+    }
+}

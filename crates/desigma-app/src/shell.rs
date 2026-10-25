@@ -221,6 +221,8 @@ impl Shell {
             Some("version-history") => crate::history::preset::apply(&mut app, opts.library.clone()),
             Some(p @ ("motion-inspector" | "motion-easing" | "motion-library" | "motion-clip")) => crate::motion::inspector::preset(&mut app, p),
             Some(p @ ("dev-annotate" | "dev-compare")) => crate::dev::preset::panel(&mut app, p),
+            Some("share") => app.open_share(),
+            Some("collab") => crate::collab::preview(&mut app),
             Some(p @ ("updater" | "updater-banner")) => crate::updater::preset(&mut app, p),
             Some(panel @ ("variables" | "variables-floating")) => {
                 app.vars.full = panel == "variables";
