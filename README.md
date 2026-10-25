@@ -4,7 +4,7 @@
 
 <p align="center">
   <b>Interface design; an independent, local-first, open-source design tool built in Rust.</b><br>
-  Frames, auto layout, components and variants, prototyping, <b>keyframe motion</b>, whiteboards, decks, vector editing<br>
+  Frames, auto layout, components and variants, prototyping, <b>live collaboration</b>, <b>keyframe motion</b>, whiteboards, decks, vector editing<br>
   and real Figma file import, in a native desktop app written entirely in Rust. Free, offline, and yours to change.
 </p>
 
@@ -48,7 +48,8 @@
 </table>
 
 <p align="center">
-  <a href="#motion-beta"><b>🎬 New: Motion</b></a> keyframes, springs, 41 presets and GIF/WebM export &nbsp;·&nbsp;
+  <a href="#live-collaboration-beta"><b>👥 New: Live collaboration</b></a> share a link, edit together, no account &nbsp;·&nbsp;
+  <a href="#motion-beta"><b>🎬 Motion</b></a> keyframes, springs, 41 presets and GIF/WebM export &nbsp;·&nbsp;
   <a href="#download">Download</a> &nbsp;·&nbsp; <a href="#build-from-source">Build from source</a>
 </p>
 
@@ -228,6 +229,19 @@ cargo run -p desigma-app -- --export-animation onboarding.desigma --out onboardi
 
 Motion follows the workflow of Figma's Motion (Beta) mode but is desigma's own implementation, and it is not affiliated with Figma, Inc. Animation data lives in `.desigma` files and in desigma's REST JSON export; it cannot be written back into `.fig` files.
 
+## Live collaboration (beta)
+
+Click **Share** in the editor, copy the `desigma://join/…` link and send it. Anyone with the link opens it (or pastes it into **Join session** on the home screen) and edits the same file with you, live, on Windows, macOS or Linux. There is no account and no server: your copy of desigma hosts the session while the file stays open.
+
+- **Peer to peer and encrypted**, over [iroh](https://github.com/n0-computer/iroh) QUIC with NAT traversal; when a direct connection is impossible, traffic goes through a public relay, still end-to-end encrypted.
+- **Edits merge per property**: two people changing the same layer's colour and position both keep their change, inserts into the same frame both survive, a delete wins over an edit. Drags show up live.
+- **Your undo only undoes your own edits.**
+- **Cursors, selections and avatars** in each person's colour; click an avatar to **Follow** their view.
+- **Optional password, approval of each joiner, edit or view-only access, kick, stop sharing.**
+- The session ends when the host closes the file; guests can save a copy. Fonts are not sent yet, and on macOS the link has to be pasted into Join session.
+
+Design and protocol: [docs/collaboration.md](docs/collaboration.md).
+
 ## Everything in the box
 
 <table>
@@ -291,6 +305,8 @@ The `.fig` format is undocumented. Our decoder follows community reverse enginee
 | `desigma-fig` | Figma REST JSON and `.fig` import, REST JSON export |
 | `desigma-fonts` | Bundled Inter, Fontsource fetch and cache, font substitution |
 | `desigma-export` | PNG, JPG, SVG and PDF export, animated GIF / WebM / PNG sequences, Dev mode CSS, SwiftUI and Compose code |
+| `desigma-collab` | Live collaboration sync: document diffs, host ordering, conflict rules, per-person undo |
+| `desigma-net` | Peer-to-peer session transport over iroh: links, password, approval, presence |
 | `desigma-app` | The egui desktop editor |
 | `desigma-diff` | Pixel-diff library and CLI |
 | `desigma-mcp` | Local MCP server for design-file inspection, editing, and code generation |
