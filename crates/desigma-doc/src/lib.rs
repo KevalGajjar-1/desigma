@@ -121,7 +121,15 @@ pub struct Document {
     /// Embedded images keyed by content hash (Figma `imageRef`).
     pub images: BTreeMap<String, Vec<u8>>,
     next_id: u64,
+    /// Collaboration id range: when set, ids are `(peer << 40) | n`. Not saved.
+    #[serde(skip)]
+    id_peer: Option<u64>,
+    #[serde(skip)]
+    peer_next: u64,
 }
+
+/// Bits of a [`NodeId`] below the peer index in a collaboration session.
+pub const PEER_ID_BITS: u32 = 40;
 
 impl Document {
     pub fn new(name: impl Into<String>) -> Self {
@@ -129,13 +137,41 @@ impl Document {
     }
 
     pub fn alloc_id(&mut self) -> NodeId {
+        if let Some(peer) = self.id_peer {
+            return self.alloc_peer_id(peer);
+        }
         self.next_id += 1;
         NodeId(self.next_id)
+    }
+
+    /// Switches id allocation to the range of collaboration peer `peer` (host 0, guests 1+):
+    /// new ids are `(peer << 40) | n`, above every id already in that range. Existing ids stay
+    /// valid. Without this call allocation is the plain counter.
+    pub fn set_id_peer(&mut self, peer: u32) {
+        let peer = u64::from(peer);
+        // The host keeps counting after ids handed out before the session started.
+        self.peer_next = if peer == 0 { self.next_id } else { 0 };
+        self.id_peer = Some(peer);
+    }
+
+    /// Peer index set by [`Self::set_id_peer`].
+    pub fn id_peer(&self) -> Option<u32> {
+        self.id_peer.map(|p| p as u32)
+    }
+
+    fn alloc_peer_id(&mut self, peer: u64) -> NodeId {
+        let base = peer << PEER_ID_BITS;
+        let top = self.nodes.range(NodeId(base)..NodeId(base + (1 << PEER_ID_BITS))).next_back().map_or(0, |(id, _)| id.0 - base);
+        self.peer_next = self.peer_next.max(top) + 1;
+        NodeId(base + self.peer_next)
     }
 
     /// Allocate safely after importing a document whose stored counter may be
     /// stale, preserving previously allocated IDs and reporting exhaustion.
     pub fn try_alloc_id(&mut self) -> Option<NodeId> {
+        if let Some(peer) = self.id_peer {
+            return (self.peer_next < (1 << PEER_ID_BITS) - 1).then(|| self.alloc_peer_id(peer));
+        }
         let largest = self.nodes.keys().next_back().map_or(0, |id| id.0);
         self.next_id = self.next_id.max(largest).checked_add(1)?;
         Some(NodeId(self.next_id))
@@ -144,7 +180,46 @@ impl Document {
     /// Ensures future [`Self::alloc_id`] calls return ids above `id`, so
     /// callers can assign deterministic ids themselves.
     pub fn reserve_ids(&mut self, id: NodeId) {
+        if let Some(peer) = self.id_peer {
+            let base = peer << PEER_ID_BITS;
+            if id.0 >= base && id.0 < base + (1 << PEER_ID_BITS) {
+                self.peer_next = self.peer_next.max(id.0 - base);
+            }
+            return;
+        }
         self.next_id = self.next_id.max(id.0);
+    }
+
+    /// Copy of the document with the embedded image bytes left out (hash keys stay, with empty
+    /// bytes). Cheap shadow / snapshot for sync.
+    pub fn clone_without_images(&self) -> Self {
+        let images = self.images.keys().map(|k| (k.clone(), Vec::new())).collect();
+        Self { images, ..self.clone_shell() }
+    }
+
+    fn clone_shell(&self) -> Self {
+        Self {
+            name: self.name.clone(),
+            kind: self.kind,
+            nodes: self.nodes.clone(),
+            pages: self.pages.clone(),
+            styles: self.styles.clone(),
+            style_meta: self.style_meta.clone(),
+            flows: self.flows.clone(),
+            variables: self.variables.clone(),
+            variable_collections: self.variable_collections.clone(),
+            guides: self.guides.clone(),
+            timelines: self.timelines.clone(),
+            prototype_device: self.prototype_device.clone(),
+            comments: self.comments.clone(),
+            library: self.library.clone(),
+            library_page: self.library_page,
+            board_session: self.board_session.clone(),
+            images: BTreeMap::new(),
+            next_id: self.next_id,
+            id_peer: self.id_peer,
+            peer_next: self.peer_next,
+        }
     }
 
     /// Display name of a shared style: its metadata name, else the key.
@@ -358,6 +433,34 @@ mod tests {
         let removed = d.remove(frame).unwrap();
         assert_eq!(removed.len(), 2);
         assert!(d.get(rect).is_none());
+    }
+
+    #[test]
+    fn peer_id_ranges() {
+        let mut d = Document::new("t");
+        let page = d.add_page("P");
+        assert_eq!(page, NodeId(1));
+        d.set_id_peer(0);
+        assert_eq!(d.alloc_id(), NodeId(2));
+        let mut g = d.clone();
+        g.set_id_peer(3);
+        let a = g.alloc_id();
+        assert_eq!(a, NodeId((3 << 40) | 1));
+        g.insert(page, Node::rectangle(a, Rect::new(0.0, 0.0, 1.0, 1.0))).unwrap();
+        // Inserting a foreign id does not move this peer's counter.
+        g.insert(page, Node::rectangle(NodeId((5 << 40) | 9), Rect::new(0.0, 0.0, 1.0, 1.0))).unwrap();
+        assert_eq!(g.alloc_id(), NodeId((3 << 40) | 2));
+        // Rejoining finds ids already present in the range.
+        let mut r = g.clone();
+        r.set_id_peer(3);
+        assert_eq!(r.try_alloc_id(), Some(NodeId((3 << 40) | 2)));
+        r.reserve_ids(NodeId((3 << 40) | 10));
+        assert_eq!(r.alloc_id(), NodeId((3 << 40) | 11));
+        // Host keeps counting from the plain counter and ignores guest ids.
+        d.insert(page, Node::rectangle(NodeId((3 << 40) | 1), Rect::new(0.0, 0.0, 1.0, 1.0))).unwrap();
+        assert_eq!(d.alloc_id(), NodeId(3));
+        // The range is not serialized.
+        assert_eq!(Document::from_json(&g.to_json().unwrap()).unwrap().id_peer(), None);
     }
 
     #[test]

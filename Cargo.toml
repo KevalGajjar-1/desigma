@@ -14,6 +14,7 @@ members = [
     "crates/desigma-gpu",
     "crates/desigma-mcp",
     "crates/desigma-net",
+    "crates/desigma-collab",
 ]
 
 [workspace.package]
@@ -25,6 +26,7 @@ repository = "https://github.com/deepfounder-ai/desigma"
 [workspace.dependencies]
 desigma-engine = { path = "crates/desigma-engine" }
 desigma-doc = { path = "crates/desigma-doc" }
+desigma-collab = { path = "crates/desigma-collab" }
 desigma-render = { path = "crates/desigma-render" }
 desigma-fig = { path = "crates/desigma-fig" }
 desigma-library = { path = "crates/desigma-library" }

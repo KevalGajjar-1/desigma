@@ -222,6 +222,22 @@ impl History {
         self.undo.push(c.apply(doc)?);
         Ok(true)
     }
+    /// Calls `f` on every stored command (undo and redo stacks, Batch contents included).
+    /// For rewriting stored inverses when the document changes underneath them.
+    pub fn for_each_command_mut(&mut self, mut f: impl FnMut(&mut Command)) {
+        fn rec(c: &mut Command, f: &mut dyn FnMut(&mut Command)) {
+            if let Command::Batch(cmds) = c {
+                for c in cmds {
+                    rec(c, f);
+                }
+            } else {
+                f(c);
+            }
+        }
+        for c in self.undo.iter_mut().chain(self.redo.iter_mut()) {
+            rec(c, &mut f);
+        }
+    }
     /// Number of undo steps available.
     pub fn undo_len(&self) -> usize {
         self.undo.len()

@@ -1406,6 +1406,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "desigma-collab"
+version = "0.1.0"
+dependencies = [
+ "desigma-doc",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "desigma-diff"
 version = "0.1.0"
 dependencies = [

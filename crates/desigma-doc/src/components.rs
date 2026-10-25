@@ -72,6 +72,8 @@ impl Ctx {
                 library_page: None,
                 images: Default::default(),
                 next_id: doc.next_id,
+                id_peer: doc.id_peer,
+                peer_next: doc.peer_next,
             },
             cmds: Vec::new(),
         }
