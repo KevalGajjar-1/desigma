@@ -187,7 +187,7 @@ the desigma-net adapters, `presence.rs`, `ui.rs`, `draw.rs`, `tests.rs`).
   in `instance.json` (per-user runtime or local data dir, 0600 on unix). It accepts only
   `<token> open-link desigma://join/...`, `open-file <absolute path>` and `ping`, in lines of at most
   4 KiB. A stale file (connection refused) just means a normal start. Both paths feed one inbox that the UI
-  drains each frame: Join opens prefilled, a file opens like a dropped one, and the window is
+  drains each frame: Join opens prefilled, a file opens like a dropped one (both ask "Discard unsaved changes?" with Save / Discard / Cancel first when the editor has unsaved edits or a live session), and the window is
   un-minimized and focused (or asks for attention when the OS refuses focus).
 
 Known gaps: the macOS handlers are compiled in CI but untested by hand; the board has a floating

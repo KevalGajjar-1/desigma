@@ -173,6 +173,10 @@ pub struct App {
     pub motion_ins: crate::motion::inspector::InspectorState,
     /// Live collaboration: sharing, joining, other people's presence.
     pub collab: crate::collab::CollabState,
+    /// Hash of the document as opened or last saved to a file; `None` until then (see `unsaved.rs`).
+    pub file_hash: Option<u64>,
+    /// An open waiting for the answer to "Discard unsaved changes?".
+    pub pending_open: Option<crate::instance::Open>,
 }
 
 impl App {
@@ -225,6 +229,8 @@ impl App {
             motion: Default::default(),
             motion_ins: Default::default(),
             collab: Default::default(),
+            file_hash: None,
+            pending_open: None,
         }
     }
 

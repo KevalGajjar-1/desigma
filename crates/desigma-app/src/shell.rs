@@ -607,8 +607,8 @@ impl Shell {
         }
         for open in opens {
             match open {
-                crate::instance::Open::Link(link) => self.app.open_join(Some(link)),
-                crate::instance::Open::File(path) => self.app.open_path(path),
+                crate::instance::Open::Link(link) => self.app.request_open(crate::instance::Open::Link(link)),
+                crate::instance::Open::File(path) => self.app.request_open(crate::instance::Open::File(path)),
             }
         }
         ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
@@ -627,7 +627,7 @@ impl Shell {
             name.rsplit('.').next().is_some_and(|e| e.eq_ignore_ascii_case("svg"))
         };
         if let Some(path) = files.iter().filter(|f| !is_svg(f)).find_map(|f| f.path.clone()) {
-            self.app.open_path(path);
+            self.app.request_open(crate::instance::Open::File(path));
             return;
         }
         for (nth, f) in files.iter().filter(|f| is_svg(f)).enumerate() {
@@ -672,6 +672,7 @@ impl Shell {
         crate::home::show(&mut self.app, ui);
         crate::home::dialog::show(&mut self.app, ctx);
         crate::collab::ui::join_dialog(&mut self.app, ctx);
+        crate::unsaved::dialog(&mut self.app, ctx);
         let full = ui.max_rect();
         self.toast(ui, full);
         self.sync_title(ctx);
@@ -802,6 +803,7 @@ impl Shell {
         crate::collab::ui::share_popover(&mut self.app, &ctx);
         crate::collab::ui::requests(&mut self.app, &ctx);
         crate::collab::ui::join_dialog(&mut self.app, &ctx);
+        crate::unsaved::dialog(&mut self.app, &ctx);
         self.toast(ui, full);
 
         self.sync_title(&ctx);

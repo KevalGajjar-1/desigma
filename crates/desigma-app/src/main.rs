@@ -39,6 +39,7 @@ mod styles;
 mod textedit;
 mod textmeasure;
 mod theme;
+mod unsaved;
 mod updater;
 mod util;
 mod variables;

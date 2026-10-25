@@ -964,4 +964,5 @@ mod collab;
 mod libraries;
 mod lint;
 mod plugins;
+mod unsaved;
 mod updater;
