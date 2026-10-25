@@ -140,6 +140,8 @@ fn main() {
         eprintln!("desigma: {e}");
         std::process::exit(1);
     }
+    // normally started when the window closed; this catches a close that skipped that frame
+    updater::install::run_stashed();
     if screenshot_mode && !shell::SHOT_OK.load(Ordering::SeqCst) {
         eprintln!("desigma: screenshot was not captured");
         std::process::exit(1);

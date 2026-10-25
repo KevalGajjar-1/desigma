@@ -1,7 +1,8 @@
 //! Opening something over a document that has work in it: File → Open, a dropped file, and a
 //! file or `desigma://join/...` link handed over by the OS or a second launch all go through
 //! [`App::request_open`]. When the open would throw work away, a Save / Discard / Cancel dialog
-//! comes first. Library files autosave, so they never count as unsaved.
+//! comes first. Library files autosave, so they never count as unsaved. "Restart to update" (see
+//! `updater`) asks the same question before it closes the window.
 
 use crate::app::App;
 use crate::comments::ui::{button, button_width};
@@ -42,6 +43,14 @@ impl App {
             Open::File(path) => self.open_path(path),
         }
     }
+
+    /// What a confirmed question leads to: the pending open, or else the restart.
+    fn proceed(&mut self, open: Option<Open>) {
+        match open {
+            Some(open) => self.perform_open(open),
+            None => self.confirm_restart(),
+        }
+    }
 }
 
 enum Answer {
@@ -51,15 +60,19 @@ enum Answer {
 }
 
 pub fn dialog(app: &mut App, ctx: &Context) {
-    let Some(open) = app.pending_open.clone() else { return };
+    let open = app.pending_open.clone();
+    if open.is_none() && !app.updater.pending_restart {
+        return;
+    }
     let screen = ctx.content_rect();
     let esc = ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape));
     const W: f32 = 420.0;
     const PAD: f32 = 20.0;
     let body = match (app.collab.active(), &open) {
         (true, _) => "You are in a live session. Opening this leaves it.",
-        (false, Open::Link(_)) => "Joining a session replaces this document.",
-        (false, Open::File(_)) => "Opening this file replaces the current document.",
+        (false, Some(Open::Link(_))) => "Joining a session replaces this document.",
+        (false, Some(Open::File(_))) => "Opening this file replaces the current document.",
+        (false, None) => "Restarting to install the update closes this document.",
     };
     let rect = Rect::from_center_size(screen.center() - Vec2::new(0.0, 24.0), Vec2::new(W, PAD + 24.0 + 12.0 + 44.0 + 32.0 + PAD));
     let mut answer = esc.then_some(Answer::Cancel);
@@ -92,17 +105,22 @@ pub fn dialog(app: &mut App, ctx: &Context) {
     });
     match answer {
         None => {}
-        Some(Answer::Cancel) => app.pending_open = None,
+        Some(Answer::Cancel) => {
+            app.pending_open = None;
+            app.updater.pending_restart = false;
+        }
         Some(Answer::Discard) => {
             app.pending_open = None;
-            app.perform_open(open);
+            app.updater.pending_restart = false;
+            app.proceed(open);
         }
         Some(Answer::Save) => {
             app.pending_open = None;
+            app.updater.pending_restart = false;
             app.save(false);
             // a cancelled Save as… (or a failed save) keeps the work and the document
             if !app.edits_unsaved() {
-                app.perform_open(open);
+                app.proceed(open);
             }
         }
     }

@@ -92,3 +92,13 @@ Root: HKA; Subkey: "Software\Classes\desigma\shell\open\command"; ValueType: str
 
 [Run]
 Filename: "{app}\{#AppExe}"; Description: "{cm:LaunchProgram,{#AppName}}"; Flags: nowait postinstall skipifsilent
+; In-app update ("Restart to update" runs this setup with /SILENT /RELAUNCH=1): postinstall entries do not run
+; silently, so start the new version here instead. A plain silent install (/VERYSILENT /CURRENTUSER) does not.
+Filename: "{app}\{#AppExe}"; Flags: nowait skipifnotsilent; Check: Relaunching
+
+[Code]
+// True when Setup was started with /RELAUNCH=1, which only the updater inside desigma passes.
+function Relaunching: Boolean;
+begin
+  Result := ExpandConstant('{param:RELAUNCH|0}') = '1';
+end;

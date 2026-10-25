@@ -41,7 +41,8 @@ release is built by GitHub Actions from a tagged commit.
 
 Running a newer installer later upgrades the existing install in place. To uninstall, use
 **Settings → Apps → Installed apps → desigma → Uninstall**. Your design files are never touched.
-For a silent install, run the setup with `/VERYSILENT /CURRENTUSER`.
+For a silent install, run the setup with `/VERYSILENT /CURRENTUSER`. (The in-app update uses
+`/SILENT` and adds `/RELAUNCH=1`, which makes the installer start desigma again when it is done.)
 
 **Portable zip.** Unzip the archive anywhere and double-click `desigma.exe` (it carries the
 desigma icon and version info). The SmartScreen steps are the same. Delete the folder to remove it.
@@ -125,13 +126,38 @@ problems, turn off **Preferences → Use GPU rendering**.
 
 A few seconds after launch, and then once a day while it runs, desigma asks GitHub's
 release list (one request to `api.github.com`, with the user agent `desigma/<version>`)
-whether a newer version is out. If there is one, a banner offers the release notes and a
-**Download** button that opens the release page; nothing is downloaded or installed on its
-own. **Skip this version** stops the reminders until the next release.
+whether a newer version is out. If there is one, a banner offers the release notes and
+**Update now**. Nothing is downloaded before you press it. **Skip this version** stops the
+reminders until the next release.
+
+**Update now** downloads the file for your install from the release, with a progress bar and
+a Cancel button, and checks its SHA-256 against the release's `SHA256SUMS` (a mismatch or a
+missing entry stops the update and deletes the download). Then the dialog offers **Restart to
+update**. If you are sharing or in a live session, desigma asks "Stop sharing?" / "Leave the
+session?" first, and if the document has unsaved changes it asks Save / Discard / Cancel. After
+that desigma closes, installs the new version and starts it again. Downloads only come from
+this repository's release files on `github.com` (and GitHub's release file hosts it redirects
+to); nothing else is fetched.
+
+What happens per install:
+
+| Install | What the update does |
+|---|---|
+| Windows installer | runs the new `setup.exe` silently (`/SILENT /SUPPRESSMSGBOXES /NORESTART /CLOSEAPPLICATIONS /RELAUNCH=1`) in the same per-user or all-users mode; the installer starts desigma again |
+| Windows portable zip | unpacks the new `desigma.exe` (and `desigma-diff.exe` if it sits beside it) next to the old one, renames the running exe to `desigma.old.exe`, moves the new one in and starts it; the old file is deleted at the next start |
+| macOS | unpacks the new `desigma.app` from `desigma-<version>-macos-universal.tar.gz` beside the old one; a small shell script waits for desigma to quit, swaps the bundles, clears the quarantine flag and opens the app |
+| Linux tarball | renames the new `desigma` (and `desigma-diff`) over the old files, which is safe while the old one runs; if you installed with `install.sh`, the desktop entry, icons and file types are refreshed too |
+
+When desigma cannot update itself it says why and keeps **Open release page** as a link, so you
+can install the new version by hand as before. That is the case when the folder is not writable
+by you (for example `/Applications` without administrator rights, or a copy that macOS runs
+from a read-only location: move it to Applications first), for Linux packages that your
+package manager owns (`/usr/bin`, `/opt`, snaps, Flatpak) and AppImages, and for builds from
+source.
 
 Turn the automatic check off with **Preferences → Check for updates automatically**, or set
-`DESIGMA_NO_UPDATE_CHECK=1`. **Help → Check for updates…** still works. Builds from source
-never check.
+`DESIGMA_NO_UPDATE_CHECK=1`. **Help → Check for updates…** still works, and Help also shows the
+version you are running. Builds from source never check and never update themselves.
 
 ## Building from source
 

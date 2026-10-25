@@ -43,6 +43,9 @@ serde_json.workspace = true
 serde.workspace = true
 ureq = "2"
 semver = "1"
+sha2 = "0.11"
+# the portable Windows zip is unpacked in process (the same features desigma-fig uses)
+zip = { version = "9", default-features = false, features = ["deflate"] }
 url = "2"
 uuid = { version = "1", features = ["v4"] }
 dirs = "5"

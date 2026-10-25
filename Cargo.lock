@@ -1403,11 +1403,13 @@ dependencies = [
  "semver",
  "serde",
  "serde_json",
+ "sha2",
  "unicode-segmentation",
  "ureq",
  "url",
  "uuid",
  "winresource",
+ "zip",
 ]
 
 [[package]]
