@@ -522,6 +522,8 @@ struct Net {
     guests: Vec<(PeerId, GuestSession, Document)>,
     up: Vec<VecDeque<ClientMsg>>,
     down: Vec<VecDeque<ServerMsg>>,
+    /// Guests whose connection is up; messages to the others are lost.
+    online: Vec<bool>,
 }
 
 impl Net {
@@ -529,9 +531,11 @@ impl Net {
         let (hd, mut host) = session();
         let mut guests = Vec::new();
         for _ in 0..n {
-            guests.push(join(&mut host, Role::Editor));
+            let (p, mut g, mut d) = join(&mut host, Role::Editor);
+            g.receive(&mut d, host.resume_msg(p).unwrap());
+            guests.push((p, g, d));
         }
-        Self { hd, host, up: vec![VecDeque::new(); n], down: vec![VecDeque::new(); n], guests }
+        Self { hd, host, up: vec![VecDeque::new(); n], down: vec![VecDeque::new(); n], online: vec![true; n], guests }
     }
 
     fn route(&mut self, outs: Vec<Out>) {
@@ -542,7 +546,7 @@ impl Net {
                     Dest::AllBut(x) => x != *p,
                     Dest::All => true,
                 };
-                if hit {
+                if hit && self.online[i] {
                     self.down[i].push_back(o.msg.clone());
                 }
             }
@@ -550,6 +554,9 @@ impl Net {
     }
 
     fn sync_guest(&mut self, i: usize) {
+        if !self.online[i] {
+            return;
+        }
         let (_, g, d) = &mut self.guests[i];
         if let Some(m) = g.local_changes(d) {
             self.up[i].push_back(m);
@@ -559,6 +566,27 @@ impl Net {
     fn sync_host(&mut self) {
         let outs = self.host.local_changes(&self.hd);
         self.route(outs);
+    }
+
+    /// The connection of guest `i` drops: what is in flight either way is lost.
+    fn cut(&mut self, i: usize) {
+        self.online[i] = false;
+        self.up[i].clear();
+        self.down[i].clear();
+        self.host.remove_peer(self.guests[i].0);
+    }
+
+    /// Guest `i` reconnects with its secret and the host sends a fresh snapshot.
+    fn reconnect(&mut self, i: usize) {
+        let token = self.guests[i].1.token().expect("token").to_string();
+        self.sync_host();
+        let peer = self.host.resume(&token, Role::Editor).expect("known token");
+        assert_eq!(peer, self.guests[i].0, "same peer index");
+        let (_, g, d) = &mut self.guests[i];
+        let r = g.rejoin(d, self.host.snapshot(peer)).expect("snapshot for the same peer");
+        self.online[i] = true;
+        self.up[i].extend(r.out);
+        self.down[i].push_back(self.host.resume_msg(peer).unwrap());
     }
 
     fn deliver_up(&mut self, i: usize) -> bool {
@@ -767,4 +795,157 @@ fn simulation_converges_many_guests() {
     for seed in 2000..2030 {
         run_sim(seed, 1, 200);
     }
+}
+
+// ---- resume after a lost connection ----
+
+#[test]
+fn a_rejoining_guest_keeps_its_peer_and_its_unconfirmed_edits() {
+    let mut net = Net::new(2);
+    let page = net.hd.pages[0];
+    let kids = net.hd.get(page).unwrap().children.clone();
+    let mut rng = Rng::new(7);
+    // acknowledged before the outage
+    net.guests[0].2.get_mut(kids[0]).unwrap().name = "before".into();
+    net.drain(&mut rng);
+    let token = net.guests[0].1.token().unwrap().to_string();
+    assert_eq!(token.len(), 64);
+    // sent but never acknowledged, and not even sent
+    net.guests[0].2.get_mut(kids[1]).unwrap().opacity = 0.25;
+    net.sync_guest(0);
+    net.cut(0);
+    let made = net.guests[0].2.alloc_id();
+    assert_eq!(made.0 >> PEER_ID_BITS, u64::from(net.guests[0].0), "ids stay in the guest's range");
+    net.guests[0].2.insert(kids[2], Node::rectangle(made, Rect::new(1.0, 2.0, 3.0, 4.0))).unwrap();
+    // meanwhile the host and the other guest edit, including a field the guest also wrote
+    net.hd.get_mut(kids[1]).unwrap().name = "host renamed".into();
+    net.hd.get_mut(kids[1]).unwrap().opacity = 0.9;
+    net.guests[1].2.get_mut(kids[2]).unwrap().locked = true;
+    net.sync_host();
+    net.sync_guest(1);
+    net.drain(&mut rng);
+    net.reconnect(0);
+    net.drain(&mut rng);
+    net.assert_converged("rejoin");
+    let n = net.hd.get(kids[1]).unwrap();
+    assert_eq!((n.name.as_str(), n.opacity), ("host renamed", 0.25), "the other fields come from the host, the guest's own write wins");
+    assert!(net.hd.get(made).is_some(), "a node made offline reached the host");
+    assert!(net.hd.get(kids[2]).unwrap().locked);
+    assert_eq!(net.hd.get(kids[0]).unwrap().name, "before");
+    // the guest keeps working with fresh ids
+    let next = net.guests[0].2.alloc_id();
+    assert!(next > made);
+}
+
+#[test]
+fn an_unknown_secret_or_another_peers_snapshot_does_not_resume() {
+    let mut net = Net::new(2);
+    assert!(net.host.resume("nope", Role::Editor).is_none());
+    let token = net.guests[0].1.token().unwrap().to_string();
+    net.host.forget_peer(net.guests[0].0);
+    assert!(net.host.resume(&token, Role::Editor).is_none(), "a kicked guest cannot come back");
+    // a snapshot for someone else is refused by the guest
+    let other = net.guests[1].0;
+    let snap = net.host.snapshot(other);
+    let (_, g, d) = &mut net.guests[0];
+    assert!(g.rejoin(d, snap).is_none());
+}
+
+#[test]
+fn a_departed_peer_stays_reserved_and_a_second_connection_replaces_the_first() {
+    let mut net = Net::new(1);
+    let p = net.guests[0].0;
+    let token = net.guests[0].1.token().unwrap().to_string();
+    net.host.remove_peer(p);
+    let fresh = net.host.add_peer(Role::Editor);
+    assert_ne!(fresh, p, "the index is not handed out again");
+    // the old connection was never noticed as dead: resuming still works
+    assert_eq!(net.host.resume(&token, Role::Viewer), Some(p));
+    assert_eq!(net.host.resume(&token, Role::Editor), Some(p));
+}
+
+fn run_outage_sim(seed: u64, guests: usize, steps: usize) {
+    let mut rng = Rng::new(seed);
+    let mut net = Net::new(guests);
+    for step in 0..steps {
+        match rng.below(12) {
+            0..=3 => {
+                let who = rng.below(guests + 1);
+                for _ in 0..1 + rng.below(3) {
+                    if who == guests {
+                        random_edit(&mut rng, &mut net.hd);
+                    } else {
+                        random_edit(&mut rng, &mut net.guests[who].2);
+                    }
+                }
+                if rng.chance(75) {
+                    if who == guests {
+                        net.sync_host();
+                    } else {
+                        net.sync_guest(who);
+                    }
+                }
+            }
+            4..=5 => {
+                let i = rng.below(guests);
+                if net.online[i] {
+                    net.deliver_down(i);
+                }
+            }
+            6..=7 => {
+                let i = rng.below(guests);
+                if net.online[i] {
+                    net.deliver_up(i);
+                }
+            }
+            8 => {
+                let i = rng.below(guests);
+                if net.online[i] {
+                    net.cut(i);
+                }
+            }
+            _ => {
+                let i = rng.below(guests);
+                if !net.online[i] && rng.chance(40) {
+                    net.reconnect(i);
+                }
+            }
+        }
+        if step % 97 == 0 && net.online.iter().all(|o| *o) {
+            net.drain(&mut rng);
+            net.assert_converged(&format!("seed {seed} step {step}"));
+        }
+    }
+    for i in 0..guests {
+        if !net.online[i] {
+            net.reconnect(i);
+        }
+    }
+    net.drain(&mut rng);
+    net.assert_converged(&format!("seed {seed} end"));
+}
+
+#[test]
+fn simulation_converges_across_outages() {
+    for seed in 0..60 {
+        run_outage_sim(seed, 3, 300);
+    }
+    for seed in 3000..3030 {
+        run_outage_sim(seed, 1, 200);
+    }
+}
+
+#[test]
+fn image_messages_are_base64_and_much_smaller_than_number_arrays() {
+    let bytes: Vec<u8> = (0..30_000u32).map(|i| (i.wrapping_mul(2654435761) >> 13) as u8).collect();
+    let msg = ServerMsg::ImageData { hash: "h".into(), bytes: bytes.clone() };
+    let json = serde_json::to_string(&msg).unwrap();
+    let as_array = serde_json::json!({ "ImageData": { "hash": "h", "bytes": bytes } }).to_string();
+    assert!(json.len() < bytes.len() * 4 / 3 + 64, "{} bytes of JSON for {}", json.len(), bytes.len());
+    assert!(as_array.len() > json.len() * 2, "array form {} against base64 {}", as_array.len(), json.len());
+    let ServerMsg::ImageData { bytes: back, .. } = serde_json::from_str(&json).unwrap() else { panic!() };
+    assert_eq!(back, bytes);
+    let up = ClientMsg::ImageData { hash: "h".into(), bytes: bytes.clone() };
+    assert_eq!(serde_json::from_str::<ClientMsg>(&serde_json::to_string(&up).unwrap()).unwrap(), up);
+    assert!(serde_json::from_str::<ClientMsg>(r#"{"ImageData":{"hash":"h","bytes":"***"}}"#).is_err());
 }

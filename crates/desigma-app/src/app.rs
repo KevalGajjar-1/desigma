@@ -240,8 +240,17 @@ impl App {
         if done.loaded > 0 {
             self.changed();
         }
-        if let Some(first) = done.failed.first() {
-            let more = done.failed.len() - 1;
+        // A guest first asks the host for the fonts the shared file uses.
+        let pairs: Vec<_> = done.failed.into_iter().zip(done.failed_requests).collect();
+        let rest = self.ask_host_for_fonts(pairs.iter().map(|(_, r)| r.clone()).collect());
+        let failed: Vec<String> = pairs.into_iter().filter(|(_, r)| rest.contains(r)).map(|(msg, _)| msg).collect();
+        self.toast_fonts_unavailable(&failed);
+    }
+
+    /// "Font unavailable: Family 400: reason (+2 more)".
+    pub fn toast_fonts_unavailable(&mut self, failed: &[String]) {
+        if let Some(first) = failed.first() {
+            let more = failed.len() - 1;
             let suffix = if more > 0 { format!(" (+{more} more)") } else { String::new() };
             self.show_toast(format!("Font unavailable: {first}{suffix}"), true);
         }

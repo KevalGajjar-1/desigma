@@ -5,7 +5,7 @@
 //! worker thread. Results are registered with the renderer on the UI thread.
 
 use desigma_doc::Document;
-use desigma_fonts::{ensure_fonts_with, FontCache, FontReport};
+use desigma_fonts::{ensure_fonts_with, FontCache, FontReport, FontRequest};
 use std::collections::HashSet;
 use std::sync::mpsc::{channel, Receiver};
 
@@ -18,6 +18,8 @@ pub struct FontLoader {
 pub struct FontsLoaded {
     pub loaded: usize,
     pub failed: Vec<String>,
+    /// The same fonts as structured requests.
+    pub failed_requests: Vec<FontRequest>,
 }
 
 impl FontLoader {
@@ -56,7 +58,16 @@ impl FontLoader {
             desigma_render::register_font(f.data);
         }
         let failed = report.failed.iter().map(|(req, err)| format!("{} {}: {err}", req.family, req.weight)).collect();
-        Some(FontsLoaded { loaded, failed })
+        let failed_requests = report.failed.into_iter().map(|(req, _)| req).collect();
+        Some(FontsLoaded { loaded, failed, failed_requests })
+    }
+
+    /// Pretends a load finished with `report` (tests).
+    #[cfg(test)]
+    pub fn inject(&mut self, report: FontReport) {
+        let (tx, rx) = channel();
+        let _ = tx.send(report);
+        self.pending = Some(rx);
     }
 
     pub fn is_loading(&self) -> bool {

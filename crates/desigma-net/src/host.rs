@@ -2,14 +2,14 @@
 use crate::{
     auth::{ct_eq, Limiter},
     frame::{self, MAX_FRAME},
-    proto::{clean_name, Hello, Reply, CLOSE_ENDED, CLOSE_KICKED, CLOSE_LEFT, CLOSE_REFUSED, MAX_HANDSHAKE, PROTOCOL_VERSION},
+    proto::{clean_name, Hello, Reply, CLOSE_ENDED, CLOSE_KICKED, CLOSE_LEFT, CLOSE_LOST, CLOSE_REFUSED, MAX_HANDSHAKE, PROTOCOL_VERSION},
     rt::{self, EventQueue, Events},
     JoinError, NetError, Network, PeerId, Ticket,
 };
 use bytes::Bytes;
 use iroh::{endpoint::Connection, Endpoint, EndpointId};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     sync::{
         atomic::{AtomicU32, AtomicU64, Ordering},
         Arc, Mutex, OnceLock,
@@ -108,6 +108,10 @@ struct Inner {
     next_peer: AtomicU32,
     next_request: AtomicU64,
     pending: Mutex<HashMap<u64, oneshot::Sender<bool>>>,
+    /// Secrets of guests who may come back without being asked again.
+    trusted: Mutex<HashSet<String>>,
+    /// The `resume` secret each connected guest presented, until the app picks it up.
+    presented: Mutex<HashMap<PeerId, String>>,
     limiter: Mutex<Limiter>,
     endpoint: OnceLock<Endpoint>,
     stop: watch::Sender<bool>,
@@ -141,6 +145,8 @@ impl Host {
             next_peer: AtomicU32::new(1),
             next_request: AtomicU64::new(1),
             pending: Mutex::new(HashMap::new()),
+            trusted: Mutex::new(HashSet::new()),
+            presented: Mutex::new(HashMap::new()),
             endpoint: OnceLock::new(),
             stop,
         });
@@ -196,6 +202,32 @@ impl Host {
     pub fn respond(&self, request: u64, accept: bool) {
         if let Some(tx) = self.inner.pending.lock().unwrap().remove(&request) {
             let _ = tx.send(accept);
+        }
+    }
+
+    /// Lets a guest who shows this `resume` secret in without asking again (approval and the
+    /// password check still apply to everyone else). Call it for the secrets the sync layer
+    /// hands out.
+    pub fn allow_resume(&self, token: &str) {
+        self.inner.trusted.lock().unwrap().insert(token.to_string());
+    }
+
+    pub fn revoke_resume(&self, token: &str) {
+        self.inner.trusted.lock().unwrap().remove(token);
+    }
+
+    /// The `resume` secret `peer` presented when it joined, if any. Ask right after
+    /// [`HostEvent::PeerJoined`]; it is handed out once.
+    pub fn join_token(&self, peer: PeerId) -> Option<String> {
+        self.inner.presented.lock().unwrap().remove(&peer)
+    }
+
+    /// Cuts a guest's connection the way a network failure would: the guest sees
+    /// [`crate::DisconnectReason::Lost`], not a kick. For tests of reconnecting.
+    #[doc(hidden)]
+    pub fn sever(&self, peer: PeerId) {
+        if let Some(slot) = self.inner.peers.lock().unwrap().get(&peer) {
+            slot.conn.close(CLOSE_LOST.into(), b"connection lost");
         }
     }
 
@@ -326,9 +358,12 @@ async fn handle_incoming(inner: Arc<Inner>, incoming: iroh::endpoint::Incoming) 
         conn.close(CLOSE_REFUSED.into(), b"handshake failed");
         return;
     };
-    let Joined { peer, name, mut rx, tx } = joined;
+    let Joined { peer, name, mut rx, tx, resume } = joined;
 
     let (qtx, mut qrx) = mpsc::channel::<Arc<Vec<u8>>>(QUEUE);
+    if let Some(t) = resume {
+        inner.presented.lock().unwrap().insert(peer, t);
+    }
     inner.peers.lock().unwrap().insert(peer, Slot { tx: qtx, conn: conn.clone() });
     inner.events.emit(HostEvent::PeerJoined { peer, name });
 
@@ -369,6 +404,7 @@ async fn handle_incoming(inner: Arc<Inner>, incoming: iroh::endpoint::Incoming) 
     writer.abort();
     datagrams.abort();
     inner.peers.lock().unwrap().remove(&peer);
+    inner.presented.lock().unwrap().remove(&peer);
     conn.close(CLOSE_LEFT.into(), b"bye");
     inner.events.emit(HostEvent::PeerLeft { peer });
 }
@@ -378,6 +414,7 @@ struct Joined {
     name: String,
     rx: iroh::endpoint::RecvStream,
     tx: iroh::endpoint::SendStream,
+    resume: Option<String>,
 }
 
 /// Run the handshake. On `Err` the guest was refused (and told) or vanished.
@@ -403,10 +440,11 @@ async fn handshake(inner: &Arc<Inner>, conn: &Connection, remote: EndpointId) ->
         }
         inner.limiter.lock().unwrap().success(&remote);
     }
-    if inner.peers.lock().unwrap().len() >= inner.opts.max_peers {
+    let trusted = hello.resume.as_ref().is_some_and(|t| inner.trusted.lock().unwrap().contains(t));
+    if inner.peers.lock().unwrap().len() >= inner.opts.max_peers && !trusted {
         return refuse(inner, conn, tx, name, remote, JoinError::Full).await;
     }
-    if inner.opts.require_approval {
+    if inner.opts.require_approval && !trusted {
         let request = inner.next_request.fetch_add(1, Ordering::Relaxed);
         let (atx, arx) = oneshot::channel();
         inner.pending.lock().unwrap().insert(request, atx);
@@ -426,7 +464,7 @@ async fn handshake(inner: &Arc<Inner>, conn: &Connection, remote: EndpointId) ->
     let reply = serde_json::to_vec(&Reply::Welcome { peer }).map_err(|_| ())?;
     let wire = frame::encode(&reply).map_err(|_| ())?;
     frame::write_wire(&mut tx, &wire).await.map_err(|_| ())?;
-    Ok(Joined { peer, name, rx, tx })
+    Ok(Joined { peer, name, rx, tx, resume: hello.resume })
 }
 
 /// Tell the guest why, record it, and wait for the guest to hang up.

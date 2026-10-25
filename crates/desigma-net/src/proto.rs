@@ -3,7 +3,8 @@ use crate::JoinError;
 use serde::{Deserialize, Serialize};
 
 /// Bump on any incompatible wire change; peers must match exactly.
-pub const PROTOCOL_VERSION: u32 = 1;
+/// 2: image payloads are base64, `Hello::resume`, resume tokens.
+pub const PROTOCOL_VERSION: u32 = 2;
 
 /// Handshake frames are tiny; refuse anything bigger before a guest is trusted.
 pub const MAX_HANDSHAKE: usize = 16 * 1024;
@@ -13,6 +14,8 @@ pub const CLOSE_LEFT: u32 = 0;
 pub const CLOSE_KICKED: u32 = 1;
 pub const CLOSE_ENDED: u32 = 2;
 pub const CLOSE_REFUSED: u32 = 3;
+/// Only sent by [`crate::Host::sever`]; the guest treats it as a lost connection.
+pub const CLOSE_LOST: u32 = 4;
 
 #[derive(Serialize, Deserialize)]
 pub struct Hello {
@@ -20,6 +23,10 @@ pub struct Hello {
     pub name: String,
     #[serde(default)]
     pub password: Option<String>,
+    /// Secret from an earlier visit of this session: the host may let the same guest back in
+    /// without asking again. Opaque to this crate (the sync layer issues and checks it).
+    #[serde(default)]
+    pub resume: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]

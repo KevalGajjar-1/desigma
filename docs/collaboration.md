@@ -1,6 +1,6 @@
 # Live collaboration — design and plan
 
-Status: phases 1-4 done (core sync, transport, app integration, presence); the headless server is done; the rest of polish is open. Target: 2–10 people editing one file live, on Windows, macOS and Linux,
+Status: phases 1–5 done: core sync, transport, app integration, presence, and polish (reconnect, fonts, image cache, leave question, headless server, links on every OS). Target: 2–10 people editing one file live, on Windows, macOS and Linux,
 with no account and no server to run.
 
 ## How it works for users
@@ -87,9 +87,22 @@ ordinary local edit, so it syncs through the diff like any other.
 ### Joining
 
 The host sends a snapshot: the document without image bytes, plus the current op sequence
-number. The guest then requests images by hash, and caches them by content hash between
-sessions. Fonts the guest is missing are sent if the host has the file, otherwise flagged as
-missing.
+number, and the digest of every image. The guest reads the images it has cached from disk and
+requests only the others. Fonts the guest cannot load are requested from the host, which sends
+the file if it has it; otherwise they show up in the missing-font toast.
+
+### Reconnecting
+
+When the connection drops (network change, sleep), the guest keeps the document, shows a
+"Reconnecting…" banner and stays editable. It dials the same ticket again after 1, 2, 5 and 10 s,
+then every 15 s, for two minutes, showing the secret it got at join. The host recognises the secret,
+gives the guest its old peer index and id range back (so ids cannot collide) and sends a fresh
+snapshot. The guest lays the changes the host never confirmed over that snapshot with the usual
+per-field rules (its own write is the later one, deleted nodes stay deleted) and sends them as a
+normal batch. After two minutes it gives up: "Connection lost — you can save a copy".
+
+Documents are small enough that a snapshot is cheaper than replaying a log, and the host needs no
+per-guest history for this.
 
 ## Presence (not part of the document)
 
@@ -123,9 +136,16 @@ Every peer must speak the same protocol version. A mismatch is refused with "upd
 
 ## Limits of the first version
 
-* The session ends when the host closes the file.
+* The session ends when the host closes the file. Going home or opening another file asks first.
+* Reconnecting works for guests only, and only while the host keeps the file shared: the secret is
+  valid for the session, and a restarted session has a new link. Edits a guest made to nodes the host
+  deleted in the meantime are dropped (delete wins).
 * Joining needs the desktop app (no browser client yet).
 * About 2–20 people per session, limited by the host's upload bandwidth when people join.
+* Fonts: files over 20 MB are not shared. Font files are shared only between the participants of a
+  session, for rendering; they are loaded for that run of the app and never installed.
+* Images added during a session are fetched from the host once (and cached after that); the digest
+  list covers the images present at join.
 
 ## Phases
 
@@ -150,8 +170,12 @@ Every peer must speak the same protocol version. A mismatch is refused with "upd
    * Roles, kick and end session.
    * The `desigma://` handler on all three OSes.
 4. **Presence (done).** Cursors, selections, avatars, Follow.
-5. **Polish.** Font transfer, image cache, reconnect after a dropped connection, and a headless
-   `desigma-server` that can host a file permanently (same protocol).
+5. **Polish.**
+   * Reconnect after a dropped connection (done).
+   * Font transfer (done).
+   * Image cache (done).
+   * Leave questions and a refreshed share link (done).
+   * A headless `desigma-server` that can host a file permanently (same protocol).
 
 ## Implementation notes (phases 3 and 4)
 
@@ -190,8 +214,60 @@ the desigma-net adapters, `presence.rs`, `ui.rs`, `draw.rs`, `tests.rs`).
   drains each frame: Join opens prefilled, a file opens like a dropped one (both ask "Discard unsaved changes?" with Save / Discard / Cancel first when the editor has unsaved edits or a live session), and the window is
   un-minimized and focused (or asks for attention when the OS refuses focus).
 
-Known gaps: the macOS handlers are compiled in CI but untested by hand; the board has a floating
-Share strip instead of the inspector row; fonts and reconnect are phase 5.
+Known gaps of phases 3 and 4: the macOS handlers are compiled in CI but untested by hand; the board has a floating
+Share strip instead of the inspector row.
+
+## Implementation notes (phase 5: reconnect, fonts, image cache)
+
+**Wire.** Protocol version 2. Image and font bytes are base64 strings inside the JSON message
+(`desigma_collab::b64`), not number arrays. Measured with 200 000 bytes of incompressible image data
+(`base64_images_cost_about_their_raw_size...`): JSON 267 KB against 714 KB before; on the wire, after the
+frame's deflate, 201 KB against 268 KB (454 KB with the old deflate level, see below). So base64 costs
+about the raw size and a separate binary message kind would add a second code path for almost
+nothing. The frame deflate level went from 1 to 4: zlib-rs only uses fixed Huffman codes at level 1, and
+those cannot shrink base64 text at all.
+
+**Core (`desigma-collab`).**
+* `HostSession::add_peer` also creates a random secret (two UUIDs); `resume_msg(peer)` is the
+  `ServerMsg::Resume { token }` that gives it to the guest, sent after the snapshot.
+* `remove_peer` keeps the peer index and the secret (and remembers the role) for the rest of the
+  session; `forget_peer` drops them (kick). `resume(token, role)` re-seats the guest, also when the old
+  connection was never noticed as dead; the caller sends `snapshot(peer)` and `resume_msg(peer)`.
+* `GuestSession::rejoin(doc, snapshot)`: the unconfirmed work is `diff(base, doc)`, where `base` is the
+  guest's replica of the host's last known state. It is applied to the new snapshot, `doc` is moved to
+  that result in place, and the shadow becomes the snapshot, so the next `local_changes` sends exactly
+  what the host still misses. Refuses a snapshot for another peer.
+* The in-memory simulation cuts and resumes guests at random while everyone edits and must converge.
+
+**Transport (`desigma-net`).** `Hello.resume` (opaque string), `Guest::join_resume`, and on the host
+`allow_resume(token)` / `revoke_resume` (a guest showing a trusted secret skips the approval prompt
+and the peer limit; the password is still checked), `join_token(peer)` (the secret a joining peer showed,
+handed out once, ask right after `PeerJoined`). `Host::sever` cuts a connection like a network failure,
+for tests.
+
+**App (`collab/`).**
+* `reconnect.rs`: backoff, the dial in progress, giving up. A refusal that cannot change (wrong password,
+  declined, version) ends it at once. `GuestState::live()` is false while reconnecting; presence and
+  batches wait, the document stays editable.
+* `assets.rs`: `ImageCache` (SHA-256 of the bytes as file name, under the app cache dir
+  `collab-images`, 500 MB, least recently used removed first by mtime, a read counts as a use), the
+  `FontIo` trait (host: file of an installed font; guest: load into the renderer for this run) and the
+  wire types. Image keys in a document (`img-3`) are unique only inside it, which is why the cache is
+  addressed by digest and the host announces `key -> digest` (`ToGuest::Images`) before the snapshot. What
+  arrives is checked against the announced digest.
+* `exchange.rs`: the guest answers an image request from the cache when it can, asks the host for fonts
+  the background load could not resolve and the document uses (`ToHost::Fonts`), the host answers per
+  font with `ToGuest::Font` (empty bytes: none, over 20 MB, or not used by the file). Those not shared are
+  reported through the existing "Font unavailable" toast.
+* Leaving: `App::leave_ok(then)` guards `go_home`, opening, new file and Join; it shows "Stop sharing?" /
+  "Leave the session?" and runs `then` after `end_collab`. `replace_document` still ends a session as a
+  backstop.
+* The Share popover shows `HostLink::link()` (the transport's current ticket) while it is open.
+* A message that arrives in the same batch right behind the snapshot is no longer dropped.
+
+Known gaps: the cache cannot know in advance about images that appear after the join, so a later
+session asks the host once for each; a host restarting its session gets a new link, and guests do not
+follow; a font the host could not send is not retried.
 
 ## Phase 5: `desigma-server`
 

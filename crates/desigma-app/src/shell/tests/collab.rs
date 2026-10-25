@@ -172,3 +172,50 @@ fn view_only_guests_see_a_notice_and_cannot_move_things() {
     let after = guest.app().doc.nodes.values().map(|n| n.transform).collect::<Vec<_>>();
     assert_eq!(before, after);
 }
+
+#[test]
+fn going_back_to_files_while_hosting_asks_how_many_people_will_be_disconnected() {
+    let (mut s, net) = shared();
+    let _guest = connect(&net, "Bea");
+    for _ in 0..3 {
+        s.frame(vec![]);
+    }
+    crate::panels::menus::run(&mut s.shell.app, &s.ctx.clone(), crate::panels::menus::Action::BackToFiles);
+    s.frame(vec![]);
+    s.frame(vec![]);
+    let d = s.app().dialog.as_ref().expect("a question");
+    assert_eq!(d.title, "Stop sharing?");
+    assert_eq!(d.lines[0].0, "1 person will be disconnected.");
+    // Cancel keeps sharing
+    click_named(&mut s, "dialog-cancel");
+    s.frame(vec![]);
+    assert!(s.app().collab.hosting() && s.app().dialog.is_none());
+    // Stop sharing ends it
+    crate::panels::menus::run(&mut s.shell.app, &s.ctx.clone(), crate::panels::menus::Action::BackToFiles);
+    s.frame(vec![]);
+    s.frame(vec![]);
+    click_named(&mut s, "dialog-ok");
+    s.frame(vec![]);
+    assert!(!s.app().collab.active());
+}
+
+#[test]
+fn a_reconnecting_guest_sees_a_banner_without_save_a_copy_until_it_gives_up() {
+    let (mut host, net) = shared();
+    let mut guest = Sim::new();
+    let (redial, _) = crate::collab::tests::redialing(&net, "Bea");
+    guest.shell.app.join_with_redial(Box::new(connect(&net, "Bea")), Some(redial));
+    for _ in 0..8 {
+        host.frame(vec![]);
+        guest.frame(vec![]);
+    }
+    assert!(guest.app().collab.is_guest());
+    net.borrow_mut().guests.get_mut(&1).unwrap().push_back(GuestEv::Closed(Closed::Lost("network down".into())));
+    guest.frame(vec![]);
+    guest.frame(vec![]);
+    assert!(guest.app().collab.guest.as_ref().unwrap().reconnect.is_some());
+    guest.rect_of("collab-banner");
+    let has = |s: &Sim, name: &str| s.ctx.data(|d| d.get_temp::<egui::Rect>(egui::Id::new(("test-rect", name.to_string())))).is_some();
+    guest.frame(vec![]);
+    assert!(!has(&guest, "collab-save-copy"), "nothing to save yet: the connection may come back");
+}

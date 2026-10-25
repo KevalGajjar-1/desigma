@@ -11,6 +11,9 @@ const COMPRESS_MIN: usize = 4096;
 /// Bodies above this are (de)compressed off the async workers.
 const BLOCKING_MIN: usize = 256 * 1024;
 const FLAG_DEFLATE: u8 = 1;
+/// Deflate level. Not the fastest one: some zlib backends only use fixed Huffman codes at level 1,
+/// which cannot shrink base64 text (images and fonts travel as base64 in JSON) at all.
+const LEVEL: u32 = 4;
 
 /// Encode one frame (header included).
 pub fn encode(payload: &[u8]) -> Result<Vec<u8>, NetError> {
@@ -20,7 +23,7 @@ pub fn encode(payload: &[u8]) -> Result<Vec<u8>, NetError> {
     let mut flags = 0u8;
     let mut packed = None;
     if payload.len() >= COMPRESS_MIN {
-        let mut enc = flate2::write::DeflateEncoder::new(Vec::with_capacity(payload.len() / 2), flate2::Compression::fast());
+        let mut enc = flate2::write::DeflateEncoder::new(Vec::with_capacity(payload.len() / 2), flate2::Compression::new(LEVEL));
         if enc.write_all(payload).is_ok() {
             if let Ok(out) = enc.finish() {
                 if out.len() < payload.len() {
