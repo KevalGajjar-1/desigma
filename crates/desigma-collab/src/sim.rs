@@ -286,15 +286,23 @@ fn keyed_edit(rng: &mut Rng, d: &mut Document, kept: &mut Vec<Kept>, destructive
             let Some(v) = d.board_session.vote.as_mut() else { return };
             let i = rng.below(if destructive { 5 } else { 3 });
             let key = vote_key(peer, i);
-            if rng.chance(70) || !v.votes.contains_key(&key) {
-                *v.votes.entry(key).or_insert(0) += 1;
+            let voter = format!("p{peer}");
+            if rng.chance(70) || v.count_by(key, &voter) == 0 {
+                *v.votes.entry(key).or_default().entry(voter).or_insert(0) += 1;
                 if i < 3 {
                     kept.push(Kept::Vote(key));
                 }
-            } else if v.votes[&key] > 1 {
-                *v.votes.get_mut(&key).unwrap() -= 1;
-            } else if i >= 3 {
-                v.votes.remove(&key);
+            } else if v.count_by(key, &voter) > 1 || i >= 3 {
+                // directly, like the app's edit does: a session that has ended still changes here
+                let by = v.votes.get_mut(&key).unwrap();
+                if by[&voter] > 1 {
+                    *by.get_mut(&voter).unwrap() -= 1;
+                } else {
+                    by.remove(&voter);
+                }
+                if by.is_empty() {
+                    v.votes.remove(&key);
+                }
             }
         }
         21 => match rng.below(4) {
@@ -1111,9 +1119,9 @@ fn a_reply_to_a_thread_deleted_at_the_same_time_is_dropped_everywhere() {
 fn two_concurrent_votes_both_count() {
     let mut net = Net::new(2);
     let kids = net.hd.get(net.hd.pages[0]).unwrap().children.clone();
-    net.guests[0].2.board_session.vote.as_mut().unwrap().add(kids[0]);
-    net.guests[1].2.board_session.vote.as_mut().unwrap().add(kids[1]);
-    net.hd.board_session.vote.as_mut().unwrap().add(kids[2]);
+    net.guests[0].2.board_session.vote.as_mut().unwrap().add(kids[0], "a");
+    net.guests[1].2.board_session.vote.as_mut().unwrap().add(kids[1], "b");
+    net.hd.board_session.vote.as_mut().unwrap().add(kids[2], "h");
     settle(&mut net);
     net.assert_converged("votes");
     let v = net.hd.board_session.vote.as_ref().unwrap();
@@ -1121,7 +1129,7 @@ fn two_concurrent_votes_both_count() {
     // the timer is one value: the later writer wins, without touching the votes
     net.guests[0].2.board_session.timer = Some(TimerState::new(3));
     net.guests[1].2.board_session.timer = Some(TimerState::new(7));
-    net.guests[1].2.board_session.vote.as_mut().unwrap().add(kids[0]);
+    net.guests[1].2.board_session.vote.as_mut().unwrap().add(kids[0], "b");
     net.sync_guest(0);
     net.sync_guest(1);
     net.deliver_up(0);
@@ -1228,7 +1236,7 @@ fn undoing_my_comment_vote_and_variable_keeps_what_others_added() {
     comments.push(thread_at("mine", page, "mine"));
     net.hist[0].exec(&mut net.guests[0].2, Command::SetComments { comments }).unwrap();
     let mut session = net.guests[0].2.board_session.clone();
-    session.vote.as_mut().unwrap().add(kids[0]);
+    session.vote.as_mut().unwrap().add(kids[0], "a");
     net.hist[0].exec(&mut net.guests[0].2, Command::SetBoardSession { session }).unwrap();
     let (mut vars, mut cols) = (net.guests[0].2.variables.clone(), net.guests[0].2.variable_collections.clone());
     vars.insert("mine".into(), variable("mine", 1.0));
@@ -1237,7 +1245,7 @@ fn undoing_my_comment_vote_and_variable_keeps_what_others_added() {
     // yours, concurrently
     net.guests[1].2.comments.push(thread_at("yours", page, "yours"));
     net.guests[1].2.comments[0].messages.push(msg("yours-r", "reply"));
-    net.guests[1].2.board_session.vote.as_mut().unwrap().add(kids[1]);
+    net.guests[1].2.board_session.vote.as_mut().unwrap().add(kids[1], "b");
     add_variable(&mut net.guests[1].2, "yours", 2.0);
     settle(&mut net);
     net.assert_converged("both");
@@ -1278,7 +1286,9 @@ fn entries_of_unknown_fields_or_with_wrong_keys_are_refused() {
     };
     assert!(apply(&mut d, &set("name", &["x"], serde_json::json!("n"))).is_err());
     assert!(apply(&mut d, &set("styles", &[], serde_json::json!({}))).is_err());
-    assert!(apply(&mut d, &set("board_session", &["vote", "nan"], serde_json::json!(1))).is_err());
+    assert!(apply(&mut d, &set("board_session", &["vote", "nan", "v"], serde_json::json!(1))).is_err());
+    // a vote is keyed by node and voter; the old key with the node alone is gone
+    assert!(apply(&mut d, &set("board_session", &["vote", "5"], serde_json::json!(1))).is_err());
     assert!(apply(&mut d, &set("comments", &["gone", "m"], serde_json::json!({ "id": "m", "author": "", "text": "", "created": "", "edited": null }))).is_err());
     // the keyed fields no longer travel as whole values
     assert!(apply(&mut d, &Op::DocPatch { fields: [("comments".to_string(), serde_json::json!([]))].into() }).is_err());
@@ -1538,4 +1548,105 @@ fn image_messages_are_base64_and_much_smaller_than_number_arrays() {
     let up = ClientMsg::ImageData { hash: "h".into(), bytes: bytes.clone() };
     assert_eq!(serde_json::from_str::<ClientMsg>(&serde_json::to_string(&up).unwrap()).unwrap(), up);
     assert!(serde_json::from_str::<ClientMsg>(r#"{"ImageData":{"hash":"h","bytes":"***"}}"#).is_err());
+}
+
+#[test]
+fn two_people_voting_on_the_same_node_at_once_both_count() {
+    let mut net = Net::new(2);
+    let kids = net.hd.get(net.hd.pages[0]).unwrap().children.clone();
+    assert!(net.guests[0].2.board_session.vote.as_mut().unwrap().add(kids[0], "alice"));
+    assert!(net.guests[1].2.board_session.vote.as_mut().unwrap().add(kids[0], "bob"));
+    assert!(net.hd.board_session.vote.as_mut().unwrap().add(kids[0], "host"));
+    settle(&mut net);
+    net.assert_converged("same node");
+    let v = net.hd.board_session.vote.as_ref().unwrap();
+    assert_eq!((v.count(kids[0]), v.count_by(kids[0], "alice"), v.count_by(kids[0], "bob")), (3, 1, 1));
+    assert_eq!(v.results(&net.hd), vec![(kids[0], 3)]);
+    // a second round from two of them at the same time
+    net.guests[0].2.board_session.vote.as_mut().unwrap().add(kids[0], "alice");
+    net.guests[1].2.board_session.vote.as_mut().unwrap().add(kids[0], "bob");
+    settle(&mut net);
+    net.assert_converged("second round");
+    assert_eq!(net.hd.board_session.vote.as_ref().unwrap().count(kids[0]), 5);
+    // the entries are keyed by node and voter
+    let e = entries(&net.hd, "board_session");
+    assert_eq!(e[&vec!["vote".to_string(), kids[0].0.to_string(), "alice".to_string()]], serde_json::json!(2));
+}
+
+#[test]
+fn vote_limits_are_per_person() {
+    let mut net = Net::new(2);
+    let kids = net.hd.get(net.hd.pages[0]).unwrap().children.clone();
+    net.hd.board_session.vote.as_mut().unwrap().votes_per_person = 2;
+    settle(&mut net);
+    for (g, voter) in [(0, "alice"), (1, "bob")] {
+        let v = net.guests[g].2.board_session.vote.as_mut().unwrap();
+        assert!(v.add(kids[0], voter) && v.add(kids[1], voter));
+        assert!(!v.add(kids[2], voter), "{voter} used both votes");
+    }
+    settle(&mut net);
+    net.assert_converged("limits");
+    let v = net.hd.board_session.vote.as_ref().unwrap();
+    assert_eq!((v.left("alice"), v.left("bob"), v.left("carol")), (0, 0, 2));
+    assert_eq!((v.count(kids[0]), v.count(kids[1]), v.count(kids[2]), v.total()), (2, 2, 0, 4));
+    // the host, a third person, still has its own two
+    let v = net.hd.board_session.vote.as_mut().unwrap();
+    assert!(v.add(kids[2], "host") && v.add(kids[2], "host") && !v.add(kids[2], "host"));
+    settle(&mut net);
+    net.assert_converged("host votes");
+    assert_eq!(net.guests[0].2.board_session.vote.as_ref().unwrap().count(kids[2]), 2);
+}
+
+#[test]
+fn undoing_my_vote_keeps_yours() {
+    let mut net = Net::new(2);
+    let kids = net.hd.get(net.hd.pages[0]).unwrap().children.clone();
+    let mut session = net.guests[0].2.board_session.clone();
+    session.vote.as_mut().unwrap().add(kids[0], "alice");
+    net.hist[0].exec(&mut net.guests[0].2, Command::SetBoardSession { session }).unwrap();
+    // yours, on the same node, before mine reached anyone
+    net.guests[1].2.board_session.vote.as_mut().unwrap().add(kids[0], "bob");
+    settle(&mut net);
+    net.assert_converged("both voted");
+    assert_eq!(net.hd.board_session.vote.as_ref().unwrap().count(kids[0]), 2);
+    net.hist[0].undo(&mut net.guests[0].2).unwrap();
+    settle(&mut net);
+    net.assert_converged("undone");
+    let v = net.hd.board_session.vote.as_ref().unwrap();
+    assert_eq!((v.count_by(kids[0], "alice"), v.count_by(kids[0], "bob"), v.count(kids[0])), (0, 1, 1));
+    net.hist[0].redo(&mut net.guests[0].2).unwrap();
+    settle(&mut net);
+    net.assert_converged("redone");
+    assert_eq!(net.hd.board_session.vote.as_ref().unwrap().count(kids[0]), 2);
+}
+
+#[test]
+fn variables_and_styles_made_at_once_get_distinct_ids() {
+    let mut net = Net::new(2);
+    for g in 0..2 {
+        let d = &mut net.guests[g].2;
+        let mut store = VariableStore::from_doc(d);
+        let coll = store.add_collection(&format!("Coll {g}"));
+        let var = store.add_variable(&coll, &format!("Var {g}"), VariableKind::Number).unwrap();
+        let shared = store.add_variable("col", &format!("In col {g}"), VariableKind::Number).unwrap();
+        assert!(var.contains(&format!(":d{}-", d.id_peer().unwrap())), "{var}");
+        assert!(shared.contains(&format!(":d{}-", d.id_peer().unwrap())), "{shared}");
+        let Command::SetVariables { variables, collections } = store.command() else { unreachable!() };
+        d.variables = variables;
+        d.variable_collections = collections;
+        let (key, _) = d.fresh_style_key("Color style");
+        d.styles.insert(key.clone(), fill(g as u8 + 1));
+        d.style_meta.insert(key, StyleMeta { name: format!("Color style {g}"), ..Default::default() });
+    }
+    settle(&mut net);
+    net.assert_converged("ids");
+    assert_eq!(net.hd.variable_collections.len(), 3, "col and one new collection each");
+    assert_eq!(net.hd.variables.len(), 4);
+    assert_eq!(net.hd.styles.len(), 2);
+    assert_eq!(net.hd.style_meta.len(), 2);
+    assert_eq!(net.hd.variable_collections["col"].variables.len(), 2);
+    // outside a session the ids keep their plain shape
+    let plain = VariableStore::from_doc(&base_doc()).add_collection("x");
+    assert_eq!(plain, "VariableCollectionId:d1");
+    assert_eq!(base_doc().fresh_style_key("Color style"), ("Color style 1".to_string(), 1));
 }
