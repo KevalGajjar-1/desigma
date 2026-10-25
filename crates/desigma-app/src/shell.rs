@@ -684,11 +684,14 @@ impl Shell {
         self.app.now = ctx.input(|i| i.time);
         self.app.poll_plugins();
         self.app.poll_updater(&ctx);
+        self.app.poll_install(&ctx);
         self.drive_screenshot(&ctx);
         if ctx.input(|i| i.viewport().close_requested()) {
             crate::decks::ui::flush_notes(&mut self.app);
             self.app.save_close_version();
             self.app.flush_autosave();
+            // "Restart to update": everything is saved, so the new version can start now
+            crate::updater::install::run_stashed();
         }
         self.app.scrub_sync(&ctx);
         if self.app.home.is_some() {

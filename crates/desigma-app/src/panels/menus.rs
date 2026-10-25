@@ -462,6 +462,7 @@ fn main_nodes(app: &App) -> Vec<Node> {
         leaf("Command palette", "Ctrl+K", Action::OpenPalette),
         leaf("Keyboard shortcuts", "", Action::Shortcuts).sep(),
         leaf("About desigma", "", Action::AboutDesigma),
+        leaf(&format!("Version {}", crate::VERSION), "", Action::About).off(true),
         leaf("Check for updates…", "", Action::CheckForUpdates),
         leaf("desigma on GitHub", "", Action::OpenGithub),
     ];
@@ -670,7 +671,7 @@ fn collect(nodes: &[Node], out: &mut Vec<Command>) {
 fn commands(app: &App) -> Vec<Command> {
     let mut out = Vec::new();
     collect(&main_nodes(app), &mut out);
-    out.retain(|c| c.label != "Libraries" && c.label != "Not available");
+    out.retain(|c| c.label != "Libraries" && c.label != "Not available" && !c.label.starts_with("Version "));
     for g in GROUPS {
         for t in *g {
             out.push(Command {
@@ -840,5 +841,19 @@ mod tests {
         assert!(matches_query("Zoom to fit", "zoom fit"));
         assert!(matches_query("Zoom to fit", ""));
         assert!(!matches_query("Zoom to fit", "pen"));
+    }
+
+    #[test]
+    fn help_shows_the_running_version_but_it_is_not_a_command() {
+        fn find<'a>(nodes: &'a [Node], label: &str) -> Option<&'a Node> {
+            nodes.iter().find_map(|n| if n.item.label == label { Some(n) } else { find(&n.kids, label) })
+        }
+        let app = App::new(desigma_doc::Document::new("t"));
+        let nodes = main_nodes(&app);
+        let help = find(&nodes, "Help").expect("a Help menu");
+        let row = find(&help.kids, &format!("Version {}", crate::VERSION)).expect("a version row in Help");
+        assert!(row.item.disabled, "the version is shown, not clickable");
+        assert!(find(&help.kids, "Check for updates…").is_some_and(|n| !n.item.disabled));
+        assert!(!commands(&app).iter().any(|c| c.label.starts_with("Version ")));
     }
 }
