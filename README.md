@@ -238,7 +238,7 @@ Click **Share** in the editor, copy the `desigma://join/…` link and send it. A
 - **Your undo only undoes your own edits.**
 - **Cursors, selections and avatars** in each person's colour; click an avatar to **Follow** their view.
 - **Optional password, approval of each joiner, edit or view-only access, kick, stop sharing.**
-- The session ends when the host closes the file; guests can save a copy. Fonts are not sent yet, and on macOS the link has to be pasted into Join session.
+- The session ends when the host closes the file; guests can save a copy. Fonts are not sent yet,. Clicking a link while desigma is already running opens it in that window (on macOS through Apple events, elsewhere a second launch hands it over); pasting it into Join session always works too.
 
 Design and protocol: [docs/collaboration.md](docs/collaboration.md).
 

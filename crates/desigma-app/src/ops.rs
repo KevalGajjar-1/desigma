@@ -810,6 +810,7 @@ impl App {
         self.selection.clear();
         self.hover = None;
         self.file_path = path;
+        self.file_hash = Some(crate::home::session::doc_hash(&self.doc));
         if let Some(b) = &self.bridge.bridge {
             b.update_document(&self.doc.name, self.file_path.as_deref());
         }
@@ -828,7 +829,7 @@ impl App {
 
     pub fn open_dialog(&mut self) {
         if let Some(p) = io::pick_open() {
-            self.open_path(p);
+            self.request_open(crate::instance::Open::File(p));
         }
     }
 
@@ -876,6 +877,7 @@ impl App {
                 self.show_toast(format!("Saved {}", p.display()), false);
                 if self.lib_file.is_none() {
                     self.file_path = Some(p);
+                    self.file_hash = Some(crate::home::session::doc_hash(&self.doc));
                 }
             }
             Err(e) => self.show_toast(e, true),

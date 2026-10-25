@@ -7,7 +7,7 @@
 
 pub mod dialog;
 mod main_view;
-mod session;
+pub(crate) mod session;
 mod sidebar;
 pub mod thumb;
 pub mod time;

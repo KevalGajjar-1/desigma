@@ -16,12 +16,15 @@ mod fonts;
 mod history;
 mod home;
 mod icons;
+mod instance;
 mod io;
 mod layout;
 mod libraries;
 #[cfg(test)]
 mod lint;
 mod loopback;
+#[cfg(target_os = "macos")]
+mod macos;
 mod motion;
 mod ops;
 mod panels;
@@ -36,6 +39,7 @@ mod styles;
 mod textedit;
 mod textmeasure;
 mod theme;
+mod unsaved;
 mod updater;
 mod util;
 mod variables;
@@ -106,6 +110,18 @@ fn main() {
         }
         return;
     }
+    // A plain `desigma FILE|desigma://join/LINK` (what the OS runs for a click) goes to the editor
+    // that is already running, without opening a window here.
+    let only_open = cli::Options { file: opts.file.clone(), join: opts.join.clone(), ..Default::default() } == opts;
+    if only_open && (opts.file.is_some() || opts.join.is_some()) {
+        let dir = instance::default_dir();
+        let mut opens = opts.join.iter().cloned().map(instance::Open::Link).chain(opts.file.iter().cloned().map(instance::Open::File));
+        if opens.all(|o| instance::forward(&dir, &o)) {
+            return;
+        }
+    }
+    #[cfg(target_os = "macos")]
+    macos::register();
     let (w, h) = opts.size.unwrap_or((theme::DEFAULT_WINDOW.0 as u32, theme::DEFAULT_WINDOW.1 as u32));
     let screenshot_mode = opts.screenshot.is_some();
     let mut viewport = egui::ViewportBuilder::default()
